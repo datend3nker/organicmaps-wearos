@@ -1,5 +1,7 @@
 package app.organicmaps.wear
 
+import android.content.Intent
+import app.organicmaps.wear.presentation.Omaps
 import android.util.Log
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
@@ -28,8 +30,16 @@ class WearDataListenerService : WearableListenerService() {
                     completionPercent = dataMap.getDouble("completionPercent", 0.0),
                     distToTarget = dataMap.getString("distToTarget") ?: ""
                 )
+                val previousState = NavigationStateHolder.state.value
                 Log.d(TAG, "Updating state: isActive=${newState.isActive}, nextStreet=${newState.nextStreet}")
                 NavigationStateHolder.update(newState)
+                
+                if (newState.isActive && !previousState.isActive) {
+                    val intent = Intent(this, Omaps::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    }
+                    startActivity(intent)
+                }
             }
         }
     }

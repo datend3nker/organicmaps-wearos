@@ -99,6 +99,92 @@
         android:screenOrientation="fullUser"
         android:windowSoftInputMode="stateAlwaysHidden|adjustPan"/>
 
+    <activity
+        android:name="app.organicmaps.DownloadResourcesLegacyActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.downloader.DownloaderActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.search.SearchActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser"
+        android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
+
+    <activity
+        android:name="app.organicmaps.settings.SettingsActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.bookmarks.BookmarkCategoriesActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.bookmarks.BookmarkListActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.bookmarks.BookmarkCategorySettingsActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.editor.EditorActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.editor.OsmLoginActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.editor.ReportActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.editor.FeatureCategoryActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.editor.ProfileActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.help.HelpActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.widget.placepage.WikiArticleActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.settings.DrivingOptionsActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.MapPlaceholderActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
+    <activity
+        android:name="app.organicmaps.car.screens.permissions.RequestPermissionsActivity"
+        android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
+        android:screenOrientation="fullUser" />
+
     <service
         android:name=".routing.NavigationService"
         android:foregroundServiceType="location|mediaPlayback"
