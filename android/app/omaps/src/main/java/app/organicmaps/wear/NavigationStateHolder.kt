@@ -8,7 +8,10 @@ data class NavigationState(
     val nextStreet: String = "",
     val carDirection: Int = 0,
     val exitNum: Int = 0,
-    val isActive: Boolean = false
+    val isActive: Boolean = false,
+    val speedMps: Double = -1.0,
+    val completionPercent: Double = 0.0,
+    val distToTarget: String = ""
 )
 
 object NavigationStateHolder {

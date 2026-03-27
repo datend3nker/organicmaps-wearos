@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
@@ -19,6 +21,10 @@ import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 
+/**
+ * Main navigation display showing distance, turn icon, and street name.
+ * Offloads heavy routing logic to the phone.
+ */
 @Composable
 fun NavigationScreen(
     distanceToNextTurn: String,
@@ -35,7 +41,10 @@ fun NavigationScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceAround,
         ) {
+            // Distance to next turn (streamed from phone)
             Text(text = distanceToNextTurn)
+            
+            // Turn icon mirrored for RTL and rotated by watch gyro if applicable
             Icon(
                 imageVector = turnIcon, 
                 contentDescription = "Turn icon", 
@@ -43,10 +52,13 @@ fun NavigationScreen(
                     .size(64.dp)
                     .rotate(deviceRotation)
             )
+            
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Button to send 'STOP' command back to phone
                 Button(onClick = onCancelClick) {
                     Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel")
                 }
+                // Next street name or time (streamed from phone)
                 Text(text = remainingTime)
             }
         }

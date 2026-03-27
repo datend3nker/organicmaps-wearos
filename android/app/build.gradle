@@ -56,7 +56,11 @@ import ru.cian.huawei.publish.ReleaseNote
 import ru.cian.huawei.publish.ReleaseNotesExtension
 
 def getCommitMessage() {
-  return run(['git', '--no-pager', 'show', '-s', '--format=%s%n%n%b', 'HEAD']).trim()
+  try {
+    return run(['git', '--no-pager', 'show', '-s', '--format=%s%n%n%b', 'HEAD']).trim()
+  } catch (Exception e) {
+    return "No commit message"
+  }
 }
 
 project.ext.appId = 'app.organicmaps'
@@ -66,11 +70,10 @@ android {
   namespace = 'app.organicmaps'
 
   buildFeatures {
-    dataBinding = true
-    buildConfig = true
+    dataBinding true
+    buildConfig true
   }
 
-  // Users are complaining that the app should be re-downloaded from the Play Store after changing the language.
   bundle {
     language {
       enableSplit = false
@@ -80,17 +83,16 @@ android {
   defaultConfig {
     versionCode = rootProject.ext.versionCode
     versionName = rootProject.ext.versionName
-    println('Version: ' + versionName)
-    println('VersionCode: ' + versionCode)
     applicationId project.ext.appId
     buildConfigField 'String', 'SUPPORT_MAIL', '"android@organicmaps.app"'
-    // Should be customized in flavors.
     buildConfigField 'String', 'REVIEW_URL', '""'
     resourceConfigurations += [project.ext.supportedLocalizations]
 
     base.archivesName = appName.replaceAll('\\s', '') + '-' + defaultConfig.versionCode
 
-    ndk.debugSymbolLevel = 'full'
+    ndk {
+      debugSymbolLevel = 'full'
+    }
   }
 
   flavorDimensions += 'default'
@@ -115,6 +117,7 @@ android {
 
     fdroid {
       dimension 'default'
+      applicationIdSuffix '.fdroid'
       versionName = android.defaultConfig.versionName + '-FDroid'
       buildConfigField 'String', 'SUPPORT_MAIL', '"fdroid@organicmaps.app"'
     }
@@ -128,19 +131,14 @@ android {
     }
   }
 
-  playConfigs {
-    googleRelease {
-      enabled.set(true)
+  splits {
+    abi {
+      boolean enabled = project.hasProperty('splitApk')
+      enable = enabled
+      reset()
+      include 'x86', 'armeabi-v7a', 'arm64-v8a', 'x86_64'
+      universalApk = true
     }
-  }
-
-  splits.abi {
-    boolean enabled = project.hasProperty('splitApk')
-    println('Create separate apks: ' + enabled)
-    enable = enabled
-    reset()
-    include 'x86', 'armeabi-v7a', 'arm64-v8a', 'x86_64'
-    universalApk = true
   }
 
   def securityPropertiesFileExists = file('secure.properties').exists()
@@ -233,44 +231,49 @@ android {
     noCompress = ['txt', 'bin', 'html', 'png', 'json', 'mwm', 'ttf', 'sdf', 'ui', 'config', 'csv', 'spv', 'obj']
   }
 
-  compileOptions {
-    coreLibraryDesugaringEnabled = true
+  playConfigs {
+    googleRelease {
+      enabled.set(true)
+    }
   }
+
+  compileOptions {
+    coreLibraryDesugaringEnabled true
+  }
+}
+
+play {
+  enabled.set(false)
+  track.set('production')
+  defaultToAppBundles.set(true)
+  releaseStatus.set(ReleaseStatus.IN_PROGRESS)
+  serviceAccountCredentials.set(file('google-play.json'))
 }
 
 dependencies {
   implementation project(':sdk')
-  // World maps
+  implementation 'com.google.android.gms:play-services-wearable:19.0.0'
   googleImplementation project(':sdk:maps:world')
   huaweiImplementation project(':sdk:maps:world')
 
   coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 
-  // Google Play Location Services
-  webImplementation 'com.google.android.gms:play-services-location:21.3.0'
   googleImplementation 'com.google.android.gms:play-services-location:21.3.0'
+  webImplementation 'com.google.android.gms:play-services-location:21.3.0'
   huaweiImplementation 'com.google.android.gms:play-services-location:21.3.0'
-  // This is the microG project's re-implementation which is permissible on
-  // F-droid because it's Apache-2.0.
   fdroidImplementation 'org.microg.gms:play-services-location:0.3.6.244735'
+  
+  googleImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
+  webImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
+  huaweiImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
+  fdroidImplementation 'org.microg.gms:play-services-wearable:0.3.6.244735'
 
-  // Google Firebase Services
   if (googleFirebaseServicesEnabled) {
-    // Import the BoM for the Firebase platform.
-    // firebase-crashlytics-ndk requires minSdkVersion 23 since 34.0.0
-    // See https://firebase.google.com/support/release-notes/android#crashlytics-ndk_v20-0-0
-    // Use 33.11.0 instead of 33.16.0 because of the https://github.com/firebase/firebase-android-sdk/issues/6993
     implementation platform('com.google.firebase:firebase-bom:33.11.0')
-    // Add the dependencies for the Crashlytics and Analytics libraries
-    // When using the BoM, you don't specify versions in Firebase library dependencies
     implementation 'com.google.firebase:firebase-crashlytics'
     implementation 'com.google.firebase:firebase-crashlytics-ndk'
   }
 
-  // This line is added as a workaround for duplicate classes error caused by some outdated dependency:
-  // > A failure occurred while executing com.android.build.gradle.internal.tasks.CheckDuplicatesRunnable
-  // We don't use Kotlin, but some dependencies are actively using it.
-  // See https://stackoverflow.com/a/75719642
   implementation 'androidx.core:core:1.17.0'
   implementation(platform('org.jetbrains.kotlin:kotlin-bom:2.2.20'))
   implementation 'androidx.annotation:annotation:1.9.1'
@@ -284,51 +287,13 @@ dependencies {
   implementation 'androidx.work:work-runtime:2.10.5'
   implementation 'androidx.lifecycle:lifecycle-process:2.9.4'
   implementation 'com.google.android.material:material:1.13.0'
-  // Fix for app/organicmaps/util/FileUploadWorker.java:14: error: cannot access ListenableFuture
-  // https://github.com/organicmaps/organicmaps/issues/6106
   implementation 'com.google.guava:guava:33.5.0-android'
   implementation 'com.github.devnullorthrow:MPAndroidChart:3.2.0-alpha'
 
-  // Test Dependencies
   testImplementation 'androidx.test.ext:junit:1.3.0'
   testImplementation 'org.mockito:mockito-core:5.20.0'
   testImplementation 'org.mockito:mockito-inline:5.2.0'
 }
-
-def allowedPermissions = [
-    // location
-    "name='android.permission.ACCESS_COARSE_LOCATION'",
-    "name='android.permission.ACCESS_FINE_LOCATION'",
-    "name='android.permission.ACCESS_LOCATION_EXTRA_COMMANDS'",
-    // network
-    "name='android.permission.INTERNET'",
-    "name='android.permission.ACCESS_NETWORK_STATE'",
-    // foreground services
-    "name='android.permission.FOREGROUND_SERVICE'",
-    "name='android.permission.FOREGROUND_SERVICE_LOCATION'",
-    "name='android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'",
-    "name='android.permission.FOREGROUND_SERVICE_DATA_SYNC'",
-    // notifications
-    "name='android.permission.POST_NOTIFICATIONS'",
-    // wake lock
-    "name='android.permission.WAKE_LOCK'",
-    // Android Auto
-    "name='androidx.car.app.NAVIGATION_TEMPLATES'",
-    "name='androidx.car.app.ACCESS_SURFACE'",
-    // storage
-    "name='android.permission.READ_EXTERNAL_STORAGE' maxSdkVersion='22'",
-    // internal permissions
-    // comes from androidx.work:work-runtime:2.10.5
-    "name='android.permission.RECEIVE_BOOT_COMPLETED'",
-    // comes from androidx.core:core:1.17.0
-    // Regex to allow it for the following app packages:
-    // app.organicmaps
-    // app.organicmaps.(debug|beta)
-    // app.organicmaps.web
-    // app.organicmaps.web.(debug|beta)
-    ~/name='app\.organicmaps(\.web)?(\.debug|\.beta)?\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'/
-]
-registerCheckApkPermissionsTasks(project, allowedPermissions)
 
 android.applicationVariants.all { variant ->
   def authorityValue = variant.applicationId + ".provider"
@@ -358,22 +323,18 @@ android.applicationVariants.all { variant ->
 
 tasks.register("prepareGoogleReleaseListing") {
   group = "publishing"
-
-  // Prepares Google Play metainfo from F-Droid metainfo.
   final sourceFlavor = 'fdroid'
   final targetFlavor = 'google'
   doLast {
     final sourceDir = new File("${projectDir}/src/$sourceFlavor/play/listings")
     final targetDir = new File("${projectDir}/src/$targetFlavor/play/listings")
-    final sourceFiles = fileTree(dir: sourceDir,
-        include: '**/*.txt', exclude: "**/*-${targetFlavor}.txt")
+    final sourceFiles = fileTree(dir: sourceDir, include: '**/*.txt', exclude: "**/*-${targetFlavor}.txt")
     sourceFiles.each { File sourceFile ->
       final locale = sourceFile.parentFile.getName()
       final targetLocaleDir = new File(targetDir, locale)
       if (!targetLocaleDir.isDirectory())
         targetLocaleDir.mkdirs()
       final targetFile = new File(targetLocaleDir, sourceFile.getName())
-      // Override Google-specific values by using ${name}-google.txt files.
       final overrideFile = new File(sourceFile.getPath().replace('.txt', "-${targetFlavor}.txt"))
       targetFile.text = overrideFile.exists() ? overrideFile.text : sourceFile.text
     }
@@ -384,20 +345,12 @@ tasks.register("prepareGoogleReleaseListing") {
   }
 }
 
-play {
-  enabled.set(false)
-  track.set('production')
-  defaultToAppBundles.set(true)
-  releaseStatus.set(ReleaseStatus.IN_PROGRESS)
-  serviceAccountCredentials.set(file('google-play.json'))
-}
-
 huaweiPublish {
   instances {
     huaweiRelease {
       credentialsPath = "$projectDir/huawei-appgallery.json"
       buildFormat = 'aab'
-      deployType = 'draft' // confirm manually
+      deployType = 'draft'
       def releaseDescriptions = []
       def localeOverride = [
           'am'   : 'am-ET',
@@ -410,8 +363,7 @@ huaweiPublish {
           'ta-IN': 'ta_IN',
           'te-IN': 'te_IN',
       ]
-      def files = fileTree(dir: "$projectDir/src/fdroid/play/listings",
-          include: '**/release-notes.txt')
+      def files = fileTree(dir: "$projectDir/src/fdroid/play/listings", include: '**/release-notes.txt')
       files.each { File file ->
         def path = file.getPath()
         def locale = file.parentFile.getName()

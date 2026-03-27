@@ -5,7 +5,7 @@ import androidx.annotation.NonNull;
 import app.organicmaps.sdk.routing.RoutingInfo;
 import app.organicmaps.sdk.util.log.Logger;
 import com.google.android.gms.tasks.Task;
-import com.google.android.gms.wearable.DataClient;
+import com.google.android.gms.wearable.DataItem;
 import com.google.android.gms.wearable.DataMap;
 import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.PutDataRequest;
@@ -23,12 +23,15 @@ public class WearSyncService {
         map.putString("nextStreet", info.nextStreet);
         map.putInt("carDirection", info.carDirection.ordinal());
         map.putInt("exitNum", info.exitNum);
+        map.putBoolean("active", true);
+        map.putDouble("completionPercent", info.completionPercent);
+        map.putString("distToTarget", info.distToTarget.toString(context));
         map.putLong("timestamp", System.currentTimeMillis());
 
         PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         
-        Task<DataClient.DataItem> putDataTask = Wearable.getDataClient(context).putDataItem(putDataReq);
+        Task<DataItem> putDataTask = Wearable.getDataClient(context).putDataItem(putDataReq);
         putDataTask.addOnFailureListener(e -> Logger.e(TAG, "Failed to send navigation data to Wear", e));
     }
     

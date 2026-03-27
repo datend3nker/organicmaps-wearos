@@ -5,59 +5,67 @@ plugins {
 }
 
 android {
-    namespace 'com.example.omaps'
-    compileSdk {
-        version = release(36)
-    }
+    // Namespace remains unique for R class generation
+    namespace 'app.organicmaps.wear'
+    compileSdk 36
 
     defaultConfig {
-        applicationId "com.example.omaps"
+        // APPLICATION ID MUST MATCH THE PHONE APP
+        applicationId "app.organicmaps"
         minSdk 30
         targetSdk 36
         versionCode 1
         versionName "1.0"
-
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
     }
     kotlinOptions {
-        jvmTarget = '11'
+        jvmTarget = '17'
     }
-    useLibrary('wear-sdk')
     buildFeatures {
         compose true
     }
 }
 
 dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+
+    implementation project(':sdk')
     implementation 'com.google.android.gms:play-services-wearable:19.0.0'
-    implementation platform('androidx.compose:compose-bom:2025.12.00')
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0'
+    
+    implementation platform('androidx.compose:compose-bom:2025.02.00')
     implementation 'androidx.compose.ui:ui'
     implementation 'androidx.compose.ui:ui-graphics'
     implementation 'androidx.compose.ui:ui-tooling-preview'
-    implementation 'androidx.wear.compose:compose-material:1.5.6'
-    implementation 'androidx.wear.compose:compose-foundation:1.5.6'
-    implementation 'androidx.wear:wear-tooling-preview:1.0.0'
-    implementation 'androidx.activity:activity-compose:1.12.1'
-    implementation 'androidx.core:core-splashscreen:1.2.0'
-    implementation 'androidx.compose.ui:ui:1.10.0'
-    implementation 'androidx.compose.ui:ui-graphics:1.10.0'
-    implementation 'androidx.compose.ui:ui-tooling-preview:1.10.0'
+    
+    implementation 'androidx.compose.material:material-icons-core:1.7.8'
     implementation 'androidx.compose.material:material-icons-extended:1.7.8'
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0'
-    androidTestImplementation platform('androidx.compose:compose-bom:2025.12.00')
-    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+    
+    implementation 'androidx.wear.compose:compose-material:1.5.0'
+    implementation 'androidx.wear.compose:compose-foundation:1.5.0'
+    implementation 'androidx.wear.compose:compose-navigation:1.5.0'
+    
+    implementation 'androidx.wear:wear-tooling-preview:1.0.0'
+    implementation 'androidx.activity:activity-compose:1.10.0'
+    implementation 'androidx.core:core-splashscreen:1.2.0'
+    
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.7'
+
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
-    debugImplementation 'androidx.compose.ui:ui-tooling:1.10.0'
-    debugImplementation 'androidx.compose.ui:ui-test-manifest:1.10.0'
 }
