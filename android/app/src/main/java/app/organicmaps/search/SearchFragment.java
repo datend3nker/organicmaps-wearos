@@ -42,6 +42,7 @@ import app.organicmaps.sdk.util.SharedPropertiesUtils;
 import app.organicmaps.util.UiUtils;
 import app.organicmaps.util.Utils;
 import app.organicmaps.util.WindowInsetUtils;
+import app.organicmaps.wear.WearSyncService;
 import app.organicmaps.widget.PlaceholderView;
 import app.organicmaps.widget.SearchToolbarController;
 import com.google.android.material.appbar.AppBarLayout;
@@ -171,7 +172,7 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
 
   private final ActivityResultLauncher<Intent> startVoiceRecognitionForResult =
       registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
-                                activityResult -> { mToolbarController.onVoiceRecognitionResult(activityResult); });
+                                activityResult -> mToolbarController.onVoiceRecognitionResult(activityResult));
 
   private final LocationListener mLocationListener = new LocationListener() {
     @Override
@@ -392,7 +393,7 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
     if (mHiddenCommands.isEmpty())
     {
       mHiddenCommands.addAll(Arrays.asList(
-          new BadStorageCommand("?emulateBadStorage", requireContext()), new JavaCrashCommand("?emulateJavaCrash"),
+          new BadStorageCommand("?emulateBadStorage"), new JavaCrashCommand("?emulateJavaCrash"),
           new NativeCrashCommand("?emulateNativeCrash"), new PushTokenCommand("?pushToken")));
     }
 
@@ -466,6 +467,7 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
   {
     SearchEngine.INSTANCE.cancel();
     updateSearchView();
+    WearSyncService.sendSearchState(requireContext(), false);
   }
 
   private boolean isTabletSearch()
@@ -499,6 +501,7 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
     mToolbarController.showProgress(true);
 
     updateFrames();
+    WearSyncService.sendSearchState(requireContext(), true);
   }
 
   @Override
@@ -508,6 +511,7 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
       return;
 
     refreshSearchResults(results);
+    WearSyncService.sendSearchResults(requireContext(), results);
   }
 
   @Override
@@ -556,8 +560,7 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
 
   private void closeSearch()
   {
-    final Activity activity = requireActivity();
-    activity.finish();
+    Utils.navigateToParent(requireActivity());
   }
 
   public void setRecyclerScrollListener(RecyclerView recycler)
@@ -572,15 +575,41 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
     return mToolbarController;
   }
 
-  private static class BadStorageCommand extends HiddenCommand.BaseHiddenCommand
+  private abstract static class HiddenCommand
   {
     @NonNull
-    Context mContext;
+    private final String mCommand;
 
-    BadStorageCommand(@NonNull String command, @NonNull Context context)
+    HiddenCommand(@NonNull String command)
+    {
+      mCommand = command;
+    }
+
+    boolean execute(@NonNull String query)
+    {
+      if (!query.equalsIgnoreCase(mCommand))
+        return false;
+
+      executeInternal();
+      return true;
+    }
+
+    abstract void executeInternal();
+
+    private abstract static class BaseHiddenCommand extends HiddenCommand
+    {
+      BaseHiddenCommand(@NonNull String command)
+      {
+        super(command);
+      }
+    }
+  }
+
+  private static class BadStorageCommand extends HiddenCommand.BaseHiddenCommand
+  {
+    BadStorageCommand(@NonNull String command)
     {
       super(command);
-      mContext = context;
     }
 
     @Override

@@ -42,12 +42,19 @@
                     android:host="*"
                     android:pathPrefix="/navigation"
                     android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/search"
+                    android:scheme="wear" />
             </intent-filter>
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data
                     android:host="*"
                     android:pathPrefix="/navigation" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/search" />
             </intent-filter>
         </service>
     </application>

@@ -18,6 +18,7 @@ import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.WearCommandService
 import app.organicmaps.wear.presentation.navigation.NavigationScreen
 import app.organicmaps.wear.presentation.navigation.SensorViewModel
+import app.organicmaps.wear.presentation.navigation.StatsScreen
 import app.organicmaps.wear.presentation.search.SearchScreen
 import app.organicmaps.wear.presentation.theme.OrganicMapsTheme
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -47,8 +48,7 @@ fun WearApp() {
     OrganicMapsTheme {
         if (!isNavigating) {
             SearchScreen(onSearchClick = { 
-                // For now, this just simulates starting navigation locally if needed, 
-                // but real data comes from the phone.
+                // Handled inside SearchScreen
             })
         } else {
             HorizontalPager(
@@ -58,7 +58,7 @@ fun WearApp() {
                 when (page) {
                     0 -> MapPanel()
                     1 -> NavigationPanel(navState)
-                    2 -> StatsPanel()
+                    2 -> StatsScreen(navState)
                 }
             }
         }
@@ -107,13 +107,6 @@ fun getTurnIcon(carDirection: Int, pedestrianDirection: Int): ImageVector {
 @Composable
 fun MapPanel() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Map View\n(Vector Rendering)")
-    }
-}
-
-@Composable
-fun StatsPanel() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Stats View\n(Speed, Alt, etc.)")
+        Text("Map View\n(Vector Rendering coming soon)")
     }
 }

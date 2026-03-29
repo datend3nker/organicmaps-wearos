@@ -112,6 +112,7 @@
     <activity
         android:name="app.organicmaps.search.SearchActivity"
         android:parentActivityName="app.organicmaps.MwmActivity"
+        android:launchMode="singleTop"
         android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
         android:screenOrientation="fullUser"
         android:windowSoftInputMode="stateAlwaysVisible|adjustResize">
@@ -205,6 +206,10 @@
             <data
                 android:host="*"
                 android:pathPrefix="/navigation"
+                android:scheme="wear" />
+            <data
+                android:host="*"
+                android:pathPrefix="/search"
                 android:scheme="wear" />
         </intent-filter>
     </service>

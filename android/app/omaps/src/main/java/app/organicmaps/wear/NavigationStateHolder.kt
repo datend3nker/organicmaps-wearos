@@ -3,6 +3,14 @@ package app.organicmaps.wear
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+data class SearchResultItem(
+    val name: String,
+    val description: String,
+    val lat: Double,
+    val lon: Double,
+    val type: Int = 2 // Default to TYPE_RESULT
+)
+
 data class NavigationState(
     val distToTurn: String = "",
     val nextStreet: String = "",
@@ -10,9 +18,14 @@ data class NavigationState(
     val pedestrianDirection: Int = 0,
     val exitNum: Int = 0,
     val isActive: Boolean = false,
+    val isSearching: Boolean = false,
     val speedMps: Double = -1.0,
+    val speedLimitMps: Double = -1.0,
     val completionPercent: Double = 0.0,
-    val distToTarget: String = ""
+    val distToTarget: String = "",
+    val eta: Int = 0, // Seconds
+    val searchResults: List<SearchResultItem> = emptyList(),
+    val searchHistory: List<String> = emptyList()
 )
 
 object NavigationStateHolder {

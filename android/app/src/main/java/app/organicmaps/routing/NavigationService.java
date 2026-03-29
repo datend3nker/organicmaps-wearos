@@ -295,7 +295,7 @@ public class NavigationService extends Service implements LocationListener
     if (routingInfo == null)
       return;
 
-    WearSyncService.updateNavigation(this, routingInfo);
+    WearSyncService.updateNavigation(this, routingInfo, location);
 
     if (routingInfo.shouldPlayWarningSignal())
       mPlayer.playback(R.raw.speed_cams_beep);

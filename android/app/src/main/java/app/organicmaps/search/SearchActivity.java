@@ -5,10 +5,8 @@ import android.content.Intent;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.StyleRes;
 import androidx.fragment.app.Fragment;
 import app.organicmaps.base.BaseMwmFragmentActivity;
-import app.organicmaps.util.ThemeUtils;
 
 public class SearchActivity extends BaseMwmFragmentActivity
 {
@@ -21,6 +19,14 @@ public class SearchActivity extends BaseMwmFragmentActivity
     start(activity, query, null /* locale */, false /* isSearchOnMap */);
   }
 
+  public static void start(@NonNull android.content.Context context, @Nullable String query)
+  {
+    final Intent i = new Intent(context, SearchActivity.class);
+    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    i.putExtra(EXTRA_QUERY, query);
+    context.startActivity(i);
+  }
+
   public static void start(@NonNull Activity activity, @Nullable String query, @Nullable String locale,
                            boolean isSearchOnMap)
   {
@@ -31,6 +37,20 @@ public class SearchActivity extends BaseMwmFragmentActivity
     args.putBoolean(EXTRA_SEARCH_ON_MAP, isSearchOnMap);
     i.putExtras(args);
     activity.startActivity(i);
+  }
+
+  @Override
+  protected void onNewIntent(Intent intent)
+  {
+    super.onNewIntent(intent);
+    setIntent(intent);
+    String query = intent.getStringExtra(EXTRA_QUERY);
+    if (query != null)
+    {
+      SearchFragment fragment = (SearchFragment) getSupportFragmentManager().findFragmentByTag(getFragmentClass().getName());
+      if (fragment != null)
+        fragment.setQuery(query, false);
+    }
   }
 
   @Override

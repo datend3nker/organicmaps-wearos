@@ -12,12 +12,10 @@ import com.google.android.gms.wearable.WearableListenerService
 class WearDataListenerService : WearableListenerService() {
     private val TAG = "WearDataListener"
     private val PATH_START_NAVIGATION = "/navigation/start"
-    private val PATH_STOP_NAVIGATION = "/navigation/stop"
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         Log.d(TAG, "onMessageReceived: ${messageEvent.path}")
         if (messageEvent.path == PATH_START_NAVIGATION) {
-            Log.d(TAG, "Start message received, ensuring isActive=true")
             val currentState = NavigationStateHolder.state.value
             NavigationStateHolder.update(currentState.copy(isActive = true))
             launchOmaps()
@@ -25,42 +23,54 @@ class WearDataListenerService : WearableListenerService() {
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
-        Log.d(TAG, "onDataChanged: Received ${dataEvents.count} events")
         for (event in dataEvents) {
             val uri = event.dataItem.uri
-            Log.d(TAG, "Event type: ${event.type}, URI: $uri")
-            
-            if (event.type == DataEvent.TYPE_CHANGED && uri.path == "/navigation/status") {
+            if (event.type == DataEvent.TYPE_CHANGED) {
                 val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                
-                val isActive = dataMap.getBoolean("active", false)
-                Log.d(TAG, "Data update: active=$isActive, distToTurn=${dataMap.getString("distToTurn")}")
-
-                val currentState = NavigationStateHolder.state.value
-                val newState = currentState.copy(
-                    distToTurn = dataMap.getString("distToTurn") ?: currentState.distToTurn,
-                    nextStreet = dataMap.getString("nextStreet") ?: currentState.nextStreet,
-                    carDirection = if (dataMap.containsKey("carDirection")) dataMap.getInt("carDirection") else currentState.carDirection,
-                    pedestrianDirection = if (dataMap.containsKey("pedestrianDirection")) dataMap.getInt("pedestrianDirection") else currentState.pedestrianDirection,
-                    exitNum = if (dataMap.containsKey("exitNum")) dataMap.getInt("exitNum") else currentState.exitNum,
-                    isActive = isActive,
-                    speedMps = if (dataMap.containsKey("speedMps")) dataMap.getDouble("speedMps") else currentState.speedMps,
-                    completionPercent = if (dataMap.containsKey("completionPercent")) dataMap.getDouble("completionPercent") else currentState.completionPercent,
-                    distToTarget = dataMap.getString("distToTarget") ?: currentState.distToTarget
-                )
-                
-                Log.d(TAG, "Updating state: isActive=${newState.isActive}, street=${newState.nextStreet}")
-                NavigationStateHolder.update(newState)
-                
-                if (newState.isActive && !currentState.isActive) {
-                    launchOmaps()
+                when (uri.path) {
+                    "/navigation/status" -> {
+                        val currentState = NavigationStateHolder.state.value
+                        val newState = currentState.copy(
+                            distToTurn = dataMap.getString("distToTurn", currentState.distToTurn),
+                            nextStreet = dataMap.getString("nextStreet", currentState.nextStreet),
+                            carDirection = dataMap.getInt("carDirection", currentState.carDirection),
+                            pedestrianDirection = dataMap.getInt("pedestrianDirection", currentState.pedestrianDirection),
+                            isActive = dataMap.getBoolean("active", currentState.isActive),
+                            speedMps = dataMap.getDouble("speedMps", currentState.speedMps),
+                            speedLimitMps = dataMap.getDouble("speedLimitMps", currentState.speedLimitMps),
+                            distToTarget = dataMap.getString("distToTarget", currentState.distToTarget),
+                            eta = dataMap.getInt("eta", currentState.eta)
+                        )
+                        NavigationStateHolder.update(newState)
+                        if (newState.isActive && !currentState.isActive) launchOmaps()
+                    }
+                    "/search/results" -> {
+                        val resultMaps = dataMap.getDataMapArrayList("results") ?: emptyList()
+                        val isSearching = dataMap.getBoolean("isSearching", false)
+                        val results = resultMaps.map {
+                            SearchResultItem(
+                                name = it.getString("name", ""),
+                                description = it.getString("description", ""),
+                                lat = it.getDouble("lat", 0.0),
+                                lon = it.getDouble("lon", 0.0),
+                                type = it.getInt("type", 2)
+                            )
+                        }
+                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+                            searchResults = results,
+                            isSearching = isSearching
+                        ))
+                    }
+                    "/search/history" -> {
+                        val history = dataMap.getStringArrayList("history") ?: emptyList()
+                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(searchHistory = history))
+                    }
                 }
             }
         }
     }
 
     private fun launchOmaps() {
-        Log.d(TAG, "Launching Omaps activity")
         val intent = Intent(this, Omaps::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
