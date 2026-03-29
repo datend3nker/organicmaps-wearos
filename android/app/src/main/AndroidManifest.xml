@@ -111,9 +111,14 @@
 
     <activity
         android:name="app.organicmaps.search.SearchActivity"
+        android:parentActivityName="app.organicmaps.MwmActivity"
         android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
         android:screenOrientation="fullUser"
-        android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
+        android:windowSoftInputMode="stateAlwaysVisible|adjustResize">
+        <meta-data
+            android:name="android.support.PARENT_ACTIVITY"
+            android:value="app.organicmaps.MwmActivity" />
+    </activity>
 
     <activity
         android:name="app.organicmaps.settings.SettingsActivity"

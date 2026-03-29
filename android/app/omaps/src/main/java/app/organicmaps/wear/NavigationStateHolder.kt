@@ -7,6 +7,7 @@ data class NavigationState(
     val distToTurn: String = "",
     val nextStreet: String = "",
     val carDirection: Int = 0,
+    val pedestrianDirection: Int = 0,
     val exitNum: Int = 0,
     val isActive: Boolean = false,
     val speedMps: Double = -1.0,

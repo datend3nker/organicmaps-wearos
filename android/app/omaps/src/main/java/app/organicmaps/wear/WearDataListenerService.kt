@@ -6,10 +6,23 @@ import android.util.Log
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
+import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 
 class WearDataListenerService : WearableListenerService() {
     private val TAG = "WearDataListener"
+    private val PATH_START_NAVIGATION = "/navigation/start"
+    private val PATH_STOP_NAVIGATION = "/navigation/stop"
+
+    override fun onMessageReceived(messageEvent: MessageEvent) {
+        Log.d(TAG, "onMessageReceived: ${messageEvent.path}")
+        if (messageEvent.path == PATH_START_NAVIGATION) {
+            Log.d(TAG, "Start message received, ensuring isActive=true")
+            val currentState = NavigationStateHolder.state.value
+            NavigationStateHolder.update(currentState.copy(isActive = true))
+            launchOmaps()
+        }
+    }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         Log.d(TAG, "onDataChanged: Received ${dataEvents.count} events")
@@ -20,27 +33,37 @@ class WearDataListenerService : WearableListenerService() {
             if (event.type == DataEvent.TYPE_CHANGED && uri.path == "/navigation/status") {
                 val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
                 
-                val newState = NavigationState(
-                    distToTurn = dataMap.getString("distToTurn") ?: "",
-                    nextStreet = dataMap.getString("nextStreet") ?: "",
-                    carDirection = dataMap.getInt("carDirection"),
-                    exitNum = dataMap.getInt("exitNum"),
-                    isActive = dataMap.getBoolean("active", false),
-                    speedMps = dataMap.getDouble("speedMps", -1.0),
-                    completionPercent = dataMap.getDouble("completionPercent", 0.0),
-                    distToTarget = dataMap.getString("distToTarget") ?: ""
+                val isActive = dataMap.getBoolean("active", false)
+                Log.d(TAG, "Data update: active=$isActive, distToTurn=${dataMap.getString("distToTurn")}")
+
+                val currentState = NavigationStateHolder.state.value
+                val newState = currentState.copy(
+                    distToTurn = dataMap.getString("distToTurn") ?: currentState.distToTurn,
+                    nextStreet = dataMap.getString("nextStreet") ?: currentState.nextStreet,
+                    carDirection = if (dataMap.containsKey("carDirection")) dataMap.getInt("carDirection") else currentState.carDirection,
+                    pedestrianDirection = if (dataMap.containsKey("pedestrianDirection")) dataMap.getInt("pedestrianDirection") else currentState.pedestrianDirection,
+                    exitNum = if (dataMap.containsKey("exitNum")) dataMap.getInt("exitNum") else currentState.exitNum,
+                    isActive = isActive,
+                    speedMps = if (dataMap.containsKey("speedMps")) dataMap.getDouble("speedMps") else currentState.speedMps,
+                    completionPercent = if (dataMap.containsKey("completionPercent")) dataMap.getDouble("completionPercent") else currentState.completionPercent,
+                    distToTarget = dataMap.getString("distToTarget") ?: currentState.distToTarget
                 )
-                val previousState = NavigationStateHolder.state.value
-                Log.d(TAG, "Updating state: isActive=${newState.isActive}, nextStreet=${newState.nextStreet}")
+                
+                Log.d(TAG, "Updating state: isActive=${newState.isActive}, street=${newState.nextStreet}")
                 NavigationStateHolder.update(newState)
                 
-                if (newState.isActive && !previousState.isActive) {
-                    val intent = Intent(this, Omaps::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    }
-                    startActivity(intent)
+                if (newState.isActive && !currentState.isActive) {
+                    launchOmaps()
                 }
             }
         }
+    }
+
+    private fun launchOmaps() {
+        Log.d(TAG, "Launching Omaps activity")
+        val intent = Intent(this, Omaps::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        startActivity(intent)
     }
 }

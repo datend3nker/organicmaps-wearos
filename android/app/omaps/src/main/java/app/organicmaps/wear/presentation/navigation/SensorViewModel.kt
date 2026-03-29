@@ -18,9 +18,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application),
     val heading = _heading.asStateFlow()
 
     init {
-        rotationVectorSensor?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-        }
+        sensorManager.registerListener(this, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
     }
 
     override fun onCleared() {
@@ -40,5 +38,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application),
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        // Do nothing
     }
 }

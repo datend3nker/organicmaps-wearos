@@ -251,6 +251,8 @@ public class NavigationService extends Service implements LocationListener
     // Restart the location with more frequent refresh interval for navigation.
     locationHelper.restartWithNewMode();
 
+    WearSyncService.startNavigation(this);
+
     // Please make this service START_STICKY after fixing the issues at the beginning of the function.
     return START_NOT_STICKY;
   }

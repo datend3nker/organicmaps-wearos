@@ -5,12 +5,10 @@ plugins {
 }
 
 android {
-    // Namespace remains unique for R class generation
     namespace 'app.organicmaps.wear'
     compileSdk 36
 
     defaultConfig {
-        // APPLICATION ID MUST MATCH THE PHONE APP
         applicationId "app.organicmaps"
         minSdk 30
         targetSdk 36
@@ -18,9 +16,20 @@ android {
         versionName "1.0"
     }
 
+    signingConfigs {
+        debug {
+            // Point to the same keystore used by the phone app
+            storeFile file('../debug.keystore')
+            storePassword '12345678'
+            keyAlias 'debug'
+            keyPassword '12345678'
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix ".debug"
+            signingConfig signingConfigs.debug
         }
         release {
             minifyEnabled false
