@@ -1,0 +1,21 @@
+--- src/main/java/app/organicmaps/MwmActivity.java
++++ src/main/java/app/organicmaps/MwmActivity.java
+@@ -311,6 +311,18 @@
+       }
+     }
+ 
++    if (intent.hasExtra("wear_route_lat")) {
++      double lat = intent.getDoubleExtra("wear_route_lat", 0.0);
++      double lon = intent.getDoubleExtra("wear_route_lon", 0.0);
++      int routerType = intent.getIntExtra("wear_route_router", 0);
++      String name = intent.getStringExtra("wear_route_name");
++      if (name == null) name = "";
++      app.organicmaps.sdk.bookmarks.data.MapObject startPoint = app.organicmaps.MwmApplication.from(this).getLocationHelper().getMyPosition();
++      app.organicmaps.sdk.bookmarks.data.MapObject endPoint = app.organicmaps.sdk.bookmarks.data.MapObject.createMapObject(app.organicmaps.sdk.bookmarks.data.MapObject.POI, name, "", lat, lon);
++      app.organicmaps.sdk.routing.RoutingController.get().prepare(startPoint, endPoint, app.organicmaps.sdk.Router.valueOf(routerType));
++      return;
++    }
++
+     if (intent.getAction() != null && intent.getAction().equals(TrackRecordingService.STOP_TRACK_RECORDING))
+     {
+       // closes the bottom sheet in case it is opened to deal with updation of track recording status in bottom sheet.

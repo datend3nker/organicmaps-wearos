@@ -49,13 +49,14 @@ public class WearMessageListenerService extends WearableListenerService {
 
             new Handler(Looper.getMainLooper()).post(() -> {
                 Log.d(TAG, "Watch selected: " + name + " (" + lat + ", " + lon + ") Mode: " + routerType);
+                MapObject target = MapObject.createMapObject(MapObject.POI, name, "", lat, lon);
+                MapObject startPoint = app.organicmaps.MwmApplication.from(this).getLocationHelper().getMyPosition();
+                
+                // Prepare navigation (don't call start() directly to allow proper route planning)
+                RoutingController.get().prepare(startPoint, target, Router.valueOf(routerType));
                 
                 Intent intent = new Intent(this, MwmActivity.class);
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                intent.putExtra("wear_route_lat", lat);
-                intent.putExtra("wear_route_lon", lon);
-                intent.putExtra("wear_route_router", routerType);
-                intent.putExtra("wear_route_name", name);
                 startActivity(intent);
             });
         } else if (path.equals(PATH_SEARCH_HISTORY_REQUEST)) {

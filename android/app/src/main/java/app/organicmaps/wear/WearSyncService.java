@@ -68,8 +68,8 @@ public class WearSyncService {
         Wearable.getDataClient(context).putDataItem(putDataReq);
     }
 
-    public static void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results) {
-        Log.d(TAG, "sendSearchResults: count=" + results.length);
+    public static void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results, boolean isSearching) {
+        Log.d(TAG, "sendSearchResults: count=" + results.length + ", isSearching=" + isSearching);
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_SEARCH_RESULTS);
         DataMap map = putDataMapReq.getDataMap();
         
@@ -86,7 +86,7 @@ public class WearSyncService {
             resultList.add(resMap);
         }
         map.putDataMapArrayList("results", resultList);
-        map.putBoolean("isSearching", false);
+        map.putBoolean("isSearching", isSearching);
         map.putLong("timestamp", System.currentTimeMillis());
 
         PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();

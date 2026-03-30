@@ -183,8 +183,6 @@ public class MwmActivity extends BaseMwmFragmentActivity
   @NonNull
   private FloatingSearchToolbarController mSearchController;
 
-  private boolean mAutoStartFromWear = false;
-
   private boolean mRestoreRoutingPlanFragmentNeeded;
   @Nullable
   private Bundle mSavedForTabletState;
@@ -330,17 +328,6 @@ public class MwmActivity extends BaseMwmFragmentActivity
       if (ip.process(intent, this))
         break;
     }
-      if (intent.hasExtra("wear_route_lat")) {
-        double lat = intent.getDoubleExtra("wear_route_lat", 0.0);
-        double lon = intent.getDoubleExtra("wear_route_lon", 0.0);
-        int routerType = intent.getIntExtra("wear_route_router", 0);
-        String name = intent.getStringExtra("wear_route_name");
-        if (name == null) name = "";
-        mAutoStartFromWear = true;
-        app.organicmaps.sdk.bookmarks.data.MapObject startPoint = app.organicmaps.MwmApplication.from(this).getLocationHelper().getMyPosition();
-        app.organicmaps.sdk.bookmarks.data.MapObject endPoint = app.organicmaps.sdk.bookmarks.data.MapObject.createMapObject(app.organicmaps.sdk.bookmarks.data.MapObject.POI, name, "", lat, lon);
-        app.organicmaps.sdk.routing.RoutingController.get().prepare(startPoint, endPoint, app.organicmaps.sdk.Router.valueOf(routerType));
-      }
   }
 
   private void migrateOAuthCredentials()
@@ -1625,18 +1612,11 @@ public class MwmActivity extends BaseMwmFragmentActivity
       return;
 
     closeSearchToolbar(true, true);
-
-    if (mAutoStartFromWear)
-    {
-      mAutoStartFromWear = false;
-      onRoutingStart();
-    }
   }
 
   @Override
   public void onDrivingOptionsWarning()
   {
-    mAutoStartFromWear = false;
     if (mRoutingPlanInplaceController == null)
       return;
 
@@ -1646,7 +1626,6 @@ public class MwmActivity extends BaseMwmFragmentActivity
   @Override
   public void onCommonBuildError(int lastResultCode, @NonNull String[] lastMissingMaps)
   {
-    mAutoStartFromWear = false;
     RoutingErrorDialogFragment fragment = RoutingErrorDialogFragment.create(
         getSupportFragmentManager().getFragmentFactory(), getApplicationContext(), lastResultCode, lastMissingMaps);
     fragment.show(getSupportFragmentManager(), RoutingErrorDialogFragment.class.getSimpleName());
@@ -1655,7 +1634,6 @@ public class MwmActivity extends BaseMwmFragmentActivity
   @Override
   public void onDrivingOptionsBuildError()
   {
-    mAutoStartFromWear = false;
     dismissAlertDialog();
     mAlertDialog =
         new MaterialAlertDialogBuilder(this, R.style.MwmTheme_AlertDialog)

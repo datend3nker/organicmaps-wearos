@@ -11,6 +11,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.DirectionsTransit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
@@ -26,6 +28,8 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,7 +51,7 @@ import kotlinx.coroutines.launch
  * 2. A voice input button for speech-to-text search.
  * 3. Recent search history when the query is empty.
  * 4. Real-time search results as the user types (sent to the phone app).
- * 5. A selection screen to choose the transportation mode (Walk/Bike) after selecting a result.
+ * 5. A selection screen to choose the transportation mode (Car/Walk/Bike/Transit) after selecting a result.
  *
  * @param onSearchClick Callback when a search action is performed (currently unused by caller).
  */
@@ -58,7 +62,8 @@ fun SearchScreen(onSearchClick: () -> Unit) {
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
     
-    var searchText by remember { mutableStateOf("") }
+    var searchTextFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    val searchText = searchTextFieldValue.text
     var selectedResult by remember { mutableStateOf<SearchResultItem?>(null) }
     val focusRequester = remember { FocusRequester() }
     val navState by NavigationStateHolder.state.collectAsState()
@@ -70,14 +75,11 @@ fun SearchScreen(onSearchClick: () -> Unit) {
     }
 
     /**
-     * Handles query changes. Triggers a search on the phone if the query is long enough.
+     * Handles query changes. Just updates the state to avoid IME desync.
+     * Actual search is triggered by IME Action (Search button).
      */
-    val onQueryChanged: (String) -> Unit = { newQuery ->
-        val oldText = searchText
-        searchText = newQuery
-        if (newQuery.length > 2 && newQuery != oldText) {
-            WearCommandService.search(context, newQuery)
-        }
+    val onQueryChanged: (TextFieldValue) -> Unit = { newValue ->
+        searchTextFieldValue = newValue
     }
 
     // Voice input launcher
@@ -87,7 +89,11 @@ fun SearchScreen(onSearchClick: () -> Unit) {
         val data = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
         val query = data?.get(0)
         if (!query.isNullOrEmpty()) {
-            searchText = query
+            searchTextFieldValue = TextFieldValue(query, TextRange(query.length))
+            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+                isSearching = true,
+                searchResults = emptyList()
+            ))
             WearCommandService.search(context, query)
             coroutineScope.launch {
                 listState.animateScrollToItem(1)
@@ -102,7 +108,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                 onModeSelected = { routerType ->
                     WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
                     selectedResult = null
-                    searchText = ""
+                    searchTextFieldValue = TextFieldValue("")
                 },
                 onCancel = { selectedResult = null }
             )
@@ -128,15 +134,24 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                             contentAlignment = Alignment.CenterStart
                         ) {
                             BasicTextField(
-                                value = searchText,
+                                value = searchTextFieldValue,
                                 onValueChange = onQueryChanged,
                                 modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
                                 textStyle = TextStyle(color = MaterialTheme.colors.onSurface, fontSize = 16.sp),
                                 cursorBrush = SolidColor(MaterialTheme.colors.primary),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                                 keyboardActions = KeyboardActions(onSearch = {
-                                    if (searchText.isNotEmpty()) {
-                                        WearCommandService.search(context, searchText)
+                                    val finalQuery = searchTextFieldValue.text
+                                    if (finalQuery.isNotEmpty()) {
+                                        // Force commit any active composition before hiding/clearing focus
+                                        searchTextFieldValue = searchTextFieldValue.copy(composition = null)
+                                        
+                                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+                                            isSearching = true,
+                                            searchResults = emptyList() // clear previous to show progress
+                                        ))
+                                        WearCommandService.search(context, finalQuery)
                                         keyboardController?.hide()
                                         focusManager.clearFocus()
                                         coroutineScope.launch {
@@ -181,7 +196,11 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                         items(navState.searchHistory) { query ->
                             Chip(
                                 onClick = { 
-                                    searchText = query
+                                    searchTextFieldValue = TextFieldValue(query, TextRange(query.length))
+                                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+                                        isSearching = true,
+                                        searchResults = emptyList()
+                                    ))
                                     WearCommandService.search(context, query)
                                     focusManager.clearFocus()
                                     keyboardController?.hide()
@@ -233,7 +252,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
  * A screen to select the transportation mode for the selected search result.
  * 
  * @param result The search result selected by the user.
- * @param onModeSelected Callback with the selected router type (1 for Walk, 2 for Bike).
+ * @param onModeSelected Callback with the selected router type (0 for Car, 1 for Walk, 2 for Bike, 3 for Transit).
  * @param onCancel Callback to cancel selection and return to the search list.
  */
 @Composable
@@ -254,11 +273,17 @@ fun ModeSelectionScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            Button(onClick = { onModeSelected(1) }, modifier = Modifier.size(ButtonDefaults.DefaultButtonSize)) {
-                Icon(Icons.AutoMirrored.Filled.DirectionsWalk, contentDescription = "Walk")
+            Button(onClick = { onModeSelected(0) }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.DirectionsCar, contentDescription = "Car", modifier = Modifier.size(20.dp))
             }
-            Button(onClick = { onModeSelected(2) }, modifier = Modifier.size(ButtonDefaults.DefaultButtonSize)) {
-                Icon(Icons.AutoMirrored.Filled.DirectionsBike, contentDescription = "Bike")
+            Button(onClick = { onModeSelected(1) }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.AutoMirrored.Filled.DirectionsWalk, contentDescription = "Walk", modifier = Modifier.size(20.dp))
+            }
+            Button(onClick = { onModeSelected(2) }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.AutoMirrored.Filled.DirectionsBike, contentDescription = "Bike", modifier = Modifier.size(20.dp))
+            }
+            Button(onClick = { onModeSelected(3) }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.DirectionsTransit, contentDescription = "Transit", modifier = Modifier.size(20.dp))
             }
         }
         Spacer(modifier = Modifier.height(8.dp))

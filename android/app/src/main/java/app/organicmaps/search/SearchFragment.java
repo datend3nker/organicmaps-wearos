@@ -42,7 +42,6 @@ import app.organicmaps.sdk.util.SharedPropertiesUtils;
 import app.organicmaps.util.UiUtils;
 import app.organicmaps.util.Utils;
 import app.organicmaps.util.WindowInsetUtils;
-import app.organicmaps.wear.WearSyncService;
 import app.organicmaps.widget.PlaceholderView;
 import app.organicmaps.widget.SearchToolbarController;
 import com.google.android.material.appbar.AppBarLayout;
@@ -467,7 +466,6 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
   {
     SearchEngine.INSTANCE.cancel();
     updateSearchView();
-    WearSyncService.sendSearchState(requireContext(), false);
   }
 
   private boolean isTabletSearch()
@@ -501,22 +499,22 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
     mToolbarController.showProgress(true);
 
     updateFrames();
-    WearSyncService.sendSearchState(requireContext(), true);
   }
 
   @Override
   public void onResultsUpdate(@NonNull SearchResult[] results, long timestamp)
   {
-    if (!isAdded() || !mToolbarController.hasQuery())
+    if (!isAdded() || !mToolbarController.hasQuery() || timestamp != mLastQueryTimestamp)
       return;
 
     refreshSearchResults(results);
-    WearSyncService.sendSearchResults(requireContext(), results);
   }
 
   @Override
   public void onResultsEnd(long timestamp)
   {
+    if (timestamp != mLastQueryTimestamp)
+      return;
     onSearchEnd();
   }
 

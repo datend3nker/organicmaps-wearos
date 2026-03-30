@@ -107,6 +107,7 @@ public enum SearchEngine implements SearchListener, MapSearchListener,
   public boolean search(@NonNull Context context, @NonNull String query, boolean isCategory, long timestamp,
                         boolean hasLocation, double lat, double lon)
   {
+    mQuery = query;
     return nativeRunSearch(query.getBytes(StandardCharsets.UTF_8), isCategory, Language.getKeyboardLocale(context),
                            timestamp, hasLocation, lat, lon);
   }
@@ -115,6 +116,7 @@ public enum SearchEngine implements SearchListener, MapSearchListener,
   public void searchInteractive(@NonNull String query, boolean isCategory, @NonNull String locale, long timestamp,
                                 boolean isMapAndTable, boolean hasLocation, double lat, double lon)
   {
+    mQuery = query;
     nativeRunInteractiveSearch(query.getBytes(StandardCharsets.UTF_8), isCategory, locale, timestamp, isMapAndTable,
                                hasLocation, lat, lon);
   }

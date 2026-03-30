@@ -1,0 +1,16 @@
+--- src/main/java/app/organicmaps/wear/WearMessageListenerService.java
++++ src/main/java/app/organicmaps/wear/WearMessageListenerService.java
+@@ -43,10 +43,9 @@
+ 
+             new Handler(Looper.getMainLooper()).post(() -> {
+                 Log.d(TAG, "Watch selected: " + name + " (" + lat + ", " + lon + ") Mode: " + routerType);
+                 MapObject target = MapObject.createMapObject(MapObject.POI, name, "", lat, lon);
+-                Router.set(Router.valueOf(routerType));
+                 
+-                // Start navigation and show map
+-                RoutingController.get().prepare(null, target);
+-                RoutingController.get().start();
++                // Start navigation planning in the app
++                MapObject startPoint = MwmApplication.from(this).getLocationHelper().getMyPosition();
++                RoutingController.get().prepare(startPoint, target, Router.valueOf(routerType));
+                 
