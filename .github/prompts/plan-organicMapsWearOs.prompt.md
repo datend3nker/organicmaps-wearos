@@ -10,7 +10,11 @@ This plan details the implementation of a full-featured Wear OS companion app fo
 3. Return search results to the watch via the existing `WearSyncService` without polluting the phone's UI state.
 
 **Phase 2: Vector Map Streaming & Rendering**
-1. *Phone side:* Implement a background service that accepts a geographic bounding box from the watch. Use the OM C++ core to extract map features (MWM geometry), serialize them into a lightweight binary format (e.g., Protobuf/FlatBuffers), and stream them via the Wear Sync layer to the watch.
+1. *Phone side (Data Extraction):* Implement a background service that accepts a geographic bounding box from the watch. To ease development and reviewing, all new Java logic for this will be isolated in the `app.organicmaps.wear.map` package so it's clear it relates only to the companion app. 
+   - **Java Entry Point**: Build `MapFeaturesExtractor.java` in the `app.organicmaps.wear.map` package.
+   - **C++ Interface Hook**: Augment `Framework.cpp` and `Framework.java` with a custom JNI method (e.g., `nativeGetWearMapFeatures(bbox, scale)`). 
+   - **C++ Data Extraction**: Query `indexer::FeaturesFetcher` using the bounding box, loop over the features (`ForEachInRect`), extract simplified geometry (Points, Line segments for roads/buildings/text), and serialize it into a lightweight binary format (e.g., byte array).
+   - **Android Service Binding**: Update `WearMessageListenerService.java` to listen for a watch "tile request", hit `nativeGetWearMapFeatures`, and stream the data over `WearSyncService`.
 2. *Watch side:* Implement a lightweight vector renderer. Since creating an entirely new engine for `.mwm` formatting is difficult, the watch will use an Android `Canvas` or lightweight OpenGL ES view to render the simplified vector stream coming from the phone.
 3. Add a tile-caching layer on the watch to preserve battery (only request new bounding boxes when panning outside the cached area).
 
