@@ -36,6 +36,12 @@ public class WearMessageListenerService extends WearableListenerService {
             String query = new String(messageEvent.getData(), StandardCharsets.UTF_8);
             new Handler(Looper.getMainLooper()).post(() -> {
                 Log.d(TAG, "Starting headless search for: " + query);
+                
+                // Autostart MwmActivity
+                Intent intent = new Intent(this, MwmActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                startActivity(intent);
+
                 HeadlessSearchInteractor.getInstance(this).startSearch(query);
             });
         } else if (path.equals(PATH_SEARCH_SELECT)) {

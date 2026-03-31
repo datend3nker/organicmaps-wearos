@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.DirectionsTransit
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
@@ -62,8 +63,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
     
-    var searchTextFieldValue by remember { mutableStateOf(TextFieldValue("")) }
-    val searchText = searchTextFieldValue.text
+    var searchQuery by remember { mutableStateOf(TextFieldValue("")) }
     var selectedResult by remember { mutableStateOf<SearchResultItem?>(null) }
     val focusRequester = remember { FocusRequester() }
     val navState by NavigationStateHolder.state.collectAsState()
@@ -79,7 +79,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
      * Actual search is triggered by IME Action (Search button).
      */
     val onQueryChanged: (TextFieldValue) -> Unit = { newValue ->
-        searchTextFieldValue = newValue
+        searchQuery = newValue
     }
 
     // Voice input launcher
@@ -89,7 +89,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
         val data = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
         val query = data?.get(0)
         if (!query.isNullOrEmpty()) {
-            searchTextFieldValue = TextFieldValue(query, TextRange(query.length))
+            searchQuery = TextFieldValue(text = query, selection = TextRange(query.length))
             NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                 isSearching = true,
                 searchResults = emptyList()
@@ -108,7 +108,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                 onModeSelected = { routerType ->
                     WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
                     selectedResult = null
-                    searchTextFieldValue = TextFieldValue("")
+                    searchQuery = TextFieldValue("")
                 },
                 onCancel = { selectedResult = null }
             )
@@ -134,33 +134,36 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                             contentAlignment = Alignment.CenterStart
                         ) {
                             BasicTextField(
-                                value = searchTextFieldValue,
+                                value = searchQuery,
                                 onValueChange = onQueryChanged,
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
                                 textStyle = TextStyle(color = MaterialTheme.colors.onSurface, fontSize = 16.sp),
                                 cursorBrush = SolidColor(MaterialTheme.colors.primary),
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardOptions = KeyboardOptions(
+                                    imeAction = ImeAction.Search,
+                                    autoCorrectEnabled = false
+                                ),
                                 keyboardActions = KeyboardActions(onSearch = {
-                                    val finalQuery = searchTextFieldValue.text
+                                    val finalQuery = searchQuery.text
                                     if (finalQuery.isNotEmpty()) {
-                                        // Force commit any active composition before hiding/clearing focus
-                                        searchTextFieldValue = searchTextFieldValue.copy(composition = null)
+                                        // Commit composition state to avoid "KBadenbaden" desync and allow immediate search
                                         
+
                                         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                                             isSearching = true,
                                             searchResults = emptyList() // clear previous to show progress
                                         ))
                                         WearCommandService.search(context, finalQuery)
                                         keyboardController?.hide()
-                                        focusManager.clearFocus()
+                                        // // focusManager.clearFocus() // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS
                                         coroutineScope.launch {
                                             listState.animateScrollToItem(1)
                                         }
                                     }
                                 }),
                                 decorationBox = { innerTextField ->
-                                    if (searchText.isEmpty()) {
+                                    if (searchQuery.text.isEmpty()) {
                                         Text("Search...", style = TextStyle(color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f)))
                                     }
                                     innerTextField()
@@ -168,6 +171,16 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                             )
                         }
                         
+                        if (searchQuery.text.isNotEmpty()) {
+                            Button(
+                                onClick = { searchQuery = TextFieldValue("") },
+                                modifier = Modifier.size(ButtonDefaults.SmallButtonSize).padding(end = 4.dp),
+                                colors = ButtonDefaults.secondaryButtonColors()
+                            ) {
+                                Icon(Icons.Default.Clear, modifier = Modifier.size(18.dp), contentDescription = "Clear")
+                            }
+                        }
+
                         Button(
                             onClick = {
                                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -183,7 +196,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                     }
                 }
 
-                if (searchText.isEmpty()) {
+                if (searchQuery.text.isEmpty()) {
                     // Show History
                     if (navState.searchHistory.isNotEmpty()) {
                         item {
@@ -196,13 +209,13 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                         items(navState.searchHistory) { query ->
                             Chip(
                                 onClick = { 
-                                    searchTextFieldValue = TextFieldValue(query, TextRange(query.length))
+                                    searchQuery = TextFieldValue(text = query, selection = TextRange(query.length))
                                     NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                                         isSearching = true,
                                         searchResults = emptyList()
                                     ))
                                     WearCommandService.search(context, query)
-                                    focusManager.clearFocus()
+                                    // // focusManager.clearFocus() // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS
                                     keyboardController?.hide()
                                 },
                                 label = { Text(query, maxLines = 1) },
@@ -237,7 +250,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                         items(navState.searchResults) { result ->
                             SearchResultChip(result) {
                                 selectedResult = result
-                                focusManager.clearFocus()
+                                // // focusManager.clearFocus() // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS
                                 keyboardController?.hide()
                             }
                         }
