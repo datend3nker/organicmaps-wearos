@@ -18,6 +18,15 @@ import com.google.android.gms.wearable.Node;
 import java.util.ArrayList;
 
 public class WearSyncService {
+    public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
+        Log.d(TAG, "Requesting watch to download: " + countryId);
+        Wearable.getNodeClient(context).getConnectedNodes().addOnSuccessListener(nodes -> {
+            for (Node node : nodes) {
+                Wearable.getMessageClient(context).sendMessage(node.getId(), "/map/download/request", countryId.getBytes());
+            }
+        });
+    }
+
     private static final String TAG = "WearSyncService";
     private static final String PATH_NAVIGATION = "/navigation/status";
     private static final String PATH_START_NAVIGATION = "/navigation/start";
@@ -60,6 +69,8 @@ public class WearSyncService {
             double speed = location.getSpeed();
             Log.d(TAG, "Syncing speed: " + speed + " m/s");
             map.putDouble("speedMps", speed);
+            map.putDouble("lat", location.getLatitude());
+            map.putDouble("lon", location.getLongitude());
         } else {
             map.putDouble("speedMps", -1.0);
         }
@@ -143,6 +154,14 @@ public class WearSyncService {
         DataMap map = putDataMapReq.getDataMap();
         map.putBoolean("active", true);
         map.putLong("timestamp", System.currentTimeMillis());
+        String[] missingMaps = app.organicmaps.sdk.routing.RoutingController.get().getLastMissingMaps();
+        if (missingMaps != null && missingMaps.length > 0) {
+            java.util.ArrayList<String> missingList = new java.util.ArrayList<>();
+            for (String m : missingMaps) {
+                missingList.add(m);
+            }
+            map.putStringArrayList("missingMaps", missingList);
+        }
 
         var putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();

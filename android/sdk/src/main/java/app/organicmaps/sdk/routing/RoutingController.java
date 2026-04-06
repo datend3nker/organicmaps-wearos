@@ -75,6 +75,9 @@ public class RoutingController
   private boolean mContainsCachedResult;
   private int mLastResultCode;
   private String[] mLastMissingMaps;
+
+  public String[] getLastMissingMaps() { return mLastMissingMaps; }
+
   @Nullable
   private RoutingInfo mCachedRoutingInfo;
   @Nullable

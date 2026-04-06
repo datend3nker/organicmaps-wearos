@@ -1,6 +1,9 @@
 package app.organicmaps.wear.presentation
 
 import android.os.Bundle
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.setValue
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
@@ -55,15 +58,29 @@ fun WearApp() {
     val pagerState = rememberPagerState(pageCount = { 
         if (isNavigating) {
             if (isMapEnabled) 3 else 2
-        } else 1 
+        } else 3 
     })
+
+    androidx.compose.runtime.LaunchedEffect(navState.openMapManager) {
+        if (navState.openMapManager && !isNavigating) {
+            pagerState.animateScrollToPage(1)
+            NavigationStateHolder.update(navState.copy(openMapManager = false))
+        }
+    }
 
     OrganicMapsTheme {
         Box(modifier = Modifier.fillMaxSize()) {
             if (!isNavigating) {
-                SearchScreen(onSearchClick = { 
-                    // Handled inside SearchScreen
-                })
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    when (page) {
+                        0 -> SearchScreen(onSearchClick = {})
+                        1 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen()
+                        2 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
+                    }
+                }
             } else {
                 HorizontalPager(
                     state = pagerState,
@@ -130,7 +147,113 @@ fun getTurnIcon(carDirection: Int, pedestrianDirection: Int): ImageVector {
 
 @Composable
 fun MapPanel() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val navState by NavigationStateHolder.state.collectAsState()
+    
+    val centerLat = if (navState.lat != 0.0) navState.lat else 48.2082
+    val centerLon = if (navState.lon != 0.0) navState.lon else 16.3738
+    val span = 0.01 
+    
+    var mapFeatures by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
+    var loaded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var downloadStatus by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+
+    androidx.compose.runtime.LaunchedEffect(centerLat, centerLon) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                System.loadLibrary("organicmaps")
+                val wearApp = context.applicationContext as app.organicmaps.wear.WearApplication
+                wearApp.waitForInitializationSuspend()
+                
+                val countryId = app.organicmaps.sdk.downloader.MapManager.nativeFindCountry(centerLat, centerLon)
+                if (countryId != null) {
+                    val initStatus = app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId)
+                    if (initStatus != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
+                        app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
+                        app.organicmaps.sdk.downloader.MapManager.startDownload("World")
+                        
+                        while(true) {
+                            val item = app.organicmaps.sdk.downloader.CountryItem.fill(countryId)
+                            if (item.status == app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
+                                downloadStatus = ""
+                                break
+                            } else if (item.status == app.organicmaps.sdk.downloader.CountryItem.STATUS_FAILED) {
+                                downloadStatus = "Map Download Failed"
+                                break
+                            } else {
+                                downloadStatus = "Downloading Map: ${item.progress.toInt()}%"
+                            }
+                            kotlinx.coroutines.delay(1000)
+                        }
+                    }
+                }
+                
+                mapFeatures = app.organicmaps.sdk.Framework.nativeGetWearMapFeatures(
+                    centerLat - span, centerLon - span, 
+                    centerLat + span, centerLon + span, 
+                    17
+                )
+                loaded = true
+            } catch (e: Throwable) { 
+                e.printStackTrace()
+            }
+        }
+    }
+    
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Map View\n(Vector Rendering coming soon)")
+        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+            drawRect(color = androidx.compose.ui.graphics.Color(0xFF1E1E1E))
+            
+            val features = mapFeatures
+            if (features != null && features.isNotEmpty()) {
+                val buffer = java.nio.ByteBuffer.wrap(features).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                while (buffer.hasRemaining()) {
+                    val type = buffer.get()
+                    val count = buffer.getInt()
+                    
+                    val mapPath = androidx.compose.ui.graphics.Path()
+                    for (i in 0 until count) {
+                        val lon = buffer.getDouble()
+                        val lat = buffer.getDouble()
+                        
+                        val x = ((lon - (centerLon - span)) / (2 * span)) * size.width
+                        val y = size.height - (((lat - (centerLat - span)) / (2 * span)) * size.height)
+                        
+                        if (i == 0) mapPath.moveTo(x.toFloat(), y.toFloat())
+                        else mapPath.lineTo(x.toFloat(), y.toFloat())
+                    }
+                    
+                    if (type.toInt() == 1) {
+                        drawPath(path = mapPath, color = androidx.compose.ui.graphics.Color.Gray, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f))
+                    } else if (type.toInt() == 2) {
+                        drawPath(path = mapPath, color = androidx.compose.ui.graphics.Color(0xFF2A2A2A)) 
+                    }
+                }
+            } else if (!loaded) {
+                // loading
+            }
+            
+            drawCircle(
+                color = androidx.compose.ui.graphics.Color.Cyan,
+                radius = 12f,
+                center = center
+            )
+        }
+        
+        if (downloadStatus.isNotEmpty()) {
+            androidx.wear.compose.material.Chip(
+                onClick = {},
+                colors = androidx.wear.compose.material.ChipDefaults.secondaryChipColors(),
+                label = { Text(downloadStatus, color = androidx.compose.ui.graphics.Color.White) },
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp)
+            )
+        } else {
+            Text(
+                text = "Standalone Vector Engine",
+                color = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+                style = androidx.wear.compose.material.MaterialTheme.typography.caption3
+            )
+        }
     }
 }

@@ -287,15 +287,18 @@ class DownloaderAdapter extends RecyclerView.Adapter<DownloaderAdapter.ViewHolde
     ArrayList<MenuBottomSheetItem> items = new ArrayList<>();
     switch (mSelectedItem.status)
     {
-    case CountryItem.STATUS_DOWNLOADABLE: items.add(getDownloadMenuItem()); break;
+    case CountryItem.STATUS_DOWNLOADABLE: items.add(getDownloadMenuItem());
+        items.add(getSendToWatchMenuItem()); break;
 
     case CountryItem.STATUS_UPDATABLE:
       items.add(getUpdateMenuItem());
+        items.add(getSendToWatchMenuItem());
       // Fallthrough
 
     case CountryItem.STATUS_DONE:
       if (!mSelectedItem.isExpandable())
         items.add(getExploreMenuItem());
+          items.add(getSendToWatchMenuItem());
       appendDeleteMenuItem(items);
       break;
 
@@ -306,6 +309,7 @@ class DownloaderAdapter extends RecyclerView.Adapter<DownloaderAdapter.ViewHolde
       {
         appendDeleteMenuItem(items);
         items.add(getExploreMenuItem());
+          items.add(getSendToWatchMenuItem());
       }
       break;
 
@@ -316,10 +320,12 @@ class DownloaderAdapter extends RecyclerView.Adapter<DownloaderAdapter.ViewHolde
 
       if (mSelectedItem.present)
         items.add(getExploreMenuItem());
+          items.add(getSendToWatchMenuItem());
       break;
 
     case CountryItem.STATUS_PARTLY:
       items.add(getDownloadMenuItem());
+        items.add(getSendToWatchMenuItem());
       appendDeleteMenuItem(items);
       break;
     }
@@ -353,6 +359,18 @@ class DownloaderAdapter extends RecyclerView.Adapter<DownloaderAdapter.ViewHolde
       items.add(new MenuBottomSheetItem(R.string.delete, R.drawable.ic_delete,
                                         () -> onDeleteActionSelected(mSelectedItem, DownloaderAdapter.this)));
     }
+  }
+
+  
+  private MenuBottomSheetItem getSendToWatchMenuItem()
+  {
+    return new MenuBottomSheetItem(app.organicmaps.R.string.share, app.organicmaps.R.drawable.ic_share,
+                                   () -> onSendToWatchActionSelected(mSelectedItem));
+  }
+  
+  private void onSendToWatchActionSelected(CountryItem item) {
+     app.organicmaps.wear.WearSyncService.sendMapRequestToWatch(mFragment.requireContext(), item.id);
+     android.widget.Toast.makeText(mFragment.requireContext(), "Sending " + item.name + " map to watch...", android.widget.Toast.LENGTH_SHORT).show();
   }
 
   private MenuBottomSheetItem getCancelMenuItem()

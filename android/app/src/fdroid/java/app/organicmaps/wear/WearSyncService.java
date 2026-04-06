@@ -8,6 +8,8 @@ import app.organicmaps.sdk.routing.RoutingInfo;
 import app.organicmaps.sdk.search.SearchResult;
 
 public class WearSyncService {
+    public static void sendMapRequestToWatch(@NonNull android.content.Context context, @NonNull String countryId) {}
+
     private static final String TAG = "WearSyncService";
 
     public static void syncPreferences(@NonNull Context context) { }

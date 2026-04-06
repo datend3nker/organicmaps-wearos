@@ -2388,6 +2388,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
     stopTrackRecording();
   }
 
+  @SuppressWarnings("deprecation")
   @Override
   public void onTrimMemory(int level)
   {
@@ -2398,6 +2399,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
       Framework.nativeMemoryWarning();
   }
 
+  @SuppressWarnings("deprecation")
   private void makeNavigationBarTransparentInLightMode()
   {
     int nightMask = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;

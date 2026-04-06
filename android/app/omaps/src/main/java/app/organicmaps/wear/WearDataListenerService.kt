@@ -19,6 +19,21 @@ class WearDataListenerService : WearableListenerService() {
             val currentState = NavigationStateHolder.state.value
             NavigationStateHolder.update(currentState.copy(isActive = true))
             launchOmaps()
+        } else if (messageEvent.path == "/map/download/request") {
+            val countryId = String(messageEvent.data)
+            Log.d(TAG, "Phone requested map download: $countryId")
+            val currentState = NavigationStateHolder.state.value
+            NavigationStateHolder.update(currentState.copy(openMapManager = true))
+            try {
+                System.loadLibrary("organicmaps")
+                val wearApp = applicationContext as app.organicmaps.wear.WearApplication
+                wearApp.waitForInitializationBlocking()
+                app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
+                app.organicmaps.sdk.downloader.MapManager.startDownload("World")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            launchOmaps() // Show UI so user sees progress
         }
     }
 
@@ -30,6 +45,24 @@ class WearDataListenerService : WearableListenerService() {
                 when (uri.path) {
                     "/navigation/status" -> {
                         val currentState = NavigationStateHolder.state.value
+                        
+                        val missingMaps = dataMap.getStringArrayList("missingMaps") ?: emptyList<String>()
+                        val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                        val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
+                        
+                        if (autoDownload && missingMaps.isNotEmpty()) {
+                            Log.d(TAG, "Auto-downloading missing maps for route: $missingMaps")
+                            try {
+                                val wearApp = applicationContext as app.organicmaps.wear.WearApplication
+                                wearApp.waitForInitializationBlocking()
+                                for (mapId in missingMaps) {
+                                    app.organicmaps.sdk.downloader.MapManager.startDownload(mapId)
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                        
                         val newState = currentState.copy(
                             distToTurn = dataMap.getString("distToTurn", currentState.distToTurn),
                             nextStreet = dataMap.getString("nextStreet", currentState.nextStreet),
@@ -39,7 +72,9 @@ class WearDataListenerService : WearableListenerService() {
                             speedMps = dataMap.getDouble("speedMps", currentState.speedMps),
                             speedLimitMps = dataMap.getDouble("speedLimitMps", currentState.speedLimitMps),
                             distToTarget = dataMap.getString("distToTarget", currentState.distToTarget),
-                            eta = dataMap.getInt("eta", currentState.eta)
+                            eta = dataMap.getInt("eta", currentState.eta),
+                            lat = dataMap.getDouble("lat", currentState.lat),
+                            lon = dataMap.getDouble("lon", currentState.lon)
                         )
                         NavigationStateHolder.update(newState)
                         if (newState.isActive && !currentState.isActive) launchOmaps()
