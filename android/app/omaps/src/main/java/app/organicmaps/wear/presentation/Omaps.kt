@@ -32,6 +32,14 @@ class Omaps : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setTheme(android.R.style.Theme_DeviceDefault)
+        
+        // Initialize state from prefs
+        val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+        val isMapEnabled = prefs.getBoolean("mapEnabled", false)
+        if (NavigationStateHolder.state.value.mapEnabled != isMapEnabled) {
+            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(mapEnabled = isMapEnabled))
+        }
+        
         setContent {
             WearApp()
         }
@@ -42,8 +50,13 @@ class Omaps : ComponentActivity() {
 fun WearApp() {
     val navState by NavigationStateHolder.state.collectAsState()
     val isNavigating = navState.isActive
+    val isMapEnabled = navState.mapEnabled
     
-    val pagerState = rememberPagerState(pageCount = { if (isNavigating) 3 else 1 })
+    val pagerState = rememberPagerState(pageCount = { 
+        if (isNavigating) {
+            if (isMapEnabled) 3 else 2
+        } else 1 
+    })
 
     OrganicMapsTheme {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -56,10 +69,17 @@ fun WearApp() {
                     state = pagerState,
                     modifier = Modifier.fillMaxSize()
                 ) { page ->
-                    when (page) {
-                        0 -> MapPanel()
-                        1 -> NavigationPanel(navState)
-                        2 -> StatsScreen(navState)
+                    if (isMapEnabled) {
+                        when (page) {
+                            0 -> MapPanel()
+                            1 -> NavigationPanel(navState)
+                            2 -> StatsScreen(navState)
+                        }
+                    } else {
+                        when (page) {
+                            0 -> NavigationPanel(navState)
+                            1 -> StatsScreen(navState)
+                        }
                     }
                 }
             }

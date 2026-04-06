@@ -137,6 +137,7 @@ public class WearSyncService {
 
     public static void startNavigation(@NonNull Context context) {
         Log.d(TAG, "Sending start navigation signal to Wear");
+        syncPreferences(context);
         
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_NAVIGATION);
         DataMap map = putDataMapReq.getDataMap();

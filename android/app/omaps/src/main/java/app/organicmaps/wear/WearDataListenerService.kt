@@ -73,6 +73,9 @@ class WearDataListenerService : WearableListenerService() {
                             .putBoolean("mapEnabled", mapEnabled)
                             .putString("mapDownloadMode", mapDownloadMode)
                             .apply()
+                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+                            mapEnabled = mapEnabled
+                        ))
                         Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, mapDownloadMode=$mapDownloadMode")
                     }
                 }

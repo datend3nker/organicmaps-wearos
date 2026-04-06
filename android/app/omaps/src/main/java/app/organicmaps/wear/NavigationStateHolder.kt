@@ -25,7 +25,8 @@ data class NavigationState(
     val distToTarget: String = "",
     val eta: Int = 0, // Seconds
     val searchResults: List<SearchResultItem> = emptyList(),
-    val searchHistory: List<String> = emptyList()
+    val searchHistory: List<String> = emptyList(),
+    val mapEnabled: Boolean = false
 )
 
 object NavigationStateHolder {
