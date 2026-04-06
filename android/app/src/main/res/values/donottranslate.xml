@@ -77,4 +77,14 @@
   <string name="twitter" translatable="false">X (Twitter)</string>
   <string name="vk" translatable="false">VK</string>
 
+  <string name="pref_wear_os" translatable="false">pref_wear_os</string>
+  <string name="pref_wear_os_map_enabled" translatable="false">pref_wear_os_map_enabled</string>
+  <string name="pref_wear_os_map_download_mode" translatable="false">pref_wear_os_map_download_mode</string>
+
+  <string-array name="wear_map_download_mode_values" translatable="false">
+    <item>BLUETOOTH_ONLY</item>
+    <item>AUTO</item>
+    <item>WIFI_ONLY</item>
+  </string-array>
+
 </resources>

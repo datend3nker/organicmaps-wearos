@@ -96,6 +96,11 @@ public class Framework
 
   public static native void nativePokeSearchInViewport();
 
+  // Wear OS Headless Vector Extraction
+  // Fetches geometry for roads, buildings, and water based on a given bound box
+  @NonNull
+  public static native byte[] nativeGetWearMapFeatures(double minLat, double minLon, double maxLat, double maxLon, int scale);
+
   @Size(2)
   public static native double[] nativeGetScreenRectCenter();
 

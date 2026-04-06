@@ -46,21 +46,25 @@ fun WearApp() {
     val pagerState = rememberPagerState(pageCount = { if (isNavigating) 3 else 1 })
 
     OrganicMapsTheme {
-        if (!isNavigating) {
-            SearchScreen(onSearchClick = { 
-                // Handled inside SearchScreen
-            })
-        } else {
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize()
-            ) { page ->
-                when (page) {
-                    0 -> MapPanel()
-                    1 -> NavigationPanel(navState)
-                    2 -> StatsScreen(navState)
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (!isNavigating) {
+                SearchScreen(onSearchClick = { 
+                    // Handled inside SearchScreen
+                })
+            } else {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    when (page) {
+                        0 -> MapPanel()
+                        1 -> NavigationPanel(navState)
+                        2 -> StatsScreen(navState)
+                    }
                 }
             }
+            
+            MapDownloadOverlay()
         }
     }
 }

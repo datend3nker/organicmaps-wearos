@@ -45,7 +45,7 @@ This plan details the implementation of a full-featured Wear OS companion app fo
 - The search pipeline will be cleanly abstracted as a headless module rather than hacking around the UI lifecycle.
 - To maintain energy efficiency, the phone will initially do the heavy lifting of parsing `.mwm` data, sending simplified vectors to the watch, removing the need for the watch to unpack heavy map structures.
 - Inherit the already existing product flavors (`google`, `fdroid`, `web`, `huawei`) rather than inventing completely new variants to isolate the sync logic.
-- Dont use git commants. Commits and pushed are only allowed to be used be the developper. Git is abolutely not allowed to be used by agents!
+- Dont use git commands. Commits and pushed are only allowed to be used be the developper. Git is abolutely not allowed to be used by agents!
 
 **Further Considerations**
 1. Map Engine: Since the user requested a lightweight visual representation, rendering simplified vectors via an Android `Canvas` stream or a basic OpenGL surface on the watch is vastly more energy-efficient than compiling the full OM `Drape` OpenGL engine for the watch. Is this minimal visual representation acceptable?

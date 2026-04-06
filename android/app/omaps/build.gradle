@@ -26,6 +26,13 @@ android {
         }
     }
 
+    flavorDimensions = ['default']
+    productFlavors {
+        google {
+            dimension 'default'
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix ".debug"

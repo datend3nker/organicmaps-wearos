@@ -65,6 +65,16 @@ class WearDataListenerService : WearableListenerService() {
                         val history = dataMap.getStringArrayList("history") ?: emptyList()
                         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(searchHistory = history))
                     }
+                    "/preferences" -> {
+                        val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                        val mapEnabled = dataMap.getBoolean("mapEnabled", false)
+                        val mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY")
+                        prefs.edit()
+                            .putBoolean("mapEnabled", mapEnabled)
+                            .putString("mapDownloadMode", mapDownloadMode)
+                            .apply()
+                        Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, mapDownloadMode=$mapDownloadMode")
+                    }
                 }
             }
         }

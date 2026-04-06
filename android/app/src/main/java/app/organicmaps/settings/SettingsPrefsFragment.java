@@ -58,6 +58,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     init3dModePrefsCallbacks();
     initPerspectivePrefsCallbacks();
     initAutoZoomPrefsCallbacks();
+    initWearOsPrefsCallbacks();
     initLoggingEnabledPrefsCallbacks();
     initEmulationBadStorage();
     initUseMobileDataPrefsCallbacks();
@@ -303,6 +304,30 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       }
       return true;
     });
+  }
+
+  private void initWearOsPrefsCallbacks()
+  {
+    androidx.preference.Preference.OnPreferenceChangeListener wearPrefsListener = (preference, newValue) -> {
+      // Sync to watch when map streaming setting changes
+      try {
+        app.organicmaps.wear.WearSyncService.syncPreferences(requireContext());
+      } catch (NoClassDefFoundError | Exception e) {
+        // Play Services unavailable or WearOS module not handling it, ignore gracefully
+        android.util.Log.e("SettingsPrefsFragment", "Wear OS sync failed: ", e);
+      }
+      return true;
+    };
+
+    final Preference mapEnabledPref = findPreference(getString(R.string.pref_wear_os_map_enabled));
+    if (mapEnabledPref != null) {
+        mapEnabledPref.setOnPreferenceChangeListener(wearPrefsListener);
+    }
+
+    final Preference mapDownloadModePref = findPreference(getString(R.string.pref_wear_os_map_download_mode));
+    if (mapDownloadModePref != null) {
+        mapDownloadModePref.setOnPreferenceChangeListener(wearPrefsListener);
+    }
   }
 
   private void init3dModePrefsCallbacks()

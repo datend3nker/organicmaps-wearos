@@ -12,7 +12,6 @@ import com.google.android.gms.tasks.Task;
 import com.google.android.gms.wearable.DataItem;
 import com.google.android.gms.wearable.DataMap;
 import com.google.android.gms.wearable.PutDataMapRequest;
-import com.google.android.gms.wearable.PutDataRequest;
 import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.Node;
 
@@ -24,6 +23,23 @@ public class WearSyncService {
     private static final String PATH_START_NAVIGATION = "/navigation/start";
     private static final String PATH_SEARCH_RESULTS = "/search/results";
     private static final String PATH_SEARCH_HISTORY = "/search/history";
+    private static final String PATH_PREFERENCES = "/preferences";
+
+    public static void syncPreferences(@NonNull Context context) {
+        android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
+        boolean mapEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
+        String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
+
+        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_PREFERENCES);
+        DataMap map = putDataMapReq.getDataMap();
+        map.putBoolean("mapEnabled", mapEnabled);
+        map.putString("mapDownloadMode", mapDownloadMode);
+        
+        var putDataReq = putDataMapReq.asPutDataRequest();
+        Task<DataItem> putDataTask = Wearable.getDataClient(context).putDataItem(putDataReq);
+        putDataTask.addOnSuccessListener(dataItem -> Log.d(TAG, "Sent updated preferences to watch"))
+                   .addOnFailureListener(e -> Log.e(TAG, "Failed to send preferences: " + e.getMessage()));
+    }
 
     public static void updateNavigation(@NonNull Context context, @NonNull RoutingInfo info, @Nullable Location location) {
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_NAVIGATION);
@@ -50,7 +66,7 @@ public class WearSyncService {
         
         map.putLong("timestamp", System.currentTimeMillis());
 
-        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
+        var putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         
         Wearable.getDataClient(context).putDataItem(putDataReq)
@@ -63,7 +79,7 @@ public class WearSyncService {
         map.putBoolean("isSearching", isSearching);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
+        var putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq);
     }
@@ -89,7 +105,7 @@ public class WearSyncService {
         map.putBoolean("isSearching", isSearching);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
+        var putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq)
                 .addOnSuccessListener(dataItem -> Log.d(TAG, "Successfully sent search results"))
@@ -112,7 +128,7 @@ public class WearSyncService {
         map.putStringArrayList("history", history);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
+        var putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq)
                 .addOnSuccessListener(dataItem -> Log.d(TAG, "Successfully sent history"))
@@ -127,7 +143,7 @@ public class WearSyncService {
         map.putBoolean("active", true);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
+        var putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq);
 
@@ -145,7 +161,7 @@ public class WearSyncService {
         map.putBoolean("active", false);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
+        var putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq);
     }
