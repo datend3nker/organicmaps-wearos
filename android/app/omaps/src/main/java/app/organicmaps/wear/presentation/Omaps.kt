@@ -164,26 +164,34 @@ fun MapPanel() {
                 System.loadLibrary("organicmaps")
                 val wearApp = context.applicationContext as app.organicmaps.wear.WearApplication
                 wearApp.waitForInitializationSuspend()
+
+                  val prefs = context.getSharedPreferences("wear_prefs", android.content.Context.MODE_PRIVATE)
+                  val mapDownloadMode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY"
+                  val allowLocalDownload = mapDownloadMode != "BLUETOOTH_ONLY"
                 
                 val countryId = app.organicmaps.sdk.downloader.MapManager.nativeFindCountry(centerLat, centerLon)
                 if (countryId != null) {
                     val initStatus = app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId)
                     if (initStatus != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
-                        app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
-                        app.organicmaps.sdk.downloader.MapManager.startDownload("World")
-                        
-                        while(true) {
-                            val item = app.organicmaps.sdk.downloader.CountryItem.fill(countryId)
-                            if (item.status == app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
-                                downloadStatus = ""
-                                break
-                            } else if (item.status == app.organicmaps.sdk.downloader.CountryItem.STATUS_FAILED) {
-                                downloadStatus = "Map Download Failed"
-                                break
-                            } else {
-                                downloadStatus = "Downloading Map: ${item.progress.toInt()}%"
-                            }
-                            kotlinx.coroutines.delay(1000)
+                          if (allowLocalDownload) {
+                              app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
+                              app.organicmaps.sdk.downloader.MapManager.startDownload("World")
+
+                              while(true) {
+                                  val item = app.organicmaps.sdk.downloader.CountryItem.fill(countryId)
+                                  if (item.status == app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
+                                      downloadStatus = ""
+                                      break
+                                  } else if (item.status == app.organicmaps.sdk.downloader.CountryItem.STATUS_FAILED) {
+                                      downloadStatus = "Map Download Failed"
+                                      break
+                                  } else {
+                                      downloadStatus = "Downloading Map: ${item.progress.toInt()}%"
+                                  }
+                                  kotlinx.coroutines.delay(1000)
+                              }
+                          } else {
+                              downloadStatus = "Map not local (Bluetooth mode)"
                         }
                     }
                 }

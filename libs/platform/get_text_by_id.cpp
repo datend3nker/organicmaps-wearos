@@ -48,13 +48,21 @@ bool GetJsonBuffer(platform::TextSource textSource, string const & localeName, s
 
 TGetTextByIdPtr GetTextById::Create(string const & jsonBuffer, string const & localeName)
 {
-  TGetTextByIdPtr result(new GetTextById(jsonBuffer, localeName));
-  if (!result->IsValid())
+    try
   {
-    ASSERT(false, ("Can't create a GetTextById instance from a json file. localeName=", localeName));
-    return nullptr;
+      TGetTextByIdPtr result(new GetTextById(jsonBuffer, localeName));
+      if (!result->IsValid())
+      {
+        ASSERT(false, ("Can't create a GetTextById instance from a json file. localeName=", localeName));
+        return nullptr;
+      }
+      return result;
   }
-  return result;
+    catch (base::Json::Exception const & ex)
+    {
+      LOG(LWARNING, ("Can't parse localization json for", localeName, ex.what()));
+      return nullptr;
+    }
 }
 
 TGetTextByIdPtr GetTextByIdFactory(TextSource textSource, string const & localeName)
@@ -72,7 +80,7 @@ TGetTextByIdPtr GetTextByIdFactory(TextSource textSource, string const & localeN
 
 TGetTextByIdPtr ForTestingGetTextByIdFactory(string const & jsonBuffer, string const & localeName)
 {
-  return GetTextById::Create(jsonBuffer, localeName);
+    return GetTextById::Create(jsonBuffer, localeName);
 }
 
 GetTextById::GetTextById(string const & jsonBuffer, string const & localeName) : m_locale(localeName)

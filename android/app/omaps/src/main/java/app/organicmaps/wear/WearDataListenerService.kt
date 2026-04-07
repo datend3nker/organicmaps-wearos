@@ -13,6 +13,13 @@ class WearDataListenerService : WearableListenerService() {
     private val TAG = "WearDataListener"
     private val PATH_START_NAVIGATION = "/navigation/start"
 
+    private fun shouldAutoDownloadMaps(): Boolean {
+        val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+        val mapEnabled = prefs.getBoolean("mapEnabled", false)
+        val mapDownloadMode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY"
+        return mapEnabled && mapDownloadMode != "BLUETOOTH_ONLY"
+    }
+
     override fun onMessageReceived(messageEvent: MessageEvent) {
         Log.d(TAG, "onMessageReceived: ${messageEvent.path}")
         if (messageEvent.path == PATH_START_NAVIGATION) {
@@ -24,14 +31,19 @@ class WearDataListenerService : WearableListenerService() {
             Log.d(TAG, "Phone requested map download: $countryId")
             val currentState = NavigationStateHolder.state.value
             NavigationStateHolder.update(currentState.copy(openMapManager = true))
-            try {
-                System.loadLibrary("organicmaps")
-                val wearApp = applicationContext as app.organicmaps.wear.WearApplication
-                wearApp.waitForInitializationBlocking()
-                app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
-                app.organicmaps.sdk.downloader.MapManager.startDownload("World")
-            } catch (e: Throwable) {
-                e.printStackTrace()
+
+            if (shouldAutoDownloadMaps()) {
+                try {
+                    System.loadLibrary("organicmaps")
+                    val wearApp = applicationContext as app.organicmaps.wear.WearApplication
+                    wearApp.waitForInitializationBlocking()
+                    app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
+                    app.organicmaps.sdk.downloader.MapManager.startDownload("World")
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
+            } else {
+                Log.d(TAG, "Skipping auto-download from phone request due to watch map settings")
             }
             launchOmaps() // Show UI so user sees progress
         }
@@ -49,8 +61,9 @@ class WearDataListenerService : WearableListenerService() {
                         val missingMaps = dataMap.getStringArrayList("missingMaps") ?: emptyList<String>()
                         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
                         val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
+                          val autoDownloadAllowedByMapSettings = shouldAutoDownloadMaps()
                         
-                        if (autoDownload && missingMaps.isNotEmpty()) {
+                          if (autoDownload && autoDownloadAllowedByMapSettings && missingMaps.isNotEmpty()) {
                             Log.d(TAG, "Auto-downloading missing maps for route: $missingMaps")
                             try {
                                 val wearApp = applicationContext as app.organicmaps.wear.WearApplication
@@ -61,6 +74,8 @@ class WearDataListenerService : WearableListenerService() {
                             } catch (e: Throwable) {
                                 e.printStackTrace()
                             }
+                          } else if (autoDownload && missingMaps.isNotEmpty()) {
+                              Log.d(TAG, "Missing maps received but auto-download blocked by map settings")
                         }
                         
                         val newState = currentState.copy(

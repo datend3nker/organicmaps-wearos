@@ -2,9 +2,14 @@ package app.organicmaps.wear
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import app.organicmaps.sdk.location.BaseLocationProvider
 import app.organicmaps.sdk.location.LocationProviderFactory
 import app.organicmaps.sdk.OrganicMaps
+import app.organicmaps.sdk.settings.StoragePathManager
+import app.organicmaps.sdk.util.ConnectionState
+import java.io.File
+import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
@@ -25,6 +30,7 @@ class WearApplication : Application() {
         super.onCreate()
         
         System.loadLibrary("organicmaps")
+        ConnectionState.INSTANCE.initialize(this)
         
         val dummyLocationFactory = object : LocationProviderFactory {
             override fun isGoogleLocationAvailable(context: Context): Boolean = false
@@ -45,6 +51,8 @@ class WearApplication : Application() {
             "app.organicmaps.debug.provider", 
             dummyLocationFactory
         )
+
+        copyCountriesFileToWritableStorage()
         
         try {
             val asyncContinue = organicMaps.init { 
@@ -77,6 +85,20 @@ class WearApplication : Application() {
             if (retries > 300) throw java.lang.RuntimeException("Timeout waiting for init (30s)") // Increased timeout
             Thread.sleep(100)
             retries++
+        }
+    }
+
+    private fun copyCountriesFileToWritableStorage() {
+        try {
+            val storagePath = StoragePathManager.findMapsStorage(this)
+            val targetFile = File(storagePath, "countries.txt")
+            assets.open("countries.txt").use { input ->
+                FileOutputStream(targetFile, false).use { output ->
+                    input.copyTo(output)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w("WearApplication", "Couldn't pre-copy countries.txt to writable storage", e)
         }
     }
 }

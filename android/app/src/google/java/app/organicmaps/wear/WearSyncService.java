@@ -20,6 +20,7 @@ import java.util.ArrayList;
 public class WearSyncService {
     public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
         Log.d(TAG, "Requesting watch to download: " + countryId);
+        syncPreferences(context);
         Wearable.getNodeClient(context).getConnectedNodes().addOnSuccessListener(nodes -> {
             for (Node node : nodes) {
                 Wearable.getMessageClient(context).sendMessage(node.getId(), "/map/download/request", countryId.getBytes());
