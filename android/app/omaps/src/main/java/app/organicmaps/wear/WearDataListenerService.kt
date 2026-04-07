@@ -30,7 +30,7 @@ class WearDataListenerService : WearableListenerService() {
                 wearApp.waitForInitializationBlocking()
                 app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
                 app.organicmaps.sdk.downloader.MapManager.startDownload("World")
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 e.printStackTrace()
             }
             launchOmaps() // Show UI so user sees progress
@@ -58,20 +58,20 @@ class WearDataListenerService : WearableListenerService() {
                                 for (mapId in missingMaps) {
                                     app.organicmaps.sdk.downloader.MapManager.startDownload(mapId)
                                 }
-                            } catch (e: Exception) {
+                            } catch (e: Throwable) {
                                 e.printStackTrace()
                             }
                         }
                         
                         val newState = currentState.copy(
-                            distToTurn = dataMap.getString("distToTurn", currentState.distToTurn),
-                            nextStreet = dataMap.getString("nextStreet", currentState.nextStreet),
+                            distToTurn = dataMap.getString("distToTurn") ?: currentState.distToTurn,
+                            nextStreet = dataMap.getString("nextStreet") ?: currentState.nextStreet,
                             carDirection = dataMap.getInt("carDirection", currentState.carDirection),
                             pedestrianDirection = dataMap.getInt("pedestrianDirection", currentState.pedestrianDirection),
                             isActive = dataMap.getBoolean("active", currentState.isActive),
                             speedMps = dataMap.getDouble("speedMps", currentState.speedMps),
                             speedLimitMps = dataMap.getDouble("speedLimitMps", currentState.speedLimitMps),
-                            distToTarget = dataMap.getString("distToTarget", currentState.distToTarget),
+                            distToTarget = dataMap.getString("distToTarget") ?: currentState.distToTarget,
                             eta = dataMap.getInt("eta", currentState.eta),
                             lat = dataMap.getDouble("lat", currentState.lat),
                             lon = dataMap.getDouble("lon", currentState.lon)
@@ -84,8 +84,8 @@ class WearDataListenerService : WearableListenerService() {
                         val isSearching = dataMap.getBoolean("isSearching", false)
                         val results = resultMaps.map {
                             SearchResultItem(
-                                name = it.getString("name", ""),
-                                description = it.getString("description", ""),
+                                name = it.getString("name") ?: "",
+                                description = it.getString("description") ?: "",
                                 lat = it.getDouble("lat", 0.0),
                                 lon = it.getDouble("lon", 0.0),
                                 type = it.getInt("type", 2)

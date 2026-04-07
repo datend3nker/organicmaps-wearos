@@ -330,13 +330,14 @@ public class MwmActivity extends BaseMwmFragmentActivity
       if (ip.process(intent, this))
         break;
     }
-      if (intent.hasExtra("wear_route_lat")) {
+        if (intent.hasExtra("wear_route_lat")) {
         double lat = intent.getDoubleExtra("wear_route_lat", 0.0);
         double lon = intent.getDoubleExtra("wear_route_lon", 0.0);
         int routerType = intent.getIntExtra("wear_route_router", 0);
         String name = intent.getStringExtra("wear_route_name");
         if (name == null) name = "";
-        mAutoStartFromWear = true;
+            // Route is prepared from watch, but navigation is started manually on phone.
+            mAutoStartFromWear = false;
         app.organicmaps.sdk.bookmarks.data.MapObject startPoint = app.organicmaps.MwmApplication.from(this).getLocationHelper().getMyPosition();
         app.organicmaps.sdk.bookmarks.data.MapObject endPoint = app.organicmaps.sdk.bookmarks.data.MapObject.createMapObject(app.organicmaps.sdk.bookmarks.data.MapObject.POI, name, "", lat, lon);
         app.organicmaps.sdk.routing.RoutingController.get().prepare(startPoint, endPoint, app.organicmaps.sdk.Router.valueOf(routerType));
@@ -1625,18 +1626,16 @@ public class MwmActivity extends BaseMwmFragmentActivity
       return;
 
     closeSearchToolbar(true, true);
-
-    if (mAutoStartFromWear)
-    {
-      mAutoStartFromWear = false;
-      onRoutingStart();
-    }
   }
 
   @Override
   public void onDrivingOptionsWarning()
   {
     mAutoStartFromWear = false;
+
+    if (!RoutingController.get().isPlanning())
+      return;
+    
     if (mRoutingPlanInplaceController == null)
       return;
 
@@ -2064,6 +2063,8 @@ public class MwmActivity extends BaseMwmFragmentActivity
   @Override
   public void onRoutingStart()
   {
+    mAutoStartFromWear = false; // Finally clear the flag here
+
     if (!showStartPointNotice())
     {
       UiUtils.setFullscreen(this, false);

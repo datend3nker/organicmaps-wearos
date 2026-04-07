@@ -54,14 +54,14 @@ public class WearSyncService {
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_NAVIGATION);
         DataMap map = putDataMapReq.getDataMap();
 
-        map.putString("distToTurn", info.distToTurn.toString(context));
-        map.putString("nextStreet", info.nextStreet);
+        map.putString("distToTurn", info.distToTurn != null ? info.distToTurn.toString(context) : "");
+        map.putString("nextStreet", info.nextStreet != null ? info.nextStreet : "");
         map.putInt("carDirection", info.carDirection.ordinal());
         map.putInt("pedestrianDirection", info.pedestrianDirection.ordinal());
         map.putInt("exitNum", info.exitNum);
         map.putBoolean("active", true);
         map.putDouble("completionPercent", info.completionPercent);
-        map.putString("distToTarget", info.distToTarget.toString(context));
+        map.putString("distToTarget", info.distToTarget != null ? info.distToTarget.toString(context) : "");
         map.putInt("eta", info.totalTimeInSeconds);
         map.putDouble("speedLimitMps", info.speedLimitMps);
         
@@ -105,8 +105,8 @@ public class WearSyncService {
         for (int i = 0; i < count; i++) {
             SearchResult res = results[i];
             DataMap resMap = new DataMap();
-            resMap.putString("name", res.getTitle(context));
-            resMap.putString("description", res.description != null ? res.description.localizedFeatureType : "");
+            resMap.putString("name", res.getTitle(context) != null ? res.getTitle(context) : "");
+            resMap.putString("description", (res.description != null && res.description.localizedFeatureType != null) ? res.description.localizedFeatureType : "");
             resMap.putDouble("lat", res.lat);
             resMap.putDouble("lon", res.lon);
             resMap.putInt("type", res.type);
