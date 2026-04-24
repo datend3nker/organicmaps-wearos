@@ -211,6 +211,18 @@
                 android:host="*"
                 android:pathPrefix="/search"
                 android:scheme="wear" />
+            <data
+                android:host="*"
+                android:pathPrefix="/map"
+                android:scheme="wear" />
+            <data
+                android:host="*"
+                android:path="/ping"
+                android:scheme="wear" />
+            <data
+                android:host="*"
+                android:path="/pong"
+                android:scheme="wear" />
         </intent-filter>
     </service>
 

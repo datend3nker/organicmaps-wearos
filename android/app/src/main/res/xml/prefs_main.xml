@@ -201,6 +201,12 @@
       app:singleLineTitle="false"
       android:defaultValue="false"
       android:order="1" />
+    <SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_offline_maps_enabled"
+      android:title="@string/pref_wear_os_offline_maps_title"
+      android:defaultValue="false"
+      android:dependency="@string/pref_wear_os_map_enabled"
+      android:order="2" />
     <ListPreference
       android:key="@string/pref_wear_os_map_download_mode"
       android:title="@string/pref_wear_map_download_mode_title"
@@ -209,7 +215,7 @@
       android:entries="@array/wear_map_download_mode"
       android:entryValues="@array/wear_map_download_mode_values"
       android:defaultValue="BLUETOOTH_ONLY"
-      android:dependency="@string/pref_wear_os_map_enabled"
-      android:order="2" />
+      android:dependency="@string/pref_wear_os_offline_maps_enabled"
+      android:order="3" />
   </androidx.preference.PreferenceCategory>
 </androidx.preference.PreferenceScreen>

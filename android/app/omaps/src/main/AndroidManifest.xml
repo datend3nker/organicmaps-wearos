@@ -51,6 +51,10 @@
                     android:host="*"
                     android:pathPrefix="/preferences"
                     android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/map"
+                    android:scheme="wear" />
             </intent-filter>
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
@@ -61,6 +65,10 @@
                 <data
                     android:host="*"
                     android:pathPrefix="/search"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/map"
                     android:scheme="wear" />
             </intent-filter>
         </service>

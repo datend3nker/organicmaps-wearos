@@ -7,6 +7,8 @@
 #include "routing/lanes/lane_info.hpp"
 #include "routing/turns.hpp"
 
+#include "geometry/point2d.hpp"
+
 #include <string>
 #include <vector>
 
@@ -34,6 +36,7 @@ public:
     , m_time(0)
     , m_completionPercent(0)
     , m_pedestrianTurn(turns::PedestrianDirection::None)
+    , m_turnPoint(0, 0)
   {}
 
   bool IsValid() const { return m_distToTarget.IsValid(); }
@@ -81,5 +84,7 @@ public:
   // Current speed limit in meters per second.
   // If no info about speed limit then m_speedLimitMps < 0.
   double m_speedLimitMps = -1.0;
+
+  m2::PointD m_turnPoint;
 };
 }  // namespace routing

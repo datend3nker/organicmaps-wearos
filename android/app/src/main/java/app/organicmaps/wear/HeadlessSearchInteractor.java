@@ -34,6 +34,10 @@ public class HeadlessSearchInteractor implements SearchListener {
     public void startSearch(@NonNull String query) {
         Log.d(TAG, "Starting headless search for: " + query);
         try {
+            if (MwmApplication.from(mContext).getOrganicMaps().arePlatformAndCoreInitialized()) {
+                performSearch(query);
+                return;
+            }
             boolean asyncInit = MwmApplication.from(mContext).initOrganicMaps(() -> {
                 Log.d(TAG, "Framework initialized headless.");
                 performSearch(query);

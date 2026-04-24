@@ -2,12 +2,16 @@ package app.organicmaps.wear.map;
 
 import androidx.annotation.NonNull;
 import app.organicmaps.sdk.Framework;
-import app.organicmaps.sdk.bookmarks.data.MapObject;
 
 /**
- * Maps bounding boxes requested by the watch to raw point geometry vectors,
- * which can then be serialized and transmitted to Wear OS.
+ * Shared app module helper for extracting simplified map geometry for the watch.
  */
-public class MapFeaturesExtractor {
-    // We will bind an extraction method to C++
+public final class MapFeaturesExtractor {
+    private MapFeaturesExtractor() {}
+
+    @NonNull
+    public static byte[] extract(double minLat, double minLon, double maxLat, double maxLon, int scale) {
+        int clampedScale = Math.max(1, Math.min(20, scale));
+        return Framework.nativeGetWearMapFeatures(minLat, minLon, maxLat, maxLon, clampedScale);
+    }
 }

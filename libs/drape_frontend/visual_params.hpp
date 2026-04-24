@@ -27,6 +27,8 @@ public:
   static void Init(double vs, uint32_t tileSize);
   static VisualParams & Instance();
 
+  bool IsInited() const { return m_isInited; }
+
   static std::string const & GetResourcePostfix(double visualScale);
   std::string const & GetResourcePostfix() const;
 

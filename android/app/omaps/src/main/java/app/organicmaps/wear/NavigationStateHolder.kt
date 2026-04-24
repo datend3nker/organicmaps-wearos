@@ -21,15 +21,23 @@ data class NavigationState(
     val isSearching: Boolean = false,
     val speedMps: Double = -1.0,
     val speedLimitMps: Double = -1.0,
+    val bearing: Float = -1f,
     val completionPercent: Double = 0.0,
     val distToTarget: String = "",
     val eta: Int = 0, // Seconds
     val searchResults: List<SearchResultItem> = emptyList(),
     val searchHistory: List<String> = emptyList(),
     val mapEnabled: Boolean = false,
+    val offlineMapsEnabled: Boolean = false,
     val lat: Double = 0.0,
     val lon: Double = 0.0,
-    val openMapManager: Boolean = false
+    val turnLat: Double = 0.0,
+    val turnLon: Double = 0.0,
+    val distToTurnMeters: Double = -1.0,
+    val routerType: Int = 0, // 0: Vehicle, 1: Pedestrian, 2: Bicycle, 3: Transit
+    val routePoints: List<Pair<Double, Double>> = emptyList(),
+    val openMapManager: Boolean = false,
+    val isPhoneConnected: Boolean = false
 )
 
 object NavigationStateHolder {

@@ -19,4 +19,5 @@ public class WearSyncService {
     public static void sendSearchResults(@NonNull Context context, SearchResult[] results, boolean isSearching) { }
     public static void sendSearchState(@NonNull Context context, boolean isSearching) { }
     public static void sendSearchHistory(@NonNull Context context) { }
+    public static void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId, int x, int y, int zoom, @NonNull byte[] features) { }
 }

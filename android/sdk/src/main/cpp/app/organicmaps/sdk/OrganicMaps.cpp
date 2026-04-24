@@ -4,6 +4,8 @@
 
 #include "app/organicmaps/sdk/core/jni_helper.hpp"
 
+#include "drape_frontend/visual_params.hpp"
+
 extern "C"
 {
 // static void nativeSetSettingsDir(String settingsPath);
@@ -28,6 +30,11 @@ JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitPlatform(JNIEnv * 
 // static void nativeInitFramework(@NonNull Runnable onComplete);
 JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv * env, jclass clazz, jobject onComplete)
 {
+  if (!df::VisualParams::Instance().IsInited())
+  {
+    df::VisualParams::Init(1.0, 512);
+  }
+
   if (!g_framework)
   {
     g_framework.Assign(new android::Framework([onComplete = jni::make_global_ref_safe(onComplete)]()

@@ -16,6 +16,7 @@ import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.Node;
 
 import java.util.ArrayList;
+import java.nio.ByteBuffer;
 
 public class WearSyncService {
     public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
@@ -34,18 +35,21 @@ public class WearSyncService {
     private static final String PATH_SEARCH_RESULTS = "/search/results";
     private static final String PATH_SEARCH_HISTORY = "/search/history";
     private static final String PATH_PREFERENCES = "/preferences";
+    private static final String PATH_MAP_TILE_RESPONSE = "/map/tile/response";
 
     public static void syncPreferences(@NonNull Context context) {
         android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
         boolean mapEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
+        boolean offlineMapsEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_offline_maps_enabled), false);
         String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
 
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_PREFERENCES);
         DataMap map = putDataMapReq.getDataMap();
         map.putBoolean("mapEnabled", mapEnabled);
+        map.putBoolean("offlineMapsEnabled", offlineMapsEnabled);
         map.putString("mapDownloadMode", mapDownloadMode);
         
-        var putDataReq = putDataMapReq.asPutDataRequest();
+        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         Task<DataItem> putDataTask = Wearable.getDataClient(context).putDataItem(putDataReq);
         putDataTask.addOnSuccessListener(dataItem -> Log.d(TAG, "Sent updated preferences to watch"))
                    .addOnFailureListener(e -> Log.e(TAG, "Failed to send preferences: " + e.getMessage()));
@@ -65,6 +69,10 @@ public class WearSyncService {
         map.putString("distToTarget", info.distToTarget != null ? info.distToTarget.toString(context) : "");
         map.putInt("eta", info.totalTimeInSeconds);
         map.putDouble("speedLimitMps", info.speedLimitMps);
+        map.putInt("routerType", app.organicmaps.sdk.Router.get().ordinal());
+        map.putDouble("distToTurnMeters", info.distToTurn != null ? info.distToTurn.mDistance : -1.0);
+        map.putDouble("turnLat", info.turnLat);
+        map.putDouble("turnLon", info.turnLon);
         
         if (location != null) {
             double speed = location.getSpeed();
@@ -72,13 +80,34 @@ public class WearSyncService {
             map.putDouble("speedMps", speed);
             map.putDouble("lat", location.getLatitude());
             map.putDouble("lon", location.getLongitude());
+            if (location.hasBearing()) {
+                map.putFloat("bearing", location.getBearing());
+            } else {
+                map.putFloat("bearing", -1f);
+            }
         } else {
             map.putDouble("speedMps", -1.0);
         }
         
         map.putLong("timestamp", System.currentTimeMillis());
 
-        var putDataReq = putDataMapReq.asPutDataRequest();
+        try {
+            app.organicmaps.sdk.routing.JunctionInfo[] junctions = app.organicmaps.sdk.Framework.nativeGetRouteJunctionPoints(20.0);
+            if (junctions != null && junctions.length > 0) {
+                float[] lats = new float[junctions.length];
+                float[] lons = new float[junctions.length];
+                for (int i = 0; i < junctions.length; i++) {
+                    lats[i] = (float) junctions[i].mLat;
+                    lons[i] = (float) junctions[i].mLon;
+                }
+                map.putFloatArray("routeLats", lats);
+                map.putFloatArray("routeLons", lons);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to extract route junctions", e);
+        }
+
+        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         
         Wearable.getDataClient(context).putDataItem(putDataReq)
@@ -91,7 +120,7 @@ public class WearSyncService {
         map.putBoolean("isSearching", isSearching);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        var putDataReq = putDataMapReq.asPutDataRequest();
+        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq);
     }
@@ -117,7 +146,7 @@ public class WearSyncService {
         map.putBoolean("isSearching", isSearching);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        var putDataReq = putDataMapReq.asPutDataRequest();
+        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq)
                 .addOnSuccessListener(dataItem -> Log.d(TAG, "Successfully sent search results"))
@@ -140,7 +169,7 @@ public class WearSyncService {
         map.putStringArrayList("history", history);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        var putDataReq = putDataMapReq.asPutDataRequest();
+        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq)
                 .addOnSuccessListener(dataItem -> Log.d(TAG, "Successfully sent history"))
@@ -164,7 +193,7 @@ public class WearSyncService {
             map.putStringArrayList("missingMaps", missingList);
         }
 
-        var putDataReq = putDataMapReq.asPutDataRequest();
+        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq);
 
@@ -182,8 +211,21 @@ public class WearSyncService {
         map.putBoolean("active", false);
         map.putLong("timestamp", System.currentTimeMillis());
 
-        var putDataReq = putDataMapReq.asPutDataRequest();
+        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq);
+    }
+
+    public static void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId,
+                                           int x, int y, int zoom, @NonNull byte[] features) {
+        ByteBuffer payload = ByteBuffer.allocate(4 * 3 + features.length);
+        payload.putInt(x);
+        payload.putInt(y);
+        payload.putInt(zoom);
+        payload.put(features);
+
+        Wearable.getMessageClient(context)
+                .sendMessage(nodeId, PATH_MAP_TILE_RESPONSE, payload.array())
+                .addOnFailureListener(e -> Log.e(TAG, "Failed to send map tile response", e));
     }
 }

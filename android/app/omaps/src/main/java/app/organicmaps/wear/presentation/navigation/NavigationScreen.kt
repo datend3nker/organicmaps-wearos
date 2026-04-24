@@ -35,7 +35,7 @@ fun NavigationScreen(
     turnIcon: ImageVector,
     remainingTime: String,
     onCancelClick: () -> Unit,
-    deviceRotation: Float,
+    deviceRotation: Float = 0f,
 ) {
     Scaffold(
         timeText = { TimeText() }
@@ -43,43 +43,44 @@ fun NavigationScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = 24.dp, bottom = 12.dp), // Avoid overlap with TimeText
+                .padding(top = 28.dp, bottom = 16.dp, start = 8.dp, end = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            // Larger distance text
+            // Distance text
             Text(
-                text = distanceToNextTurn,
+                text = distanceToNextTurn.ifEmpty { "Proceed" },
                 style = MaterialTheme.typography.title1.copy(
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.ExtraBold
                 ),
                 color = MaterialTheme.colors.primary,
                 textAlign = TextAlign.Center
             )
 
-            // Turn icon rotated by device orientation
+            // Large turn icon
             Icon(
                 imageVector = turnIcon,
                 contentDescription = "Turn icon",
                 modifier = Modifier
-                    .size(56.dp) // Adjusted size
+                    .size(64.dp)
                     .rotate(deviceRotation),
                 tint = MaterialTheme.colors.onBackground
             )
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                // Street name / remaining time
+                // Street name
                 Text(
                     text = remainingTime,
-                    style = MaterialTheme.typography.body2,
+                    style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Medium),
                     textAlign = TextAlign.Center,
-                    maxLines = 1
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 12.dp)
                 )
                 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                // Smaller cancel button
+                // Cancel button
                 Button(
                     onClick = onCancelClick,
                     modifier = Modifier.size(ButtonDefaults.SmallButtonSize),
@@ -100,9 +101,9 @@ fun NavigationScreen(
 @Composable
 fun NavigationScreenPreview() {
     NavigationScreen(
-        distanceToNextTurn = "100 m",
+        distanceToNextTurn = "150 m",
         turnIcon = Icons.Default.ArrowUpward,
-        remainingTime = "Main Street",
+        remainingTime = "Avenue de l'Opéra",
         onCancelClick = { },
         deviceRotation = 45f
     )

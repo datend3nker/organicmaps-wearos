@@ -14,6 +14,8 @@ object WearCommandService {
     private const val PATH_SEARCH_QUERY = "/search/query"
     private const val PATH_SEARCH_SELECT = "/search/select"
     private const val PATH_SEARCH_HISTORY_REQUEST = "/search/history/request"
+    private const val PATH_MAP_TILE_REQUEST = "/map/tile/request"
+    private const val PATH_PING = "/ping"
 
     fun stopNavigation(context: Context) {
         sendMessage(context, PATH_STOP_NAVIGATION, byteArrayOf())
@@ -35,6 +37,31 @@ object WearCommandService {
         buffer.putInt(routerType)
         buffer.put(nameBytes)
         sendMessage(context, PATH_SEARCH_SELECT, buffer.array())
+    }
+
+    fun requestMapTile(
+        context: Context,
+        x: Int,
+        y: Int,
+        zoom: Int,
+        minLat: Double,
+        minLon: Double,
+        maxLat: Double,
+        maxLon: Double
+    ) {
+        val buffer = ByteBuffer.allocate(Int.SIZE_BYTES * 3 + (Double.SIZE_BYTES * 4))
+        buffer.putInt(x)
+        buffer.putInt(y)
+        buffer.putInt(zoom)
+        buffer.putDouble(minLat)
+        buffer.putDouble(minLon)
+        buffer.putDouble(maxLat)
+        buffer.putDouble(maxLon)
+        sendMessage(context, PATH_MAP_TILE_REQUEST, buffer.array())
+    }
+
+    fun sendPing(context: Context) {
+        sendMessage(context, PATH_PING, byteArrayOf())
     }
 
     private fun sendMessage(context: Context, path: String, data: ByteArray) {

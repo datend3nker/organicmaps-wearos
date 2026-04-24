@@ -7,11 +7,72 @@ import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Node
+import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import java.nio.ByteBuffer
 
 class WearDataListenerService : WearableListenerService() {
     private val TAG = "WearDataListener"
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var lastPongTime = System.currentTimeMillis()
+
+    override fun onCreate() {
+        super.onCreate()
+        checkPhoneConnection()
+        startPingLoop()
+    }
+
+    private fun startPingLoop() {
+        scope.launch {
+            while (true) {
+                WearCommandService.sendPing(this@WearDataListenerService)
+                delay(10000) // Ping every 10 seconds
+                
+                // If no pong for 25 seconds, mark as disconnected
+                if (System.currentTimeMillis() - lastPongTime > 25000) {
+                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = false))
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        scope.cancel()
+    }
+
+    override fun onPeerConnected(peer: Node) {
+        checkPhoneConnection()
+    }
+
+    override fun onPeerDisconnected(peer: Node) {
+        checkPhoneConnection()
+    }
+
+    private fun checkPhoneConnection() {
+        scope.launch {
+            try {
+                val nodes = Wearable.getNodeClient(this@WearDataListenerService).connectedNodes.await()
+                if (nodes.isEmpty()) {
+                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = false))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to check nodes", e)
+            }
+        }
+    }
     private val PATH_START_NAVIGATION = "/navigation/start"
+    private val PATH_MAP_DOWNLOAD_REQUEST = "/map/download/request"
+    private val PATH_MAP_TILE_RESPONSE = "/map/tile/response"
+    private val PATH_PONG = "/pong"
 
     private fun shouldAutoDownloadMaps(): Boolean {
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
@@ -22,11 +83,17 @@ class WearDataListenerService : WearableListenerService() {
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         Log.d(TAG, "onMessageReceived: ${messageEvent.path}")
+        if (messageEvent.path == PATH_PONG) {
+            lastPongTime = System.currentTimeMillis()
+            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = true))
+            return
+        }
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = true))
         if (messageEvent.path == PATH_START_NAVIGATION) {
             val currentState = NavigationStateHolder.state.value
             NavigationStateHolder.update(currentState.copy(isActive = true))
             launchOmaps()
-        } else if (messageEvent.path == "/map/download/request") {
+        } else if (messageEvent.path == PATH_MAP_DOWNLOAD_REQUEST) {
             val countryId = String(messageEvent.data)
             Log.d(TAG, "Phone requested map download: $countryId")
             val currentState = NavigationStateHolder.state.value
@@ -46,10 +113,26 @@ class WearDataListenerService : WearableListenerService() {
                 Log.d(TAG, "Skipping auto-download from phone request due to watch map settings")
             }
             launchOmaps() // Show UI so user sees progress
+        } else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
+            val buffer = ByteBuffer.wrap(messageEvent.data)
+            if (buffer.remaining() < 4 * 3) { // 3 ints (x, y, zoom)
+                Log.w(TAG, "Received malformed map tile response")
+                return
+            }
+
+            val x = buffer.int
+            val y = buffer.int
+            val zoom = buffer.int
+            val features = ByteArray(buffer.remaining())
+            buffer.get(features)
+            MapTileStateHolder.update(x, y, zoom, features)
         }
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
+        if (dataEvents.count > 0) {
+            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = true))
+        }
         for (event in dataEvents) {
             val uri = event.dataItem.uri
             if (event.type == DataEvent.TYPE_CHANGED) {
@@ -78,6 +161,14 @@ class WearDataListenerService : WearableListenerService() {
                               Log.d(TAG, "Missing maps received but auto-download blocked by map settings")
                         }
                         
+                        val routeLats = dataMap.getFloatArray("routeLats") ?: floatArrayOf()
+                        val routeLons = dataMap.getFloatArray("routeLons") ?: floatArrayOf()
+                        val routePoints = if (routeLats.size == routeLons.size && routeLats.isNotEmpty()) {
+                            routeLats.zip(routeLons).map { it.first.toDouble() to it.second.toDouble() }
+                        } else {
+                            currentState.routePoints
+                        }
+
                         val newState = currentState.copy(
                             distToTurn = dataMap.getString("distToTurn") ?: currentState.distToTurn,
                             nextStreet = dataMap.getString("nextStreet") ?: currentState.nextStreet,
@@ -86,10 +177,16 @@ class WearDataListenerService : WearableListenerService() {
                             isActive = dataMap.getBoolean("active", currentState.isActive),
                             speedMps = dataMap.getDouble("speedMps", currentState.speedMps),
                             speedLimitMps = dataMap.getDouble("speedLimitMps", currentState.speedLimitMps),
+                            bearing = dataMap.getFloat("bearing", currentState.bearing),
                             distToTarget = dataMap.getString("distToTarget") ?: currentState.distToTarget,
                             eta = dataMap.getInt("eta", currentState.eta),
                             lat = dataMap.getDouble("lat", currentState.lat),
-                            lon = dataMap.getDouble("lon", currentState.lon)
+                            lon = dataMap.getDouble("lon", currentState.lon),
+                            turnLat = dataMap.getDouble("turnLat", currentState.turnLat),
+                            turnLon = dataMap.getDouble("turnLon", currentState.turnLon),
+                            distToTurnMeters = dataMap.getDouble("distToTurnMeters", currentState.distToTurnMeters),
+                            routerType = dataMap.getInt("routerType", currentState.routerType),
+                            routePoints = routePoints
                         )
                         NavigationStateHolder.update(newState)
                         if (newState.isActive && !currentState.isActive) launchOmaps()
@@ -118,15 +215,18 @@ class WearDataListenerService : WearableListenerService() {
                     "/preferences" -> {
                         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
                         val mapEnabled = dataMap.getBoolean("mapEnabled", false)
+                        val offlineMapsEnabled = dataMap.getBoolean("offlineMapsEnabled", false)
                         val mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY")
                         prefs.edit()
                             .putBoolean("mapEnabled", mapEnabled)
+                            .putBoolean("offlineMapsEnabled", offlineMapsEnabled)
                             .putString("mapDownloadMode", mapDownloadMode)
                             .apply()
                         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-                            mapEnabled = mapEnabled
+                            mapEnabled = mapEnabled,
+                            offlineMapsEnabled = offlineMapsEnabled
                         ))
-                        Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, mapDownloadMode=$mapDownloadMode")
+                        Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, offlineMapsEnabled=$offlineMapsEnabled")
                     }
                 }
             }

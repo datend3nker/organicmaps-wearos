@@ -33,7 +33,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application),
             val orientation = FloatArray(3)
             SensorManager.getOrientation(rotationMatrix, orientation)
             val heading = Math.toDegrees(orientation[0].toDouble()).toFloat()
-            _heading.value = -heading
+            _heading.value = heading
         }
     }
 

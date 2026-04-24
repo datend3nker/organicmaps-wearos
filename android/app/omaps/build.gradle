@@ -53,6 +53,18 @@ android {
     }
     buildFeatures {
         compose true
+        buildConfig true
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ['src/main/assets', '../../../data']
+        }
+    }
+
+    androidResources {
+        ignoreAssetsPattern = '!.svn:!.git:!.DS_Store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        noCompress = ['txt', 'bin', 'html', 'png', 'json', 'mwm', 'ttf', 'sdf', 'ui', 'config', 'csv', 'spv', 'obj']
     }
 }
 

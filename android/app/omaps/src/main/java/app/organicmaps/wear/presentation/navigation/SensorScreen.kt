@@ -18,6 +18,6 @@ fun SensorScreen(
         turnIcon = Icons.Default.ArrowUpward,
         remainingTime = "5 min",
         onCancelClick = onCancelClick,
-        deviceRotation = deviceRotation
+        deviceRotation = deviceRotation,
     )
 }

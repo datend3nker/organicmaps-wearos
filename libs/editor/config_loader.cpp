@@ -63,7 +63,7 @@ void ConfigLoader::LoadFromLocal(pugi::xml_document & doc)
   }
   catch (RootException const & ex)
   {
-    LOG(LERROR, (ex.Msg()));
+    LOG(LWARNING, (ex.Msg()));
     return;
   }
 
@@ -73,7 +73,7 @@ void ConfigLoader::LoadFromLocal(pugi::xml_document & doc)
   auto const result = doc.load_buffer(content.data(), content.size());
   if (!result)
   {
-    LOG(LERROR, (kConfigFileName, "can not be loaded:", result.description(), "error offset:", result.offset));
+    LOG(LWARNING, (kConfigFileName, "can not be loaded:", result.description(), "error offset:", result.offset));
     doc.reset();
   }
 }

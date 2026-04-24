@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.compose.ui.graphics.Color
+import androidx.wear.compose.foundation.CurvedTextStyle
 import androidx.wear.compose.material.*
 import androidx.wear.tooling.preview.devices.WearDevices
 import app.organicmaps.wear.NavigationStateHolder
@@ -101,7 +103,34 @@ fun SearchScreen(onSearchClick: () -> Unit) {
         }
     }
 
-    Scaffold(timeText = { TimeText() }) {
+    Scaffold(
+        timeText = {
+            val errorColor = Color.Red
+            TimeText(
+                startLinearContent = {
+                    if (!navState.isPhoneConnected) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Disconnected",
+                            tint = errorColor,
+                            modifier = Modifier.size(10.dp)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                    }
+                },
+                startCurvedContent = {
+                    if (!navState.isPhoneConnected) {
+                        curvedText(
+                            text = "!",
+                            style = CurvedTextStyle(
+                                color = errorColor
+                            )
+                        )
+                    }
+                }
+            )
+        }
+    ) {
         if (selectedResult != null) {
             ModeSelectionScreen(
                 result = selectedResult!!,

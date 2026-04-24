@@ -424,6 +424,11 @@ void RoutingSession::GetRouteFollowingInfo(FollowingInfo & info) const
   info.m_distToTurn = platform::Distance::CreateFormatted(distanceToTurnMeters);
   info.m_turn = turn.m_turn;
 
+  if (turn.m_index < m_route->GetPoly().GetSize())
+    info.m_turnPoint = m_route->GetPoly().GetPoint(turn.m_index);
+  else
+    info.m_turnPoint = m2::PointD::Zero();
+
   SpeedInUnits speedLimit;
   m_route->GetCurrentSpeedLimit(speedLimit);
   if (speedLimit.IsNumeric())

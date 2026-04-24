@@ -1093,37 +1093,41 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
 {
   std::vector<uint8_t> buffer;
   
-  m2::RectD rect(mercator::LonToX(minLon), mercator::LatToY(minLat), 
-                 mercator::LonToX(maxLon), mercator::LatToY(maxLat));
+  m2::RectD rect;
+  rect.Add(mercator::FromLatLon(minLat, minLon));
+  rect.Add(mercator::FromLatLon(maxLat, maxLon));
 
-  frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
-      auto geomType = ft.GetGeomType();
-      if (geomType == feature::GeomType::Point) return;
+  if (rect.IsValid())
+  {
+    frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
+        auto geomType = ft.GetGeomType();
+        if (geomType == feature::GeomType::Point) return;
 
-      std::vector<m2::PointD> points;
-      ft.ForEachPoint([&](m2::PointD const & p) {
-        points.push_back(p);
-      }, scale);
+        std::vector<m2::PointD> points;
+        ft.ForEachPoint([&](m2::PointD const & p) {
+          points.push_back(p);
+        }, scale);
 
-      if (points.size() < 2) return;
+        if (points.size() < 2) return;
 
-      uint8_t type = (geomType == feature::GeomType::Line) ? 1 : 2;
-      buffer.push_back(type);
-      
-      uint32_t count = points.size();
-      uint8_t * pCount = reinterpret_cast<uint8_t *>(&count);
-      buffer.insert(buffer.end(), pCount, pCount + sizeof(count));
-
-      for (auto const & p : points) {
-        double lat = mercator::YToLat(p.y);
-        double lon = mercator::XToLon(p.x);
+        uint8_t type = (geomType == feature::GeomType::Line) ? 1 : 2;
+        buffer.push_back(type);
         
-        uint8_t * pLon = reinterpret_cast<uint8_t *>(&lon);
-        uint8_t * pLat = reinterpret_cast<uint8_t *>(&lat);
-        buffer.insert(buffer.end(), pLon, pLon + sizeof(lon));
-        buffer.insert(buffer.end(), pLat, pLat + sizeof(lat));
-      }
-  }, rect, scale);
+        uint32_t count = points.size();
+        uint8_t * pCount = reinterpret_cast<uint8_t *>(&count);
+        buffer.insert(buffer.end(), pCount, pCount + sizeof(count));
+
+        for (auto const & p : points) {
+          double lat = mercator::YToLat(p.y);
+          double lon = mercator::XToLon(p.x);
+
+          uint8_t * pLon = reinterpret_cast<uint8_t *>(&lon);
+          uint8_t * pLat = reinterpret_cast<uint8_t *>(&lat);
+          buffer.insert(buffer.end(), pLon, pLon + sizeof(lon));
+          buffer.insert(buffer.end(), pLat, pLat + sizeof(lat));
+        }
+    }, rect, scale);
+  }
 
   jbyteArray result = env->NewByteArray(buffer.size());
   if (!buffer.empty()) {
@@ -1764,7 +1768,14 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativeSetSearchViewport(JNIEnv
                                                                           jint zoom)
 {
   auto const center = mercator::FromLatLon(static_cast<double>(lat), static_cast<double>(lon));
-  auto const rect = df::GetRectForDrawScale(static_cast<int>(zoom), center);
+
+  // Safe calculation of rect without relying on potentially uninitialized VisualParams (e.g. in headless mode)
+  // Standard tile size (256) and visual scale (1.0) gives increment 0.
+  // pow2 = zoom + 1 (for half-length)
+  double const len = mercator::Bounds::kRangeX / pow(2.0, static_cast<double>(zoom) + 1.0);
+  m2::RectD const rect(mercator::ClampX(center.x - len), mercator::ClampY(center.y - len),
+                       mercator::ClampX(center.x + len), mercator::ClampY(center.y + len));
+
   frm()->GetSearchAPI().OnViewportChanged(rect);
 }
 
