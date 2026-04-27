@@ -5,7 +5,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -15,10 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -58,29 +55,51 @@ fun MapPanel() {
     val currentTileX = lonToTileX(centerLon, zoom)
     val currentTileY = latToTileY(centerLat, zoom)
 
-    // PROACTIVE ADAPTIVE ZOOM
-    // Start zooming in earlier (400m instead of 300m) and finish earlier (60m)
-    val targetViewSpan = when (navState.routerType) {
-        0 -> { // Car
-            if (navState.isActive && navState.distToTurnMeters in 0.0..400.0) {
-                val t = (navState.distToTurnMeters.coerceIn(60.0, 400.0) - 60.0) / 340.0
-                0.0015 + (0.008 - 0.0015) * t
-            } else 0.008
+    // IMPROVED AUTO-ZOOM (Phone App Logic)
+    // Speed-based scale + turn approach.
+    val targetViewSpan = remember(navState.speedMps, navState.distToTurnMeters, navState.routerType, navState.isActive) {
+        if (navState.routerType != 0 || !navState.isActive) return@remember 0.003
+        
+        val speedKmH = navState.speedMps * 3.6
+        // Map speed to specific pre-defined view spans similar to phone app
+        val speedSpan = when {
+            speedKmH < 30.0 -> 0.002 // city traffic
+            speedKmH < 70.0 -> 0.004 // rural
+            speedKmH < 100.0 -> 0.006 // highway
+            else -> 0.010 // autobahn
         }
-        2 -> 0.005 // Bike
-        else -> 0.003 // Walk
+        
+        val turnDist = navState.distToTurnMeters
+        
+        // Approach Turn Zoom
+        val targetSpan = if (turnDist > 0.0 && turnDist < 250.0) {
+            // Tight zoom right before a turn
+            0.0015
+        } else if (turnDist > 0.0 && turnDist < 500.0) {
+            // Intermediate preparation zoom
+            0.002
+        } else if (turnDist > 3000.0) {
+            // Extra zoom out on very long straightaways regardless of speed
+            maxOf(speedSpan, 0.008)
+        } else {
+            // Default to speed-based
+            speedSpan
+        }
+        
+        targetSpan
     }
     
     val viewSpan by animateFloatAsState(
         targetValue = targetViewSpan.toFloat(),
-        animationSpec = spring(stiffness = Spring.StiffnessMedium), // FASTER ZOOM
+        // Extremely smooth timeline-based animation replaces the bouncy Spring
+        animationSpec = tween(durationMillis = 2500, easing = FastOutSlowInEasing),
         label = "zoom"
     )
 
-    // SNAPPY & STABLE ROTATION
+    // SNAPPY STABILIZED ROTATION
     val mapRotationAnimatable = remember { Animatable(0f) }
     LaunchedEffect(navState.bearing, navState.speedMps, compassHeading, navState.isActive) {
-        val targetDeg = if (navState.isActive && navState.speedMps > 1.4 && navState.bearing >= 0) {
+        val targetDeg = if (navState.isActive && navState.speedMps > 1.5 && navState.bearing >= 0) {
             -navState.bearing
         } else {
             -compassHeading
@@ -92,14 +111,10 @@ fun MapPanel() {
         
         mapRotationAnimatable.animateTo(
             targetValue = mapRotationAnimatable.value + diff,
-            animationSpec = spring(
-                stiffness = 350f, // SNAPPY
-                dampingRatio = Spring.DampingRatioNoBouncy
-            )
+            animationSpec = spring(stiffness = 300f, dampingRatio = Spring.DampingRatioNoBouncy)
         )
     }
 
-    // Perspective Shift
     val verticalOffsetFractionTarget = if (navState.routerType == 0 && navState.isActive) 0.35f else 0.0f
     val verticalOffsetFraction by animateFloatAsState(
         targetValue = verticalOffsetFractionTarget,
@@ -143,7 +158,7 @@ fun MapPanel() {
                 rotate(mapRotationAnimatable.value, pivot = Offset(userScreenX, userScreenY))
                 translate(top = offsetValPx)
             }) {
-                // 1. Draw Map Features
+                // 1. Draw Map Features (Phones app palette)
                 val range = if (navState.routerType == 0) 2 else 1
                 for (dx in -range..range) {
                     for (dy in -range..range) {
@@ -155,11 +170,9 @@ fun MapPanel() {
                     }
                 }
 
-                // 2. Draw Route & Turns
+                // 2. Draw Route & Full Turn Arrow
                 if (navState.routePoints.isNotEmpty()) {
                     val routePath = Path()
-                    val turnPath = Path()
-                    
                     var turnPointIdx = -1
                     
                     val screenPoints = navState.routePoints.mapIndexed { i, (lat, lon) ->
@@ -174,19 +187,7 @@ fun MapPanel() {
                             abs(lat - navState.turnLat) < 0.00001 && abs(lon - navState.turnLon) < 0.00001) {
                             turnPointIdx = i
                         }
-                        
                         point
-                    }
-                    
-                    // Highlight Turn Segment
-                    if (navState.isActive && turnPointIdx != -1) {
-                        val startH = (turnPointIdx - 2).coerceAtLeast(0)
-                        val endH = (turnPointIdx + 1).coerceAtMost(screenPoints.size - 1)
-                        for (i in startH..endH) {
-                            val p = screenPoints[i]
-                            if (i == startH) turnPath.moveTo(p.x, p.y)
-                            else turnPath.lineTo(p.x, p.y)
-                        }
                     }
                     
                     // Main Route line
@@ -196,16 +197,68 @@ fun MapPanel() {
                         style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                     
-                    // Glow for next turn
-                    if (!turnPath.isEmpty) {
-                        drawPath(path = turnPath, color = Color.White, style = Stroke(width = 11.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                        drawPath(path = turnPath, color = Color(0xFF3D5AFE), style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                        
-                        // FILLED TURN INDICATOR
-                        val tp = screenPoints[turnPointIdx]
-                        drawCircle(color = Color.White, radius = 6.dp.toPx(), center = tp)
-                        drawCircle(color = Color(0xFF3D5AFE), radius = 4.dp.toPx(), center = tp)
-                        drawCircle(color = Color.White, radius = 2.dp.toPx(), center = tp)
+                    // FULL TURN INDICATOR (Styled Arrow on Route) like phone app
+                    // Draw thick road-matching arrows for upcoming turns along the route
+                    if (navState.isActive) {
+                        for (i in 1 until screenPoints.size - 1) {
+                            val p0 = screenPoints[i - 1]
+                            val p1 = screenPoints[i]     // The turn vertex
+                            val p2 = screenPoints[i + 1] // Next point
+                            
+                            val angle1 = atan2(p1.y - p0.y, p1.x - p0.x)
+                            val angle2 = atan2(p2.y - p1.y, p2.x - p1.x)
+                            var diff = Math.toDegrees((angle2 - angle1).toDouble())
+                            while (diff < -180) diff += 360
+                            while (diff > 180) diff -= 360
+                            
+                            // If angle difference is significant, draw a solid segment on this turn
+                            if (abs(diff) > 25.0) {
+                                val dist01 = hypot(p1.x - p0.x, p1.y - p0.y)
+                                val dist12 = hypot(p2.x - p1.x, p2.y - p1.y)
+                                
+                                // Draw a segment leading up to and out of the turn vertex
+                                val backDist = minOf(40f, dist01 * 0.8f)
+                                val fwdDist = minOf(40f, dist12 * 0.8f)
+                                
+                                val startX = p1.x - backDist * cos(angle1)
+                                val startY = p1.y - backDist * sin(angle1)
+                                
+                                val endX = p1.x + fwdDist * cos(angle2)
+                                val endY = p1.y + fwdDist * sin(angle2)
+                                
+                                val turnSegmentPath = Path().apply {
+                                    moveTo(startX, startY)
+                                    lineTo(p1.x, p1.y)
+                                    lineTo(endX, endY)
+                                }
+                                
+                                // Outer outline stroke for strong contrast
+                                drawPath(
+                                    path = turnSegmentPath, 
+                                    color = Color(0xFF000000), // Solid black outline
+                                    style = Stroke(width = 11.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                // Inner solid highlight color
+                                drawPath(
+                                    path = turnSegmentPath, 
+                                    color = Color(0xFFFFFFFF), // High-visibility bright White over the Blue route
+                                    style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                
+                                // Draw thick arrowhead at the end
+                                withTransform({
+                                    rotate(Math.toDegrees(angle2.toDouble()).toFloat() + 90f, pivot = Offset(endX, endY))
+                                }) {
+                                    val arrowPath = Path().apply {
+                                        moveTo(endX, endY - 6.dp.toPx())
+                                        lineTo(endX - 7.dp.toPx(), endY + 7.dp.toPx())
+                                        lineTo(endX + 7.dp.toPx(), endY + 7.dp.toPx())
+                                        close()
+                                    }
+                                    drawPath(path = arrowPath, color = Color(0xFFFFFFFF))
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -257,9 +310,11 @@ fun MapPanel() {
 
 private fun DrawScope.drawTile(features: ByteArray, tx: Int, ty: Int, zoom: Int, centerLat: Double, centerLon: Double, viewSpan: Double) {
     val buffer = ByteBuffer.wrap(features).order(ByteOrder.LITTLE_ENDIAN)
+    val pathsByType = mutableMapOf<Int, MutableList<Path>>()
+
     while (buffer.hasRemaining()) {
         if (buffer.remaining() < 5) break
-        val type = buffer.get()
+        val type = buffer.get().toInt()
         val count = buffer.getInt()
         if (buffer.remaining() < count * 16) break
         val mapPath = Path()
@@ -271,10 +326,27 @@ private fun DrawScope.drawTile(features: ByteArray, tx: Int, ty: Int, zoom: Int,
             if (i == 0) mapPath.moveTo(x.toFloat(), y.toFloat())
             else mapPath.lineTo(x.toFloat(), y.toFloat())
         }
-        when (type.toInt()) {
-            1 -> drawPath(path = mapPath, color = Color(0xFF383838), style = Stroke(width = 2.dp.toPx())) // Roads
-            2 -> drawPath(path = mapPath, color = Color(0xFF2B2B2B)) // Buildings
-            else -> drawPath(path = mapPath, color = Color(0xFF1C2A33)) // Water
+        pathsByType.getOrPut(type) { mutableListOf() }.add(mapPath)
+    }
+
+    // Sort paths by standard Z-Order for proper under/over layering
+    val drawOrder = listOf(3, 2, 1, 7, 6, 5, 4) // Water -> Buildings -> Res -> Tertiary -> Secondary -> Primary -> Motorway
+    val currentTypes = pathsByType.keys.toList()
+    val sortedTypes = currentTypes.sortedBy { drawOrder.indexOf(it).let { idx -> if (idx == -1) 0 else idx } }
+
+    for (type in sortedTypes) {
+        val paths = pathsByType[type] ?: continue
+        for (mapPath in paths) {
+            when (type) {
+                1 -> drawPath(path = mapPath, color = Color(0xFF383838), style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Residential
+                2 -> drawPath(path = mapPath, color = Color(0xFF2B2B2B)) // Buildings
+                3 -> drawPath(path = mapPath, color = Color(0xFF1C2A33)) // Water
+                4 -> drawPath(path = mapPath, color = Color(0xFFE67E22), style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Motorway/Trunk (Orange)
+                5 -> drawPath(path = mapPath, color = Color(0xFF95A5A6), style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Primary (Light)
+                6 -> drawPath(path = mapPath, color = Color(0xFF7F8C8D), style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Secondary
+                7 -> drawPath(path = mapPath, color = Color(0xFF4A4A4A), style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Tertiary
+                else -> drawPath(path = mapPath, color = Color(0xFF383838), style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
         }
     }
 }

@@ -1088,6 +1088,8 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativePokeSearchInViewport(JNI
   frm()->GetSearchAPI().PokeSearchInViewport();
 }
 
+#include "indexer/ftypes_matcher.hpp"
+
 JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMapFeatures(
     JNIEnv * env, jclass, jdouble minLat, jdouble minLon, jdouble maxLat, jdouble maxLon, jint scale)
 {
@@ -1110,7 +1112,23 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
 
         if (points.size() < 2) return;
 
-        uint8_t type = (geomType == feature::GeomType::Line) ? 1 : 2;
+        feature::TypesHolder types(ft);
+        uint8_t type = 1; // Default road/line
+
+        using namespace ftypes;
+        using namespace ftypes;
+        if (geomType == feature::GeomType::Line) {
+            HighwayClass hw = GetHighwayClass(types);
+            if (hw == HighwayClass::Trunk) type = 4;
+            else if (hw == HighwayClass::Primary) type = 5;
+            else if (hw == HighwayClass::Secondary) type = 6;
+            else if (hw == HighwayClass::Tertiary) type = 7;
+            else type = 1;
+        } else {
+            if (IsBuildingChecker::Instance()(types)) type = 2;
+            else type = 3; // Area/Water
+        }
+
         buffer.push_back(type);
         
         uint32_t count = points.size();

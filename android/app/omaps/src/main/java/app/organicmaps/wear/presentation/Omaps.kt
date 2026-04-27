@@ -43,9 +43,14 @@ class Omaps : ComponentActivity() {
         // Initialize state from prefs
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
         val isMapEnabled = prefs.getBoolean("mapEnabled", false)
-        if (NavigationStateHolder.state.value.mapEnabled != isMapEnabled) {
-            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(mapEnabled = isMapEnabled))
-        }
+        val isOfflineForced = prefs.getBoolean("forceWatchOfflineMaps", false)
+        val phoneOfflinePref = prefs.getBoolean("offlineMapsEnabled", false)
+        val finalOfflineState = isOfflineForced || phoneOfflinePref
+        
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+            mapEnabled = isMapEnabled,
+            offlineMapsEnabled = finalOfflineState
+        ))
         
         setContent {
             WearApp()

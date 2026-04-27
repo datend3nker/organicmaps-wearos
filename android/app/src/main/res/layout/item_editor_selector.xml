@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+  xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:app="http://schemas.android.com/apk/res-auto"
+  xmlns:tools="http://schemas.android.com/tools"
+  style="@style/MwmWidget.Editor.MetadataBlock">
+  <ImageView
+    android:id="@+id/icon"
+    style="@style/MwmWidget.Editor.MetadataIcon"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintTop_toTopOf="parent"
+    tools:ignore="ContentDescription" />
+  <TextView
+    android:id="@+id/cuisine"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="14dp"
+    android:textAppearance="@style/MwmTextAppearance.Body1"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    app:layout_constraintStart_toEndOf="@+id/icon"
+    app:layout_constraintTop_toTopOf="parent"
+    tools:text="Cuisine" />
+  <TextView
+    android:id="@+id/self_service"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="14dp"
+    android:textAppearance="@style/MwmTextAppearance.Body1"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    app:layout_constraintStart_toEndOf="@+id/icon"
+    app:layout_constraintTop_toTopOf="parent"
+    android:visibility="gone"
+    tools:text="Self-service" />
+  <androidx.appcompat.widget.SwitchCompat
+    android:id="@+id/sw__wifi"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="14dp"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    app:layout_constraintTop_toTopOf="parent"
+    android:visibility="gone" />
+  <androidx.appcompat.widget.SwitchCompat
+    android:id="@+id/sw__outdoor_seating"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="14dp"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    app:layout_constraintTop_toTopOf="parent"
+    android:visibility="gone" />
+</androidx.constraintlayout.widget.ConstraintLayout>

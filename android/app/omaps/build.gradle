@@ -18,7 +18,6 @@ android {
 
     signingConfigs {
         debug {
-            // Point to the same keystore used by the phone app
             storeFile file('../debug.keystore')
             storePassword '12345678'
             keyAlias 'debug'
@@ -31,7 +30,45 @@ android {
         google {
             dimension 'default'
         }
+        fdroid {
+            dimension 'default'
+            applicationIdSuffix ".fdroid"
+        }
+        oss {
+            dimension 'default'
+            applicationIdSuffix ".oss"
+        }
     }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ['src/main/assets']
+        }
+        google {
+            java.srcDirs = ['src/google/java', 'src/gms/java']
+        }
+        fdroid {
+            java.srcDirs = ['src/fdroid/java', 'src/gms/java']
+        }
+        oss {
+            java.srcDirs = ['src/oss/java']
+        }
+    }
+
+    tasks.register('copyAssets', Copy) {
+        from "../../../data"
+        include "countries.txt"
+        include "countries-strings/**"
+        include "sound-strings/**"
+        include "categories.txt"
+        include "classificator.txt"
+        include "types.txt"
+        include "packed_polygons.bin"
+        include "drules_proto*.bin"
+        into "src/main/assets"
+    }
+
+    preBuild.dependsOn 'copyAssets'
 
     buildTypes {
         debug {
@@ -56,12 +93,6 @@ android {
         buildConfig true
     }
 
-    sourceSets {
-        main {
-            assets.srcDirs = ['src/main/assets', '../../../data']
-        }
-    }
-
     androidResources {
         ignoreAssetsPattern = '!.svn:!.git:!.DS_Store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~'
         noCompress = ['txt', 'bin', 'html', 'png', 'json', 'mwm', 'ttf', 'sdf', 'ui', 'config', 'csv', 'spv', 'obj']
@@ -72,9 +103,17 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 
     implementation project(':sdk')
-    implementation 'com.google.android.gms:play-services-wearable:19.0.0'
-    implementation 'com.google.android.gms:play-services-location:21.0.1'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0'
+    
+    // Google & F-Droid (MicroG) share the GMS Wearable API
+    googleImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
+    googleImplementation 'com.google.android.gms:play-services-location:21.0.1'
+    googleImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0'
+    
+    fdroidImplementation 'org.microg.gms:play-services-wearable:0.3.14.250932'
+    fdroidImplementation 'org.microg.gms:play-services-location:0.3.14.250932'
+    fdroidImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0'
+    
+    // OSS: Pure standalone, no GMS/MicroG dependencies
     
     implementation platform('androidx.compose:compose-bom:2025.02.00')
     implementation 'androidx.compose.ui:ui'

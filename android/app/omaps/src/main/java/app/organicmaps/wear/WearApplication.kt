@@ -2,6 +2,7 @@ package app.organicmaps.wear
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import app.organicmaps.sdk.location.BaseLocationProvider
 import app.organicmaps.sdk.location.LocationProviderFactory
@@ -44,11 +45,11 @@ class WearApplication : Application() {
         
         organicMaps = OrganicMaps(
             applicationContext, 
-            "google", 
-            "app.organicmaps.debug", 
+            BuildConfig.FLAVOR, 
+            BuildConfig.APPLICATION_ID, 
             1, 
-            "1.0", 
-            "app.organicmaps.debug.provider", 
+            BuildConfig.VERSION_NAME, 
+            BuildConfig.APPLICATION_ID + ".provider",
             dummyLocationFactory
         )
 
@@ -65,6 +66,11 @@ class WearApplication : Application() {
         } catch (e: Throwable) {
             initError = e.stackTraceToString()
             e.printStackTrace()
+        }
+
+        // F-Droid: Start Bluetooth Listener Service
+        if (BuildConfig.FLAVOR == "fdroid") {
+            startService(Intent(this, WearDataListenerService::class.java))
         }
     }
     

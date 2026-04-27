@@ -327,6 +327,11 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
         mapEnabledPref.setOnPreferenceChangeListener(wearPrefsListener);
     }
 
+    final Preference offlineMapsPref = findPreference(getString(R.string.pref_wear_os_offline_maps_enabled));
+    if (offlineMapsPref != null) {
+        offlineMapsPref.setOnPreferenceChangeListener(wearPrefsListener);
+    }
+
     final Preference mapDownloadModePref = findPreference(getString(R.string.pref_wear_os_map_download_mode));
     if (mapDownloadModePref != null) {
         mapDownloadModePref.setOnPreferenceChangeListener(wearPrefsListener);

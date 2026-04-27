@@ -5,6 +5,7 @@ import static app.organicmaps.sdk.location.LocationState.LOCATION_TAG;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
@@ -143,6 +144,11 @@ public class MwmApplication extends Application implements Application.ActivityL
 
     registerActivityLifecycleCallbacks(this);
     mDisplayManager = new DisplayManager();
+
+    // OSS/Independent flavors: Start Bluetooth Sync Service
+    if (BuildConfig.FLAVOR.equals("oss")) {
+        startService(new Intent(this, app.organicmaps.wear.WearMessageListenerService.class));
+    }
   }
 
   public boolean initOrganicMaps(@NonNull Runnable onComplete) throws IOException

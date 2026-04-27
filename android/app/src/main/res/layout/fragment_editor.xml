@@ -6,8 +6,7 @@
   android:layout_width="match_parent"
   android:layout_height="match_parent"
   android:clipToPadding="false"
-  tools:context=".editor.EditorActivity"
-  tools:ignore="DuplicateIds">
+  tools:context=".editor.EditorActivity">
   <LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -18,297 +17,156 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textAlignment="center"
-        android:layout_marginBottom="@dimen/margin_base"
+        android:padding="@dimen/margin_half"
+        android:autoLink="web"
+        android:linksClickable="true"
+        android:textAppearance="@style/MwmTextAppearance.Body3"
+        android:textColorLink="?colorAccent"
         android:text="@string/editor_about_osm"
-        android:textAppearance="@style/MwmTextAppearance.Body4"/>
-    <androidx.cardview.widget.CardView
-      android:id="@+id/cv__category"
-      style="@style/MwmWidget.Editor.CardView">
-      <RelativeLayout
-        android:id="@+id/category"
-        style="@style/MwmWidget.Editor.MetadataBlock"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="0dp"
-        android:padding="@dimen/margin_half_plus">
-        <ImageView
-          android:id="@+id/icon"
-          style="@style/MwmWidget.Editor.MetadataIcon"
-          android:layout_width="wrap_content"
-          android:layout_height="wrap_content"
-          android:layout_centerVertical="true"
-          android:layout_marginEnd="@dimen/margin_half_plus"
-          android:layout_marginStart="@dimen/margin_quarter"
-          tools:src="@drawable/ic_operator"
-          app:tint="?iconTint" />
+        tools:ignore="UnusedAttribute" />
 
-        <TextView
-          android:id="@+id/title"
-          android:layout_width="match_parent"
-          android:layout_height="wrap_content"
-          android:layout_alignParentTop="true"
-          android:layout_marginStart="@dimen/margin_quarter"
-          android:layout_toEndOf="@id/icon"
-          android:text="@string/editor_edit_place_category_title"
-          android:textAppearance="@style/MwmTextAppearance.Body4"
-          tools:text="Trololo"/>
-        <TextView
-          android:id="@+id/name"
-          android:layout_width="match_parent"
-          android:layout_height="wrap_content"
-          android:layout_alignStart="@id/title"
-          android:layout_below="@id/title"
-          android:textAppearance="@style/MwmTextAppearance.Body1"
-          tools:text="Ololo"/>
-      </RelativeLayout>
-    </androidx.cardview.widget.CardView>
-    <androidx.cardview.widget.CardView
-      android:id="@+id/cv__name"
-      style="@style/MwmWidget.Editor.CardView">
-      <include layout="@layout/localized_name"/>
-    </androidx.cardview.widget.CardView>
     <androidx.cardview.widget.CardView
       android:id="@+id/cv__address"
       style="@style/MwmWidget.Editor.CardView">
       <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingEnd="@dimen/margin_base"
-        android:paddingStart="@dimen/margin_base">
-        <TextView
-          android:layout_width="wrap_content"
-          android:layout_height="wrap_content"
-          android:layout_marginTop="@dimen/margin_base"
-          android:fontFamily="@string/robotoMedium"
-          android:text="@string/address"
-          android:textAppearance="@style/MwmTextAppearance.Body3"
-          tools:ignore="UnusedAttribute"/>
-        <RelativeLayout
+        android:orientation="vertical">
+        <include
           android:id="@+id/block_street"
-          style="@style/MwmWidget.Editor.MetadataBlock.Clickable"
-          android:paddingBottom="@dimen/margin_half"
-          android:paddingTop="@dimen/margin_half">
-          <ImageView
-            style="@style/MwmWidget.Editor.MetadataIcon"
-            app:srcCompat="@drawable/ic_street_address"
-            tools:ignore="ContentDescription" />
-          <TextView
-            android:id="@+id/street_title"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/editor_margin_left"
-            android:text="@string/street"
-            android:textAppearance="@style/MwmTextAppearance.Body4"/>
-          <TextView
-            android:id="@+id/street"
-            style="@style/MwmWidget.Editor.FieldLayout"
-            android:layout_below="@id/street_title"
-            android:layout_marginTop="@dimen/margin_quarter"
-            android:gravity="center_vertical"
-            android:textAppearance="@style/MwmTextAppearance.Body1"
-            tools:text="Red str."
-            app:drawableEndCompat="@drawable/ic_arrow_down" />
-          <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_alignStart="@id/street"
-            android:layout_below="@id/street"
-            android:layout_marginTop="@dimen/margin_quarter_plus"
-            android:background="?dividerHorizontal"/>
-        </RelativeLayout>
-        <include
-          android:id="@+id/block_building"
           layout="@layout/item_editor_input"/>
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
         <include
-          android:id="@+id/block_zipcode"
+          android:id="@+id/block_house_number"
+          layout="@layout/item_editor_input"/>
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
+        <include
+          android:id="@+id/block_zip_code"
           layout="@layout/item_editor_input"/>
       </LinearLayout>
     </androidx.cardview.widget.CardView>
+
+    <androidx.cardview.widget.CardView
+      android:id="@+id/cv__name"
+      style="@style/MwmWidget.Editor.CardView">
+      <LinearLayout
+        android:id="@+id/names_host"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+        <include
+          android:id="@+id/block_name"
+          layout="@layout/item_editor_input"/>
+      </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <androidx.cardview.widget.CardView
+      android:id="@+id/cv__category"
+      style="@style/MwmWidget.Editor.CardView">
+      <include
+        android:id="@+id/block_category"
+        layout="@layout/item_editor_input"/>
+    </androidx.cardview.widget.CardView>
+
     <androidx.cardview.widget.CardView
       android:id="@+id/cv__details"
       style="@style/MwmWidget.Editor.CardView">
       <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingEnd="@dimen/margin_base"
-        android:paddingStart="@dimen/margin_base">
+        android:orientation="vertical">
+
         <TextView
-          android:layout_width="wrap_content"
+          android:layout_width="match_parent"
           android:layout_height="wrap_content"
-          android:layout_marginTop="@dimen/margin_base"
-          android:paddingBottom="@dimen/margin_half"
+          android:paddingLeft="@dimen/margin_base"
+          android:paddingTop="@dimen/margin_base"
           android:fontFamily="@string/robotoMedium"
           android:text="@string/details"
-          android:textAppearance="@style/MwmTextAppearance.Body3"
-          tools:ignore="UnusedAttribute"/>
+          android:textAppearance="@style/MwmTextAppearance.Body3"/>
 
         <include
           android:id="@+id/block_opening_hours"
           layout="@layout/item_opening_hours"/>
 
-        <RelativeLayout
-            android:id="@+id/block_cuisine"
-            style="@style/MwmWidget.Editor.MetadataBlock.Clickable"
-            android:paddingBottom="@dimen/margin_half"
-            android:paddingTop="@dimen/margin_half">
-          <ImageView
-              style="@style/MwmWidget.Editor.MetadataIcon"
-              app:srcCompat="@drawable/ic_cuisine"
-              tools:ignore="ContentDescription" />
-          <TextView
-              android:id="@+id/title_cuisine"
-              android:layout_width="match_parent"
-              android:layout_height="wrap_content"
-              android:layout_marginStart="@dimen/editor_margin_left"
-              android:text="@string/cuisine"
-              android:textAppearance="@style/MwmTextAppearance.Body4"/>
-          <TextView
-              android:id="@+id/cuisine"
-              style="@style/MwmWidget.Editor.FieldLayout"
-              android:layout_below="@id/title_cuisine"
-              android:layout_marginTop="@dimen/margin_quarter"
-              android:gravity="center_vertical"
-              android:textAppearance="@style/MwmTextAppearance.Body1"
-              tools:text="Italian, russian, russian, russian, russian, russian, russian, russian, russian"
-              app:drawableEndCompat="@drawable/ic_arrow_down" />
-          <View
-              android:layout_width="match_parent"
-              android:layout_height="1dp"
-              android:layout_alignStart="@id/cuisine"
-              android:layout_below="@id/cuisine"
-              android:layout_marginTop="@dimen/margin_quarter_plus"
-              android:background="?dividerHorizontal"/>
-        </RelativeLayout>
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
 
         <include
-          android:id="@+id/block_operator"
+          android:id="@+id/block_phone"
           layout="@layout/item_editor_input"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
 
         <include
           android:id="@+id/block_website"
           layout="@layout/item_editor_input"/>
 
-        <include
-            android:id="@+id/block_website_menu"
-            layout="@layout/item_editor_input"/>
-
-        <RelativeLayout
-            android:id="@+id/block_phone"
-            style="@style/MwmWidget.Editor.MetadataBlock.Clickable">
-          <ImageView
-              style="@style/MwmWidget.Editor.MetadataIcon"
-              app:srcCompat="@drawable/ic_phone"
-              tools:ignore="ContentDescription"/>
-          <TextView
-              android:id="@+id/phone"
-              style="@style/MwmWidget.Editor.FieldLayout.EditText"
-              android:layout_width="match_parent"
-              android:layout_height="wrap_content"
-              android:layout_centerVertical="true"
-              android:layout_marginStart="@dimen/editor_margin_left"
-              android:layout_toStartOf="@+id/edit_phone"/>
-          <TextView
-              android:id="@+id/edit_phone"
-              android:layout_marginStart="@dimen/margin_half_plus"
-              android:background="?clickableBackground"
-              android:gravity="center_vertical"
-              android:text="@string/edit"
-              android:textAllCaps="true"
-              android:layout_width="wrap_content"
-              android:layout_height="match_parent"
-              android:layout_alignParentEnd="true"
-              android:layout_centerVertical="true"
-              android:textAppearance="@style/MwmTextAppearance.Body1"
-              android:textColor="?colorAccent"/>
-        </RelativeLayout>
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
 
         <include
           android:id="@+id/block_email"
           layout="@layout/item_editor_input"/>
 
-        <!-- ToDo: Level is missing compared with iOS. -->
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
 
-        <RelativeLayout
-            android:id="@+id/block_wifi"
-            style="@style/MwmWidget.Editor.MetadataBlock.Clickable">
-          <ImageView
-              style="@style/MwmWidget.Editor.MetadataIcon"
-              app:srcCompat="@drawable/ic_wifi"
-              tools:ignore="ContentDescription" />
-          <TextView
-              style="@style/MwmWidget.Editor.FieldLayout.EditText"
-              android:layout_width="match_parent"
-              android:layout_height="wrap_content"
-              android:layout_centerVertical="true"
-              android:layout_marginStart="@dimen/editor_margin_left"
-              android:layout_toStartOf="@+id/sw__wifi"
-              android:text="@string/category_wifi"/>
-          <androidx.appcompat.widget.SwitchCompat
-              android:id="@+id/sw__wifi"
-              android:layout_width="wrap_content"
-              android:layout_height="wrap_content"
-              android:layout_alignParentEnd="true"
-              android:layout_centerVertical="true"/>
-        </RelativeLayout>
+        <include
+          android:id="@+id/block_cuisine"
+          layout="@layout/item_editor_selector"/>
 
-        <RelativeLayout
-            android:id="@+id/block_self_service"
-            style="@style/MwmWidget.Editor.MetadataBlock.Clickable"
-            android:paddingBottom="@dimen/margin_half"
-            android:paddingTop="@dimen/margin_half">
-          <ImageView
-              style="@style/MwmWidget.Editor.MetadataIcon"
-              app:srcCompat="@drawable/ic_self_service"
-              tools:ignore="ContentDescription" />
-          <TextView
-              android:id="@+id/self_service_title"
-              android:layout_width="match_parent"
-              android:layout_height="wrap_content"
-              android:layout_marginStart="@dimen/editor_margin_left"
-              android:text="@string/self_service"
-              android:textAppearance="@style/MwmTextAppearance.Body4"/>
-          <TextView
-              android:id="@+id/self_service"
-              style="@style/MwmWidget.Editor.FieldLayout"
-              android:layout_below="@id/self_service_title"
-              android:layout_marginTop="@dimen/margin_quarter"
-              android:gravity="center_vertical"
-              android:textAppearance="@style/MwmTextAppearance.Body1"
-              tools:text="Red str."
-              app:drawableEndCompat="@drawable/ic_arrow_down" />
-          <View
-              android:layout_width="match_parent"
-              android:layout_height="1dp"
-              android:layout_alignStart="@id/self_service"
-              android:layout_below="@id/self_service"
-              android:layout_marginTop="@dimen/margin_quarter_plus"
-              android:background="?dividerHorizontal"/>
-        </RelativeLayout>
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
 
-        <RelativeLayout
-            android:id="@+id/block_outdoor_seating"
-            style="@style/MwmWidget.Editor.MetadataBlock.Clickable">
-          <ImageView
-              style="@style/MwmWidget.Editor.MetadataIcon"
-              app:srcCompat="@drawable/ic_outdoor_seating"
-              tools:ignore="ContentDescription" />
-          <TextView
-              style="@style/MwmWidget.Editor.FieldLayout.EditText"
-              android:layout_width="match_parent"
-              android:layout_height="wrap_content"
-              android:layout_centerVertical="true"
-              android:layout_marginStart="@dimen/editor_margin_left"
-              android:layout_toStartOf="@+id/sw__outdoor_seating"
-              android:text="@string/outdoor_seating"/>
-          <androidx.appcompat.widget.SwitchCompat
-              android:id="@+id/sw__outdoor_seating"
-              android:layout_width="wrap_content"
-              android:layout_height="wrap_content"
-              android:layout_alignParentEnd="true"
-              android:layout_centerVertical="true"/>
-        </RelativeLayout>
+        <include
+          android:id="@+id/block_operator"
+          layout="@layout/item_editor_input"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
+
+        <include
+          android:id="@+id/block_wifi"
+          layout="@layout/item_editor_selector"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
+
+        <include
+          android:id="@+id/block_self_service"
+          layout="@layout/item_editor_selector"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
+
+        <include
+          android:id="@+id/block_outdoor_seating"
+          layout="@layout/item_editor_selector"/>
+
       </LinearLayout>
     </androidx.cardview.widget.CardView>
 
@@ -318,34 +176,57 @@
       <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingEnd="@dimen/margin_base"
-        android:paddingStart="@dimen/margin_base">
+        android:orientation="vertical">
+
         <TextView
-          android:layout_width="wrap_content"
+          android:layout_width="match_parent"
           android:layout_height="wrap_content"
-          android:layout_marginTop="@dimen/margin_base"
-          android:paddingBottom="@dimen/margin_half"
+          android:paddingLeft="@dimen/margin_base"
+          android:paddingTop="@dimen/margin_base"
           android:fontFamily="@string/robotoMedium"
           android:text="@string/social_media"
-          android:textAppearance="@style/MwmTextAppearance.Body3"
-          tools:ignore="UnusedAttribute"/>
+          android:textAppearance="@style/MwmTextAppearance.Body3"/>
 
         <include
           android:id="@+id/block_facebook"
           layout="@layout/item_editor_input"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
+
         <include
           android:id="@+id/block_instagram"
           layout="@layout/item_editor_input"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
+
         <include
           android:id="@+id/block_twitter"
           layout="@layout/item_editor_input"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
+
         <include
           android:id="@+id/block_vk"
           layout="@layout/item_editor_input"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
+
         <include
           android:id="@+id/block_line"
           layout="@layout/item_editor_input"/>
+
       </LinearLayout>
     </androidx.cardview.widget.CardView>
 
@@ -355,18 +236,25 @@
       <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingEnd="@dimen/margin_base"
-        android:paddingStart="@dimen/margin_base">
+        android:orientation="vertical">
+
         <TextView
-          android:layout_width="wrap_content"
+          android:layout_width="match_parent"
           android:layout_height="wrap_content"
-          android:layout_marginTop="@dimen/margin_base"
-          android:paddingBottom="@dimen/margin_half"
+          android:paddingLeft="@dimen/margin_base"
+          android:paddingTop="@dimen/margin_base"
           android:fontFamily="@string/robotoMedium"
           android:text="@string/building"
-          android:textAppearance="@style/MwmTextAppearance.Body3"
-          tools:ignore="UnusedAttribute"/>
+          android:textAppearance="@style/MwmTextAppearance.Body3"/>
+
+        <include
+          android:id="@+id/block_flats"
+          layout="@layout/item_editor_input"/>
+
+        <View
+          android:layout_width="match_parent"
+          android:layout_height="1dp"
+          android:background="?dividerHorizontal"/>
 
         <include
           android:id="@+id/block_levels"
@@ -376,7 +264,7 @@
     </androidx.cardview.widget.CardView>
 
     <androidx.cardview.widget.CardView
-      android:id="@+id/cv__more"
+      android:id="@+id/cv__more_info"
       style="@style/MwmWidget.Editor.CardView">
       <LinearLayout
         android:layout_width="match_parent"
@@ -405,7 +293,7 @@
       </LinearLayout>
     </androidx.cardview.widget.CardView>
     <androidx.cardview.widget.CardView
-      android:id="@+id/cv__more"
+      android:id="@+id/cv__reset_block"
       style="@style/MwmWidget.Editor.CardView"
       android:layout_marginTop="@dimen/margin_double"
       android:layout_marginBottom="@dimen/margin_base">
