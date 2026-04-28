@@ -198,15 +198,20 @@ public class BluetoothSyncLayer implements ISyncLayer {
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null || !adapter.isEnabled()) return null;
         
-        Set<BluetoothDevice> pairedDevices = adapter.getBondedDevices();
-        for (BluetoothDevice device : pairedDevices) {
-            try {
-                BluetoothSocket socket = device.createRfcommSocketToServiceRecord(OM_WEAR_UUID);
-                socket.connect();
-                mActiveSocket = socket;
-                startListening();
-                return socket;
-            } catch (IOException ignored) {}
+        try {
+            Set<BluetoothDevice> pairedDevices = adapter.getBondedDevices();
+            if (pairedDevices == null) return null;
+            for (BluetoothDevice device : pairedDevices) {
+                try {
+                    BluetoothSocket socket = device.createRfcommSocketToServiceRecord(OM_WEAR_UUID);
+                    socket.connect();
+                    mActiveSocket = socket;
+                    startListening();
+                    return socket;
+                } catch (IOException ignored) {}
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "Bluetooth permission missing", e);
         }
         return null;
     }

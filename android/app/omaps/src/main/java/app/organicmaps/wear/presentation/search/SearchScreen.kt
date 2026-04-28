@@ -112,7 +112,8 @@ fun SearchScreen(onSearchClick: () -> Unit) {
         ))
         if (navState.offlineMapsEnabled) {
             SearchEngine.INSTANCE.cancel()
-            SearchEngine.INSTANCE.search(context, query, false, System.nanoTime(), false, 0.0, 0.0)
+            val hasLocation = navState.lat != 0.0 && navState.lon != 0.0
+            SearchEngine.INSTANCE.search(context, query, false, System.nanoTime(), hasLocation, navState.lat, navState.lon)
         } else {
             WearCommandService.search(context, query)
         }

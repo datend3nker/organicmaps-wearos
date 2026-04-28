@@ -19,9 +19,9 @@ import app.organicmaps.sync.ISyncLayer;
 /**
  * Background service for the OSS flavor to handle incoming Bluetooth messages.
  */
-public class BluetoothMessageService extends Service implements ISyncLayer.MessageListener {
-    private static final String TAG = "BluetoothMsgService";
-    private static final int SEARCH_SELECT_MIN_SIZE = Double.BYTES * 2 + Integer.BYTES;
+public class BluetoothMessageListenerService extends Service implements ISyncLayer.MessageListener {
+    private static final String TAG = "BluetoothMsgListener";
+    private static final int SEARCH_SELECT_MIN_SIZE = 8 * 2 + 4;
     private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4;
 
     private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
@@ -114,9 +114,7 @@ public class BluetoothMessageService extends Service implements ISyncLayer.Messa
                     mMapTileRequestHandler.handle(sourceNodeId, requestId, minLat, minLon, maxLat, maxLon);
                 });
             }
-            case PATH_PING -> {
-                Log.d(TAG, "Ping received from " + sourceNodeId);
-            }
+            case PATH_PING -> Log.d(TAG, "Ping received from " + sourceNodeId);
         }
     }
 }

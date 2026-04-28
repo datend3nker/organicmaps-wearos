@@ -160,6 +160,13 @@ fun MapPanel() {
     var pendingRequestId by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
 
     androidx.compose.runtime.LaunchedEffect(centerLat, centerLon) {
+        val cached = app.organicmaps.wear.MapTileStateHolder.getCachedFeatures(centerLat, centerLon)
+        if (cached != null) {
+            mapFeatures = cached
+            loading = false
+            return@LaunchedEffect
+        }
+
         val requestId = System.nanoTime()
         pendingRequestId = requestId
         loading = true
@@ -181,6 +188,7 @@ fun MapPanel() {
 
         mapFeatures = tile.features
         loading = false
+        app.organicmaps.wear.MapTileStateHolder.updateCache(centerLat, centerLon, tile.features)
     }
     
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

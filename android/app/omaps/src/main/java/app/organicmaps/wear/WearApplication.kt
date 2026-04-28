@@ -9,6 +9,8 @@ import app.organicmaps.sdk.location.LocationProviderFactory
 import app.organicmaps.sdk.OrganicMaps
 import app.organicmaps.sdk.settings.StoragePathManager
 import app.organicmaps.sdk.util.ConnectionState
+import app.organicmaps.sdk.routing.RoutingController
+import app.organicmaps.sdk.Framework
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
@@ -58,10 +60,11 @@ class WearApplication : Application() {
         try {
             val asyncContinue = organicMaps.init { 
                 isFullyInitialized = true 
+                setupLocalNavigationListener()
             }
             if (!asyncContinue) {
-                // If it refused to init (already initialized), set the flag manually
                 isFullyInitialized = true
+                setupLocalNavigationListener()
             }
         } catch (e: Throwable) {
             initError = e.stackTraceToString()
@@ -69,8 +72,35 @@ class WearApplication : Application() {
         }
 
         // F-Droid: Start Bluetooth Listener Service
-        if (BuildConfig.FLAVOR == "fdroid") {
+        if (BuildConfig.FLAVOR == "fdroid" || BuildConfig.FLAVOR == "oss") {
             startService(Intent(this, WearDataListenerService::class.java))
+        }
+    }
+
+    private fun setupLocalNavigationListener() {
+        val routingController = RoutingController.get()
+        routingController.initialize(organicMaps.locationHelper)
+        
+        MainScope().launch(Dispatchers.Main) {
+            while (true) {
+                if (NavigationStateHolder.state.value.offlineMapsEnabled && routingController.isNavigating) {
+                    val info = Framework.nativeGetRouteFollowingInfo()
+                    if (info != null) {
+                        val currentState = NavigationStateHolder.state.value
+                        NavigationStateHolder.update(currentState.copy(
+                            distToTurn = info.distToTurn?.toString(this@WearApplication) ?: "",
+                            nextStreet = info.nextStreet ?: "",
+                            carDirection = info.carDirection.ordinal,
+                            pedestrianDirection = info.pedestrianDirection.ordinal,
+                            isActive = true,
+                            distToTarget = info.distToTarget?.toString(this@WearApplication) ?: "",
+                            eta = info.totalTimeInSeconds,
+                            completionPercent = info.completionPercent
+                        ))
+                    }
+                }
+                kotlinx.coroutines.delay(1000)
+            }
         }
     }
     
@@ -78,7 +108,7 @@ class WearApplication : Application() {
         var retries = 0
         while (!isFullyInitialized) {
             if (initError != null) throw RuntimeException(initError)
-            if (retries > 300) throw RuntimeException("Timeout waiting for init (30s)") // Increased timeout
+            if (retries > 300) throw RuntimeException("Timeout waiting for init (30s)")
             kotlinx.coroutines.delay(100)
             retries++
         }
@@ -88,7 +118,7 @@ class WearApplication : Application() {
         var retries = 0
         while (!isFullyInitialized) {
             if (initError != null) throw java.lang.RuntimeException(initError)
-            if (retries > 300) throw java.lang.RuntimeException("Timeout waiting for init (30s)") // Increased timeout
+            if (retries > 300) throw java.lang.RuntimeException("Timeout waiting for init (30s)")
             Thread.sleep(100)
             retries++
         }

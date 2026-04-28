@@ -146,8 +146,8 @@ public class MwmApplication extends Application implements Application.ActivityL
     mDisplayManager = new DisplayManager();
 
     // OSS/Independent flavors: Start Bluetooth Sync Service
-    if (BuildConfig.FLAVOR.equals("oss")) {
-        startService(new Intent(this, app.organicmaps.wear.WearMessageListenerService.class));
+    if (BuildConfig.FLAVOR.equals("oss") || BuildConfig.FLAVOR.equals("fdroid")) {
+        startService(new Intent(this, app.organicmaps.wear.BluetoothMessageListenerService.class));
     }
   }
 

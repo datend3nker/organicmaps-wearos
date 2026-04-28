@@ -10,7 +10,7 @@
 
     <application>
         <service
-            android:name="app.organicmaps.wear.BluetoothMessageService"
+            android:name="app.organicmaps.wear.BluetoothMessageListenerService"
             android:exported="false" />
 
         <!-- Remove GMS service for OSS flavor -->
