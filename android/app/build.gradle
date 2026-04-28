@@ -46,10 +46,10 @@ android {
       res.srcDirs = ['src/main/res']
       assets.srcDirs = ['src/main/assets']
     }
-    google { java.srcDirs = ['src/google/java'] }
-    fdroid { java.srcDirs = ['src/google/java'] }
-    web { java.srcDirs = ['src/google/java'] }
-    huawei { java.srcDirs = ['src/google/java'] }
+    google { java.srcDirs = ['src/google/java', 'src/gms/java'] }
+    fdroid { java.srcDirs = ['src/google/java', 'src/fdroid/java'] }
+    web { java.srcDirs = ['src/google/java', 'src/gms/java'] }
+    huawei { java.srcDirs = ['src/google/java', 'src/gms/java'] }
     oss { java.srcDirs = ['src/oss/java'] }
   }
 

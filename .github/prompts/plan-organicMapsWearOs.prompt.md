@@ -18,16 +18,19 @@ This plan details the implementation of a full-featured Wear OS companion app fo
 2. *Watch side:* Implement a lightweight vector renderer. Since creating an entirely new engine for `.mwm` formatting is difficult, the watch will use an Android `Canvas` or lightweight OpenGL ES view to render the simplified vector stream coming from the phone.
 3. Add a tile-caching layer on the watch to preserve battery (only request new bounding boxes when panning outside the cached area).
 
-**Phase 3: F-Droid Compatible Open-Source Sync**
+**Phase 3: Open-Source Sync (MicroG & Pure Bluetooth)**
 1. *Abstraction:* Create a generic `ISyncLayer` interface for device-to-device communication (messages and data maps).
 2. Refactor existing `WearSyncService` and `WearMessageListenerService` to implement this interface.
-3. *F-Droid implementation:* Implement a custom `BluetoothSyncLayer` utilizing standard Android `BluetoothSocket` (RFCOMM/BLE) to pass the same Protobuf payloads without relying on `com.google.android.gms.wearable`.
-4. Leverage the already existing `google` and `fdroid` build variants in `android/app/build.gradle` to provide the Play Services (`WearableListenerService`) and open-source custom socket sync implementations respectively, avoiding newly added complexity.
+3. *Backend Selection Settings:* Add settings to both the phone and watch apps allowing the user to select their preferred sync backend (e.g., GMS/MicroG vs. Pure Bluetooth). Include informative descriptions for each option explaining the requirements and benefits.
+4. *F-Droid implementation:* The `fdroid` flavor is allowed to utilize MicroG (GMS-compatible layer).
+5. *OSS implementation:* The `oss` flavor operates purely via standard Android `BluetoothSocket` (RFCOMM/BLE) to pass the same Protobuf payloads without relying on any Google Play Services or MicroG.
+6. Leverage the existing product flavors (`google`, `fdroid`, `oss`, etc.) to provide the correct default sync method while allowing user configuration.
 
 **Phase 4: Standalone Watch Mode**
 1. Modify the build system (`CMakeLists.txt` / `build.gradle`) to compile a minimal, headless version of the Organic Maps C++ core (`drape` UI excluded, only `mwm` data access and routing) natively for the Wear OS module.
 2. Build an offline downloader UI for the watch to download small `.mwm` region files over Wi-Fi when the phone is absent.
 3. Fallback logic: When the `ISyncLayer` detects a disconnected phone, switch the watch data source to the locally stored MWM files and run the query/rendering loop locally on the watch CPU.
+4. **Enhanced Map Management**: The phone-side Downloader UI fully supports pushing individual `.mwm` map tiles to the watch via the "Send to Watch" option. The phone's configuration settings (e.g., `Standalone Offline Maps`) instantly sync to the watch, seamlessly toggling the watch between live vector streaming and autonomous local map rendering. Explict push commands bypass auto-download blocks and force the watch to sync the chosen regions.
 
 **Relevant files**
 - `android/app/src/main/java/app/organicmaps/wear/WearMessageListenerService.java` — Needs refactoring to stop launching UI for `SearchActivity`.

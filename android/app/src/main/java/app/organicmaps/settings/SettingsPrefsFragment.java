@@ -306,19 +306,20 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     });
   }
 
+  private void syncWearOsPreferences() {
+    try {
+        app.organicmaps.wear.WearSyncService.syncPreferences(requireContext());
+    } catch (Throwable e) {
+        android.util.Log.e("SettingsPrefsFragment", "Wear OS sync failed: ", e);
+    }
+  }
+
   private void initWearOsPrefsCallbacks()
   {
     androidx.preference.Preference.OnPreferenceChangeListener wearPrefsListener = (preference, newValue) -> {
       // Sync to watch when map streaming setting changes
       // Run it slightly later so SharedPreferences gives the new saved value
-      new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-        try {
-          app.organicmaps.wear.WearSyncService.syncPreferences(requireContext());
-        } catch (NoClassDefFoundError | Exception e) {
-          // Play Services unavailable or WearOS module not handling it, ignore gracefully
-          android.util.Log.e("SettingsPrefsFragment", "Wear OS sync failed: ", e);
-        }
-      });
+      new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
       return true;
     };
 
