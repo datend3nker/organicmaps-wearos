@@ -172,6 +172,13 @@ class WearDataListenerService : Service() {
                 // F-Droid: only local download on watch
                 launchOmaps()
             }
+            6 -> { // MSG_TYPE_MAP_TILE_RESPONSE
+                if (buffer.remaining() < 8) return
+                val requestId = buffer.long
+                val features = ByteArray(buffer.remaining())
+                buffer.get(features)
+                MapTileStateHolder.update(requestId, features)
+            }
         }
     }
 

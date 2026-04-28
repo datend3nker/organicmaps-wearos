@@ -1,24 +1,26 @@
 package app.organicmaps.wear;
 
+import android.app.Service;
 import android.content.Intent;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
+
 import androidx.annotation.NonNull;
-import app.organicmaps.SplashActivity;
-import app.organicmaps.sdk.routing.RoutingController;
-import com.google.android.gms.wearable.MessageEvent;
-import com.google.android.gms.wearable.Wearable;
-import com.google.android.gms.wearable.WearableListenerService;
+import androidx.annotation.Nullable;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
-import app.organicmaps.sync.GmsSyncLayer;
+import app.organicmaps.sdk.routing.RoutingController;
 import app.organicmaps.sync.ISyncLayer;
 
-public class WearMessageListenerService extends WearableListenerService implements ISyncLayer.MessageListener {
-    private static final String TAG = "WearMessageListener";
+/**
+ * Background service for the OSS flavor to handle incoming Bluetooth messages.
+ */
+public class BluetoothMessageService extends Service implements ISyncLayer.MessageListener {
+    private static final String TAG = "BluetoothMsgService";
     private static final int SEARCH_SELECT_MIN_SIZE = Double.BYTES * 2 + Integer.BYTES;
     private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4;
 
@@ -31,33 +33,29 @@ public class WearMessageListenerService extends WearableListenerService implemen
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
-
     private WearMapTileRequestHandler mMapTileRequestHandler;
-
-    @NonNull
-    private WearMapTileRequestHandler getMapTileRequestHandler() {
-        if (mMapTileRequestHandler == null) {
-            mMapTileRequestHandler = new WearMapTileRequestHandler(this);
-        }
-        return mMapTileRequestHandler;
-    }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        ((GmsSyncLayer) WearSyncService.getSyncLayer()).addMessageListener(this);
+        WearSyncService.getSyncLayer().addMessageListener(this);
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
-        ((GmsSyncLayer) WearSyncService.getSyncLayer()).removeMessageListener(this);
+        WearSyncService.getSyncLayer().removeMessageListener(this);
     }
 
     @Override
-    public void onMessageReceived(@NonNull MessageEvent messageEvent) {
-        super.onMessageReceived(messageEvent);
-        ((GmsSyncLayer) WearSyncService.getSyncLayer()).notifyMessageReceived(messageEvent);
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        return START_STICKY;
+    }
+
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
     }
 
     @Override
@@ -111,8 +109,10 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 double maxLat = buffer.getDouble();
                 double maxLon = buffer.getDouble();
 
-                mMainHandler.post(() -> getMapTileRequestHandler().handle(
-                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon));
+                mMainHandler.post(() -> {
+                    if (mMapTileRequestHandler == null) mMapTileRequestHandler = new WearMapTileRequestHandler(this);
+                    mMapTileRequestHandler.handle(sourceNodeId, requestId, minLat, minLon, maxLat, maxLon);
+                });
             }
             case PATH_PING -> {
                 Log.d(TAG, "Ping received from " + sourceNodeId);

@@ -27,7 +27,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
@@ -45,24 +44,17 @@ import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.SearchResultItem
 import app.organicmaps.wear.WearCommandService
 import kotlinx.coroutines.launch
+import app.organicmaps.sdk.search.SearchEngine
+import app.organicmaps.sdk.search.SearchListener
+import app.organicmaps.sdk.search.SearchResult
+import app.organicmaps.sdk.routing.RoutingController
+import app.organicmaps.sdk.bookmarks.data.MapObject
+import app.organicmaps.sdk.Router
 
-/**
- * The main search screen for the WearOS app.
- *
- * This screen provides:
- * 1. A text field for manual query entry.
- * 2. A voice input button for speech-to-text search.
- * 3. Recent search history when the query is empty.
- * 4. Real-time search results as the user types (sent to the phone app).
- * 5. A selection screen to choose the transportation mode (Car/Walk/Bike/Transit) after selecting a result.
- *
- * @param onSearchClick Callback when a search action is performed (currently unused by caller).
- */
 @Composable
 fun SearchScreen(onSearchClick: () -> Unit) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
     
     var searchQuery by remember { mutableStateOf(TextFieldValue("")) }
@@ -71,15 +63,61 @@ fun SearchScreen(onSearchClick: () -> Unit) {
     val navState by NavigationStateHolder.state.collectAsState()
     val listState = rememberScalingLazyListState()
 
-    // Request history on launch
-    LaunchedEffect(Unit) {
-        WearCommandService.requestSearchHistory(context)
+    // Standalone Search Logic
+    DisposableEffect(navState.offlineMapsEnabled) {
+        val listener = object : SearchListener {
+            override fun onResultsUpdate(results: Array<out SearchResult>, timestamp: Long) {
+                if (navState.offlineMapsEnabled) {
+                    val converted = results.map {
+                        SearchResultItem(
+                            name = it.getTitle(context),
+                            description = it.description.localizedFeatureType ?: "",
+                            lat = it.lat,
+                            lon = it.lon,
+                            type = it.type
+                        )
+                    }
+                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+                        searchResults = converted,
+                        isSearching = true
+                    ))
+                }
+            }
+
+            override fun onResultsEnd(timestamp: Long) {
+                if (navState.offlineMapsEnabled) {
+                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isSearching = false))
+                }
+            }
+        }
+        if (navState.offlineMapsEnabled) {
+            SearchEngine.INSTANCE.addListener(listener)
+        }
+        onDispose {
+            SearchEngine.INSTANCE.removeListener(listener)
+        }
     }
 
-    /**
-     * Handles query changes. Just updates the state to avoid IME desync.
-     * Actual search is triggered by IME Action (Search button).
-     */
+    // Request history on launch
+    LaunchedEffect(Unit) {
+        if (!navState.offlineMapsEnabled) {
+            WearCommandService.requestSearchHistory(context)
+        }
+    }
+
+    val performSearch: (String) -> Unit = { query ->
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+            isSearching = true,
+            searchResults = emptyList()
+        ))
+        if (navState.offlineMapsEnabled) {
+            SearchEngine.INSTANCE.cancel()
+            SearchEngine.INSTANCE.search(context, query, false, System.nanoTime(), false, 0.0, 0.0)
+        } else {
+            WearCommandService.search(context, query)
+        }
+    }
+
     val onQueryChanged: (TextFieldValue) -> Unit = { newValue ->
         searchQuery = newValue
     }
@@ -92,11 +130,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
         val query = data?.get(0)
         if (!query.isNullOrEmpty()) {
             searchQuery = TextFieldValue(text = query, selection = TextRange(query.length))
-            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-                isSearching = true,
-                searchResults = emptyList()
-            ))
-            WearCommandService.search(context, query)
+            performSearch(query)
             coroutineScope.launch {
                 listState.animateScrollToItem(1)
             }
@@ -108,7 +142,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
             val errorColor = Color.Red
             TimeText(
                 startLinearContent = {
-                    if (!navState.isPhoneConnected) {
+                    if (!navState.isPhoneConnected && !navState.offlineMapsEnabled) {
                         Icon(
                             imageVector = Icons.Default.Search,
                             contentDescription = "Disconnected",
@@ -119,7 +153,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                     }
                 },
                 startCurvedContent = {
-                    if (!navState.isPhoneConnected) {
+                    if (!navState.isPhoneConnected && !navState.offlineMapsEnabled) {
                         curvedText(
                             text = "!",
                             style = CurvedTextStyle(
@@ -135,7 +169,19 @@ fun SearchScreen(onSearchClick: () -> Unit) {
             ModeSelectionScreen(
                 result = selectedResult!!,
                 onModeSelected = { routerType ->
-                    WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
+                    if (navState.offlineMapsEnabled) {
+                        val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
+                        val router = when (routerType) {
+                            0 -> Router.Vehicle
+                            1 -> Router.Pedestrian
+                            2 -> Router.Bicycle
+                            else -> Router.Transit
+                        }
+                        RoutingController.get().prepare(null, destination, router)
+                        NavigationStateHolder.update(navState.copy(isActive = true))
+                    } else {
+                        WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
+                    }
                     selectedResult = null
                     searchQuery = TextFieldValue("")
                 },
@@ -149,7 +195,6 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Top,
             ) {
-                // Unified Search Input
                 item {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -176,16 +221,8 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                                 keyboardActions = KeyboardActions(onSearch = {
                                     val finalQuery = searchQuery.text
                                     if (finalQuery.isNotEmpty()) {
-                                        // Commit composition state to avoid "KBadenbaden" desync and allow immediate search
-                                        
-
-                                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-                                            isSearching = true,
-                                            searchResults = emptyList() // clear previous to show progress
-                                        ))
-                                        WearCommandService.search(context, finalQuery)
+                                        performSearch(finalQuery)
                                         keyboardController?.hide()
-                                        // // focusManager.clearFocus() // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS
                                         coroutineScope.launch {
                                             listState.animateScrollToItem(1)
                                         }
@@ -226,7 +263,6 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                 }
 
                 if (searchQuery.text.isEmpty()) {
-                    // Show History
                     if (navState.searchHistory.isNotEmpty()) {
                         item {
                             Text(
@@ -239,12 +275,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                             Chip(
                                 onClick = { 
                                     searchQuery = TextFieldValue(text = query, selection = TextRange(query.length))
-                                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-                                        isSearching = true,
-                                        searchResults = emptyList()
-                                    ))
-                                    WearCommandService.search(context, query)
-                                    // // focusManager.clearFocus() // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS
+                                    performSearch(query)
                                     keyboardController?.hide()
                                 },
                                 label = { Text(query, maxLines = 1) },
@@ -264,7 +295,6 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                         }
                     }
                 } else {
-                    // Show Results
                     if (navState.searchResults.isEmpty() && navState.isSearching) {
                         item { CircularProgressIndicator(modifier = Modifier.padding(top = 20.dp)) }
                     } else if (navState.searchResults.isEmpty()) {
@@ -279,7 +309,6 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                         items(navState.searchResults) { result ->
                             SearchResultChip(result) {
                                 selectedResult = result
-                                // // focusManager.clearFocus() // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS // DO NOT CLEAR FOCUS, IT BREAKS WEAR OS TEXTFIELDS
                                 keyboardController?.hide()
                             }
                         }
@@ -290,13 +319,6 @@ fun SearchScreen(onSearchClick: () -> Unit) {
     }
 }
 
-/**
- * A screen to select the transportation mode for the selected search result.
- * 
- * @param result The search result selected by the user.
- * @param onModeSelected Callback with the selected router type (0 for Car, 1 for Walk, 2 for Bike, 3 for Transit).
- * @param onCancel Callback to cancel selection and return to the search list.
- */
 @Composable
 fun ModeSelectionScreen(
     result: SearchResultItem,
@@ -339,12 +361,6 @@ fun ModeSelectionScreen(
     }
 }
 
-/**
- * A chip representing a single search result.
- * 
- * @param result The search result item.
- * @param onClick Callback when the chip is clicked.
- */
 @Composable
 fun SearchResultChip(result: SearchResultItem, onClick: () -> Unit) {
     val title = result.name.ifEmpty { result.description }

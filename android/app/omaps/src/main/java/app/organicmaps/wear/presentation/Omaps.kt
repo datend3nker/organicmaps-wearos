@@ -16,10 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.background
-import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import androidx.compose.ui.graphics.Color
 import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.WearCommandService
 import app.organicmaps.wear.presentation.navigation.NavigationScreen
@@ -27,7 +24,6 @@ import app.organicmaps.wear.presentation.navigation.SensorViewModel
 import app.organicmaps.wear.presentation.navigation.StatsScreen
 import app.organicmaps.wear.presentation.search.SearchScreen
 import app.organicmaps.wear.presentation.theme.OrganicMapsTheme
-import app.organicmaps.wear.presentation.MapPanel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -43,14 +39,9 @@ class Omaps : ComponentActivity() {
         // Initialize state from prefs
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
         val isMapEnabled = prefs.getBoolean("mapEnabled", false)
-        val isOfflineForced = prefs.getBoolean("forceWatchOfflineMaps", false)
-        val phoneOfflinePref = prefs.getBoolean("offlineMapsEnabled", false)
-        val finalOfflineState = isOfflineForced || phoneOfflinePref
-        
-        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-            mapEnabled = isMapEnabled,
-            offlineMapsEnabled = finalOfflineState
-        ))
+        if (NavigationStateHolder.state.value.mapEnabled != isMapEnabled) {
+            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(mapEnabled = isMapEnabled))
+        }
         
         setContent {
             WearApp()
@@ -78,7 +69,7 @@ fun WearApp() {
     }
 
     OrganicMapsTheme {
-        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
+        Box(modifier = Modifier.fillMaxSize()) {
             if (!isNavigating) {
                 HorizontalPager(
                     state = pagerState,
@@ -118,13 +109,132 @@ fun WearApp() {
 @Composable
 fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
     val context = LocalContext.current
+    val sensorViewModel: SensorViewModel = viewModel()
+    val deviceRotation by sensorViewModel.heading.collectAsState()
     
     NavigationScreen(
         distanceToNextTurn = navState.distToTurn,
-        turnIcon = app.organicmaps.wear.NavigationIcons.getTurnIcon(navState.carDirection, navState.pedestrianDirection), 
+        turnIcon = getTurnIcon(navState.carDirection, navState.pedestrianDirection), 
         remainingTime = navState.nextStreet,
-        onCancelClick = { WearCommandService.stopNavigation(context) }
+        onCancelClick = { WearCommandService.stopNavigation(context) },
+        deviceRotation = deviceRotation
     )
 }
 
+@Composable
+fun getTurnIcon(carDirection: Int, pedestrianDirection: Int): ImageVector {
+    // If pedestrian direction is not NoTurn/GoStraight, use it
+    if (pedestrianDirection != 0 && pedestrianDirection != 1) {
+        return when (pedestrianDirection) {
+            2 -> Icons.AutoMirrored.Filled.ArrowForward
+            3 -> Icons.AutoMirrored.Filled.ArrowBack
+            4 -> Icons.Default.Place
+            else -> Icons.Default.ArrowUpward
+        }
+    }
 
+    // Mapping based on app.organicmaps.sdk.routing.CarDirection enum
+    return when (carDirection) {
+        0, 1, 13 -> Icons.Default.ArrowUpward // NoTurn, GoStraight, StartAtEndOfStreet
+        2, 3, 4 -> Icons.AutoMirrored.Filled.ArrowForward // TurnRight variants
+        5, 6, 7 -> Icons.AutoMirrored.Filled.ArrowBack // TurnLeft variants
+        8, 9 -> Icons.Default.Refresh // UTurn variants (Refresh as fallback)
+        10, 11, 12 -> Icons.Default.Refresh // Roundabout
+        14 -> Icons.Default.Place // ReachedYourDestination
+        else -> Icons.Default.ArrowUpward
+    }
+}
+
+@Composable
+fun MapPanel() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val navState by NavigationStateHolder.state.collectAsState()
+    val streamedTile by app.organicmaps.wear.MapTileStateHolder.mapTile.collectAsState()
+    
+    val centerLat = if (navState.lat != 0.0) navState.lat else 48.2082
+    val centerLon = if (navState.lon != 0.0) navState.lon else 16.3738
+    val span = 0.01 
+    
+    var mapFeatures by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
+    var loading by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var pendingRequestId by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
+
+    androidx.compose.runtime.LaunchedEffect(centerLat, centerLon) {
+        val requestId = System.nanoTime()
+        pendingRequestId = requestId
+        loading = true
+        WearCommandService.requestMapTile(
+            context,
+            requestId,
+            centerLat - span,
+            centerLon - span,
+            centerLat + span,
+            centerLon + span
+        )
+    }
+
+    androidx.compose.runtime.LaunchedEffect(streamedTile, pendingRequestId) {
+        val tile = streamedTile ?: return@LaunchedEffect
+        if (tile.requestId != pendingRequestId) {
+            return@LaunchedEffect
+        }
+
+        mapFeatures = tile.features
+        loading = false
+    }
+    
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+            drawRect(color = androidx.compose.ui.graphics.Color(0xFF1E1E1E))
+            
+            val features = mapFeatures
+            if (features != null && features.isNotEmpty()) {
+                val buffer = java.nio.ByteBuffer.wrap(features).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                while (buffer.hasRemaining()) {
+                    val type = buffer.get()
+                    val count = buffer.getInt()
+                    
+                    val mapPath = androidx.compose.ui.graphics.Path()
+                    for (i in 0 until count) {
+                        val lon = buffer.getDouble()
+                        val lat = buffer.getDouble()
+                        
+                        val x = ((lon - (centerLon - span)) / (2 * span)) * size.width
+                        val y = size.height - (((lat - (centerLat - span)) / (2 * span)) * size.height)
+                        
+                        if (i == 0) mapPath.moveTo(x.toFloat(), y.toFloat())
+                        else mapPath.lineTo(x.toFloat(), y.toFloat())
+                    }
+                    
+                    if (type.toInt() == 1) {
+                        drawPath(path = mapPath, color = androidx.compose.ui.graphics.Color.Gray, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f))
+                    } else if (type.toInt() == 2) {
+                        drawPath(path = mapPath, color = androidx.compose.ui.graphics.Color(0xFF2A2A2A)) 
+                    }
+                }
+            }
+            
+            drawCircle(
+                color = androidx.compose.ui.graphics.Color.Cyan,
+                radius = 12f,
+                center = center
+            )
+        }
+        
+        if (loading) {
+            Text(
+                text = "Streaming map from phone...",
+                color = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
+                style = androidx.wear.compose.material.MaterialTheme.typography.caption3
+            )
+        }
+
+        Text(
+            text = "Companion Stream Renderer",
+            color = androidx.compose.ui.graphics.Color.White,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+            style = androidx.wear.compose.material.MaterialTheme.typography.caption3
+        )
+    }
+}

@@ -52,11 +52,9 @@ object WearCommandService {
         sendMessage(PATH_SEARCH_SELECT, buffer.array())
     }
 
-    fun requestMapTile(context: Context, x: Int, y: Int, zoom: Int, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) {
-        val buffer = ByteBuffer.allocate(Int.SIZE_BYTES * 3 + (Double.SIZE_BYTES * 4))
-        buffer.putInt(x)
-        buffer.putInt(y)
-        buffer.putInt(zoom)
+    fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) {
+        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4))
+        buffer.putLong(requestId)
         buffer.putDouble(minLat)
         buffer.putDouble(minLon)
         buffer.putDouble(maxLat)

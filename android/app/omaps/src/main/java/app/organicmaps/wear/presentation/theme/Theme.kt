@@ -5,8 +5,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.wear.compose.material.Colors
 import androidx.wear.compose.material.MaterialTheme
 
-val OrganicGreen = Color(0xFF4CAF50)
-val OrganicBlue = Color(0xFF2196F3)
+val OrganicGreen = Color(0xFF006C35)
+val OrganicBlue = Color(0xFF249CF2)
 val DarkBackground = Color(0xFF121212)
 val SurfaceColor = Color(0xFF1E1E1E)
 

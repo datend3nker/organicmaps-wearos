@@ -18,214 +18,50 @@ import com.google.android.gms.wearable.Node;
 import java.util.ArrayList;
 import java.nio.ByteBuffer;
 
+import app.organicmaps.sync.GmsSyncLayer;
+import app.organicmaps.sync.ISyncLayer;
+
 public class WearSyncService {
-    public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
-        Log.d(TAG, "Requesting watch to download: " + countryId);
-        syncPreferences(context);
-        Wearable.getNodeClient(context).getConnectedNodes().addOnSuccessListener(nodes -> {
-            for (Node node : nodes) {
-                Wearable.getMessageClient(context).sendMessage(node.getId(), "/map/download/request", countryId.getBytes());
-            }
-        });
+    private static final ISyncLayer sSyncLayer = new GmsSyncLayer();
+
+    public static ISyncLayer getSyncLayer() {
+        return sSyncLayer;
     }
 
-    private static final String TAG = "WearSyncService";
-    private static final String PATH_NAVIGATION = "/navigation/status";
-    private static final String PATH_START_NAVIGATION = "/navigation/start";
-    private static final String PATH_SEARCH_RESULTS = "/search/results";
-    private static final String PATH_SEARCH_HISTORY = "/search/history";
-    private static final String PATH_PREFERENCES = "/preferences";
-    private static final String PATH_MAP_TILE_RESPONSE = "/map/tile/response";
+    public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
+        sSyncLayer.sendMapRequestToWatch(context, countryId);
+    }
 
     public static void syncPreferences(@NonNull Context context) {
-        android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
-        boolean mapEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
-        boolean offlineMapsEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_offline_maps_enabled), false);
-        String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
-
-        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_PREFERENCES);
-        DataMap map = putDataMapReq.getDataMap();
-        map.putBoolean("mapEnabled", mapEnabled);
-        map.putBoolean("offlineMapsEnabled", offlineMapsEnabled);
-        map.putString("mapDownloadMode", mapDownloadMode);
-        
-        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-        Task<DataItem> putDataTask = Wearable.getDataClient(context).putDataItem(putDataReq);
-        putDataTask.addOnSuccessListener(dataItem -> Log.d(TAG, "Sent updated preferences to watch"))
-                   .addOnFailureListener(e -> Log.e(TAG, "Failed to send preferences: " + e.getMessage()));
+        sSyncLayer.syncPreferences(context);
     }
 
     public static void updateNavigation(@NonNull Context context, @NonNull RoutingInfo info, @Nullable Location location) {
-        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_NAVIGATION);
-        DataMap map = putDataMapReq.getDataMap();
-
-        map.putString("distToTurn", info.distToTurn != null ? info.distToTurn.toString(context) : "");
-        map.putString("nextStreet", info.nextStreet != null ? info.nextStreet : "");
-        map.putInt("carDirection", info.carDirection.ordinal());
-        map.putInt("pedestrianDirection", info.pedestrianDirection.ordinal());
-        map.putInt("exitNum", info.exitNum);
-        map.putBoolean("active", true);
-        map.putDouble("completionPercent", info.completionPercent);
-        map.putString("distToTarget", info.distToTarget != null ? info.distToTarget.toString(context) : "");
-        map.putInt("eta", info.totalTimeInSeconds);
-        map.putDouble("speedLimitMps", info.speedLimitMps);
-        map.putInt("routerType", app.organicmaps.sdk.Router.get().ordinal());
-        map.putDouble("distToTurnMeters", info.distToTurn != null ? info.distToTurn.mDistance : -1.0);
-        map.putDouble("turnLat", info.turnLat);
-        map.putDouble("turnLon", info.turnLon);
-        
-        if (location != null) {
-            double speed = location.getSpeed();
-            Log.d(TAG, "Syncing speed: " + speed + " m/s");
-            map.putDouble("speedMps", speed);
-            map.putDouble("lat", location.getLatitude());
-            map.putDouble("lon", location.getLongitude());
-            if (location.hasBearing()) {
-                map.putFloat("bearing", location.getBearing());
-            } else {
-                map.putFloat("bearing", -1f);
-            }
-        } else {
-            map.putDouble("speedMps", -1.0);
-        }
-        
-        map.putLong("timestamp", System.currentTimeMillis());
-
-        try {
-            app.organicmaps.sdk.routing.JunctionInfo[] junctions = app.organicmaps.sdk.Framework.nativeGetRouteJunctionPoints(20.0);
-            if (junctions != null && junctions.length > 0) {
-                float[] lats = new float[junctions.length];
-                float[] lons = new float[junctions.length];
-                for (int i = 0; i < junctions.length; i++) {
-                    lats[i] = (float) junctions[i].mLat;
-                    lons[i] = (float) junctions[i].mLon;
-                }
-                map.putFloatArray("routeLats", lats);
-                map.putFloatArray("routeLons", lons);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to extract route junctions", e);
-        }
-
-        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-        putDataReq.setUrgent();
-        
-        Wearable.getDataClient(context).putDataItem(putDataReq)
-                .addOnFailureListener(e -> Log.e(TAG, "Failed to send navigation data", e));
+        sSyncLayer.updateNavigation(context, info, location);
     }
 
     public static void sendSearchState(@NonNull Context context, boolean isSearching) {
-        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_SEARCH_RESULTS);
-        DataMap map = putDataMapReq.getDataMap();
-        map.putBoolean("isSearching", isSearching);
-        map.putLong("timestamp", System.currentTimeMillis());
-
-        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-        putDataReq.setUrgent();
-        Wearable.getDataClient(context).putDataItem(putDataReq);
+        sSyncLayer.sendSearchState(context, isSearching);
     }
 
     public static void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results, boolean isSearching) {
-        Log.d(TAG, "sendSearchResults: count=" + results.length + ", isSearching=" + isSearching);
-        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_SEARCH_RESULTS);
-        DataMap map = putDataMapReq.getDataMap();
-        
-        ArrayList<DataMap> resultList = new ArrayList<>();
-        int count = Math.min(results.length, 30);
-        for (int i = 0; i < count; i++) {
-            SearchResult res = results[i];
-            DataMap resMap = new DataMap();
-            resMap.putString("name", res.getTitle(context) != null ? res.getTitle(context) : "");
-            resMap.putString("description", (res.description != null && res.description.localizedFeatureType != null) ? res.description.localizedFeatureType : "");
-            resMap.putDouble("lat", res.lat);
-            resMap.putDouble("lon", res.lon);
-            resMap.putInt("type", res.type);
-            resultList.add(resMap);
-        }
-        map.putDataMapArrayList("results", resultList);
-        map.putBoolean("isSearching", isSearching);
-        map.putLong("timestamp", System.currentTimeMillis());
-
-        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-        putDataReq.setUrgent();
-        Wearable.getDataClient(context).putDataItem(putDataReq)
-                .addOnSuccessListener(dataItem -> Log.d(TAG, "Successfully sent search results"))
-                .addOnFailureListener(e -> Log.e(TAG, "Failed to send search results", e));
+        sSyncLayer.sendSearchResults(context, results, isSearching);
     }
 
     public static void sendSearchHistory(@NonNull Context context) {
-        SearchRecents.refresh();
-        int size = SearchRecents.getSize();
-        Log.d(TAG, "sendSearchHistory: count=" + size);
-        
-        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_SEARCH_HISTORY);
-        DataMap map = putDataMapReq.getDataMap();
-        
-        ArrayList<String> history = new ArrayList<>();
-        int count = Math.min(size, 10);
-        for (int i = 0; i < count; i++) {
-            history.add(SearchRecents.get(i));
-        }
-        map.putStringArrayList("history", history);
-        map.putLong("timestamp", System.currentTimeMillis());
-
-        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-        putDataReq.setUrgent();
-        Wearable.getDataClient(context).putDataItem(putDataReq)
-                .addOnSuccessListener(dataItem -> Log.d(TAG, "Successfully sent history"))
-                .addOnFailureListener(e -> Log.e(TAG, "Failed to send history", e));
+        sSyncLayer.sendSearchHistory(context);
     }
 
     public static void startNavigation(@NonNull Context context) {
-        Log.d(TAG, "Sending start navigation signal to Wear");
-        syncPreferences(context);
-        
-        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_NAVIGATION);
-        DataMap map = putDataMapReq.getDataMap();
-        map.putBoolean("active", true);
-        map.putLong("timestamp", System.currentTimeMillis());
-        String[] missingMaps = app.organicmaps.sdk.routing.RoutingController.get().getLastMissingMaps();
-        if (missingMaps != null && missingMaps.length > 0) {
-            java.util.ArrayList<String> missingList = new java.util.ArrayList<>();
-            for (String m : missingMaps) {
-                missingList.add(m);
-            }
-            map.putStringArrayList("missingMaps", missingList);
-        }
-
-        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-        putDataReq.setUrgent();
-        Wearable.getDataClient(context).putDataItem(putDataReq);
-
-        Wearable.getNodeClient(context).getConnectedNodes().addOnSuccessListener(nodes -> {
-            for (Node node : nodes) {
-                Wearable.getMessageClient(context).sendMessage(node.getId(), PATH_START_NAVIGATION, new byte[0]);
-            }
-        });
+        sSyncLayer.startNavigation(context);
     }
     
     public static void stopNavigation(@NonNull Context context) {
-        Log.d(TAG, "Sending stop navigation signal to Wear");
-        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_NAVIGATION);
-        DataMap map = putDataMapReq.getDataMap();
-        map.putBoolean("active", false);
-        map.putLong("timestamp", System.currentTimeMillis());
-
-        com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-        putDataReq.setUrgent();
-        Wearable.getDataClient(context).putDataItem(putDataReq);
+        sSyncLayer.stopNavigation(context);
     }
 
     public static void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId,
-                                           int x, int y, int zoom, @NonNull byte[] features) {
-        ByteBuffer payload = ByteBuffer.allocate(4 * 3 + features.length);
-        payload.putInt(x);
-        payload.putInt(y);
-        payload.putInt(zoom);
-        payload.put(features);
-
-        Wearable.getMessageClient(context)
-                .sendMessage(nodeId, PATH_MAP_TILE_RESPONSE, payload.array())
-                .addOnFailureListener(e -> Log.e(TAG, "Failed to send map tile response", e));
+                                           long requestId, @NonNull byte[] features) {
+        sSyncLayer.sendMapTileResponse(context, nodeId, requestId, features);
     }
 }

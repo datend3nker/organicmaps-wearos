@@ -120,17 +120,15 @@ class WearDataListenerService : WearableListenerService() {
             launchOmaps() // Show UI so user sees progress
         } else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
             val buffer = ByteBuffer.wrap(messageEvent.data)
-            if (buffer.remaining() < 4 * 3) { // 3 ints (x, y, zoom)
+            if (buffer.remaining() < 8) { // 1 long (requestId)
                 Log.w(TAG, "Received malformed map tile response")
                 return
             }
 
-            val x = buffer.int
-            val y = buffer.int
-            val zoom = buffer.int
+            val requestId = buffer.long
             val features = ByteArray(buffer.remaining())
             buffer.get(features)
-            MapTileStateHolder.update(x, y, zoom, features)
+            MapTileStateHolder.update(requestId, features)
         }
     }
 

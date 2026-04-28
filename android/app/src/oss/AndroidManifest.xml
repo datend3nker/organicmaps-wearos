@@ -9,13 +9,13 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
     <application>
-        <!-- In F-Droid flavor, we use our own Bluetooth-based service.
-             We override the GMS filter to use it as a regular service. -->
+        <service
+            android:name="app.organicmaps.wear.BluetoothMessageService"
+            android:exported="false" />
+
+        <!-- Remove GMS service for OSS flavor -->
         <service
             android:name="app.organicmaps.wear.WearMessageListenerService"
-            android:exported="false"
-            tools:replace="android:exported">
-            <intent-filter tools:node="removeAll" />
-        </service>
+            tools:node="remove" />
     </application>
 </manifest>

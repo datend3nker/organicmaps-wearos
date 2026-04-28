@@ -22,24 +22,24 @@ public final class WearMapTileRequestHandler {
         mContext = context.getApplicationContext();
     }
 
-    public void handle(@NonNull String nodeId, int x, int y, int zoom, double minLat, double minLon,
+    public void handle(@NonNull String nodeId, long requestId, double minLat, double minLon,
                        double maxLat, double maxLon) {
         try {
             boolean asyncInit = MwmApplication.from(mContext).initOrganicMaps(() ->
-                sendMapTileResponse(nodeId, x, y, zoom, minLat, minLon, maxLat, maxLon));
+                sendMapTileResponse(nodeId, requestId, minLat, minLon, maxLat, maxLon));
             if (!asyncInit) {
-                sendMapTileResponse(nodeId, x, y, zoom, minLat, minLon, maxLat, maxLon);
+                sendMapTileResponse(nodeId, requestId, minLat, minLon, maxLat, maxLon);
             }
         } catch (IOException e) {
             Log.e(TAG, "Failed to init Organic Maps for tile streaming", e);
-            WearSyncService.sendMapTileResponse(mContext, nodeId, x, y, zoom, new byte[0]);
+            WearSyncService.sendMapTileResponse(mContext, nodeId, requestId, new byte[0]);
         }
     }
 
-    private void sendMapTileResponse(@NonNull String nodeId, int x, int y, int zoom, double minLat, double minLon,
+    private void sendMapTileResponse(@NonNull String nodeId, long requestId, double minLat, double minLon,
                                      double maxLat, double maxLon) {
         // Zoom 16 on phone matches scale/depth needed for watch display
         byte[] features = MapFeaturesExtractor.extract(minLat, minLon, maxLat, maxLon, 16);
-        WearSyncService.sendMapTileResponse(mContext, nodeId, x, y, zoom, features);
+        WearSyncService.sendMapTileResponse(mContext, nodeId, requestId, features);
     }
 }

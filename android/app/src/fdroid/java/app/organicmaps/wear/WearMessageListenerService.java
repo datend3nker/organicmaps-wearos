@@ -23,28 +23,26 @@ import app.organicmaps.sdk.routing.RoutingController;
 /**
  * F-Droid implementation of WearMessageListenerService using raw Bluetooth RFCOMM Sockets.
  */
-public class WearMessageListenerService extends Service {
-    private static final String TAG = "WearMsgListenerFdroid";
-    private static final UUID OM_WEAR_UUID = UUID.fromString("6d617073-7765-6172-6f73-73796e633130");
+import app.organicmaps.sync.ISyncLayer;
 
-    private static final byte MSG_TYPE_COMMAND = 10;
-    
+public class WearMessageListenerService extends Service implements ISyncLayer.MessageListener {
+    private static final String TAG = "WearMsgListenerFdroid";
+    private static final int SEARCH_SELECT_MIN_SIZE = Double.BYTES * 2 + Integer.BYTES;
+    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4;
+
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private WearMapTileRequestHandler mMapTileRequestHandler;
-    private BluetoothServerSocket mServerSocket;
-    private boolean mIsRunning = false;
 
     @Override
     public void onCreate() {
         super.onCreate() ;
         mMapTileRequestHandler = new WearMapTileRequestHandler(this);
-        startListening();
+        WearSyncService.getSyncLayer().addMessageListener(this);
     }
 
     @Override
     public void onDestroy() {
-        mIsRunning = false;
-        try { if (mServerSocket != null) mServerSocket.close(); } catch (Exception ignored) {}
+        WearSyncService.getSyncLayer().removeMessageListener(this);
         super.onDestroy();
     }
 
@@ -52,112 +50,48 @@ public class WearMessageListenerService extends Service {
     @Override
     public IBinder onBind(Intent intent) { return null; }
 
-    private void startListening() {
-        mIsRunning = true;
-        new Thread(() -> {
-            BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-            if (adapter == null) return;
-            try {
-                mServerSocket = adapter.listenUsingRfcommWithServiceRecord("OrganicMapsSync", OM_WEAR_UUID);
-                while (mIsRunning) {
-                    BluetoothSocket socket = mServerSocket.accept();
-                    if (socket != null) {
-                        handleClient(socket);
-                    }
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Bluetooth server error: " + e.getMessage());
-            }
-        }).start();
-    }
-
-    private void handleClient(BluetoothSocket socket) {
-        new Thread(() -> {
-            try {
-                InputStream input = socket.getInputStream();
-                while (mIsRunning && socket.isConnected()) {
-                    int type = input.read();
-                    if (type == -1) break;
-                    
-                    byte[] lenBuf = new byte[4];
-                    readFully(input, lenBuf);
-                    int length = ByteBuffer.wrap(lenBuf).getInt();
-                    
-                    byte[] payload = new byte[length];
-                    readFully(input, payload);
-                    
-                    if (type == MSG_TYPE_COMMAND) {
-                        processCommand(payload);
-                    }
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "Connection lost: " + e.getMessage());
-            } finally {
-                try { socket.close(); } catch (Exception ignored) {}
-            }
-        }).start();
-    }
-
-    private void readFully(InputStream in, byte[] buffer) throws java.io.IOException {
-        int offset = 0;
-        while (offset < buffer.length) {
-            int read = in.read(buffer, offset, buffer.length - offset);
-            if (read == -1) throw new java.io.IOException("EOF");
-            offset += read;
-        }
-    }
-
-    private void processCommand(byte[] data) {
-        ByteBuffer buffer = ByteBuffer.wrap(data);
-        int pathLen = buffer.getInt();
-        String path = new String(data, buffer.position(), pathLen, StandardCharsets.UTF_8);
-        buffer.position(buffer.position() + pathLen);
-        
-        byte[] payload = new byte[buffer.remaining()];
-        buffer.get(payload);
-
+    @Override
+    public void onMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId) {
+        Log.d(TAG, "onMessageReceived: " + path);
         switch (path) {
-            case "/navigation/stop":
-                mMainHandler.post(() -> {
-                    Log.d(TAG, "Stopping navigation");
-                    RoutingController.get().cancel();
-                });
-                break;
-            case "/search/query":
-                String query = new String(payload, StandardCharsets.UTF_8);
+            case "/navigation/stop" -> mMainHandler.post(() -> {
+                Log.d(TAG, "Stopping navigation");
+                RoutingController.get().cancel();
+            });
+            case "/search/query" -> {
+                String query = new String(data, StandardCharsets.UTF_8);
                 mMainHandler.post(() -> {
                     Log.d(TAG, "Search: " + query);
                     HeadlessSearchInteractor.getInstance(this).startSearch(query);
                 });
-                break;
-            case "/search/select":
-                ByteBuffer pb = ByteBuffer.wrap(payload);
-                double lat = pb.getDouble();
-                double lon = pb.getDouble();
-                int routerType = pb.getInt();
-                String name = new String(payload, pb.position(), pb.remaining(), StandardCharsets.UTF_8);
+            }
+            case "/search/select" -> {
+                ByteBuffer buffer = ByteBuffer.wrap(data);
+                if (buffer.remaining() < SEARCH_SELECT_MIN_SIZE) return;
+                double lat = buffer.getDouble();
+                double lon = buffer.getDouble();
+                int routerType = buffer.getInt();
+                byte[] nameBytes = new byte[buffer.remaining()];
+                buffer.get(nameBytes);
+                String name = new String(nameBytes, StandardCharsets.UTF_8);
                 mMainHandler.post(() -> {
                     Log.d(TAG, "Selected: " + name);
                     HeadlessRouteInteractor.getInstance(this).planRoute(lat, lon, routerType, name);
                 });
-                break;
-            case "/search/history/request":
-                mMainHandler.post(() -> {
-                    WearSyncService.sendSearchHistory(getApplicationContext());
-                });
-                break;
-            case "/map/tile/request":
-                ByteBuffer tb = ByteBuffer.wrap(payload);
-                int x = tb.getInt();
-                int y = tb.getInt();
-                int zoom = tb.getInt();
-                double minLat = tb.getDouble();
-                double minLon = tb.getDouble();
-                double maxLat = tb.getDouble();
-                double maxLon = tb.getDouble();
-                // sourceNodeId is not used in F-Droid raw sync
-                mMainHandler.post(() -> mMapTileRequestHandler.handle("", x, y, zoom, minLat, minLon, maxLat, maxLon));
-                break;
+            }
+            case "/search/history/request" -> mMainHandler.post(() -> {
+                WearSyncService.sendSearchHistory(getApplicationContext());
+            });
+            case "/map/tile/request" -> {
+                ByteBuffer buffer = ByteBuffer.wrap(data);
+                if (buffer.remaining() < MAP_TILE_REQUEST_SIZE) return;
+                long requestId = buffer.getLong();
+                double minLat = buffer.getDouble();
+                double minLon = buffer.getDouble();
+                double maxLat = buffer.getDouble();
+                double maxLon = buffer.getDouble();
+                mMainHandler.post(() -> mMapTileRequestHandler.handle(sourceNodeId, requestId, minLat, minLon, maxLat, maxLon));
+            }
         }
     }
 }
