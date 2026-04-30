@@ -9,6 +9,7 @@ import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+@SuppressWarnings("deprecation")
 public enum ConnectionState
 {
   INSTANCE;
@@ -21,11 +22,14 @@ public enum ConnectionState
   @NonNull
   private Context mContext;
 
+  private Type mTypeOverride = null;
+
   public enum Type
   {
     NONE(CONNECTION_NONE, -1),
     WIFI(CONNECTION_WIFI, ConnectivityManager.TYPE_WIFI),
-    WWAN(CONNECTION_WWAN, ConnectivityManager.TYPE_MOBILE);
+    WWAN(CONNECTION_WWAN, ConnectivityManager.TYPE_MOBILE),
+    BLUETOOTH(CONNECTION_WWAN, ConnectivityManager.TYPE_BLUETOOTH);
 
     private final byte mNativeRepresentation;
     private final int mPlatformRepresentation;
@@ -97,13 +101,51 @@ public enum ConnectionState
     return INSTANCE.requestCurrentType().getNativeRepresentation();
   }
 
+  public void setTypeOverride(@Nullable Type type)
+  {
+    mTypeOverride = type;
+  }
+
   @NonNull
   public Type requestCurrentType()
   {
+    if (mTypeOverride != null)
+      return mTypeOverride;
+
+    boolean isWatch = mContext.getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_WATCH);
+    android.content.SharedPreferences prefs;
+    String modeKey;
+    if (isWatch) {
+        // On watch, we use custom wear_prefs
+        prefs = mContext.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE);
+        modeKey = "mapDownloadMode";
+    } else {
+        // On phone, we use default prefs (OrganicMapsPrefs)
+        prefs = mContext.getSharedPreferences(mContext.getString(app.organicmaps.sdk.R.string.pref_file_name), Context.MODE_PRIVATE);
+        modeKey = "pref_wear_os_map_download_mode";
+    }
+    
+    String mode = prefs.getString(modeKey, "AUTO");
+
+    // "Standalone Mode" on watch overrides everything to NONE if we want to save data/power
+    // or if we are strictly BLUETOOTH_ONLY and the system doesn't see it as BLUETOOTH type.
+    
     for (ConnectionState.Type each : ConnectionState.Type.values())
     {
       if (isNetworkConnected(each.getPlatformRepresentation()))
-        return each;
+      {
+          if ("WIFI_ONLY".equals(mode) && each != Type.WIFI)
+              continue;
+          
+          if ("BLUETOOTH_ONLY".equals(mode)) {
+               // Bluetooth tethering often shows up as WWAN or WIFI on some Android versions.
+               // If we are strictly BLUETOOTH_ONLY, we ONLY allow the specific BLUETOOTH type.
+               // This effectively blocks internet usage if only Wi-Fi/Mobile are active.
+               if (each != Type.BLUETOOTH) continue;
+          }
+          
+          return each;
+      }
     }
     return NONE;
   }

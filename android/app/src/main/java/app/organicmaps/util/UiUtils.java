@@ -201,12 +201,20 @@ public final class UiUtils
   }
 
   // this method returns the total height of the display (in pixels) including notch and other touchable areas
+  @SuppressWarnings("deprecation")
   public static int getDisplayTotalHeight(Context context)
   {
-    DisplayMetrics metrics = new DisplayMetrics();
     WindowManager windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-    windowManager.getDefaultDisplay().getRealMetrics(metrics);
-    return metrics.heightPixels;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+    {
+      return windowManager.getCurrentWindowMetrics().getBounds().height();
+    }
+    else
+    {
+      DisplayMetrics metrics = new DisplayMetrics();
+      windowManager.getDefaultDisplay().getRealMetrics(metrics);
+      return metrics.heightPixels;
+    }
   }
 
   public static void updateRedButton(Button button)

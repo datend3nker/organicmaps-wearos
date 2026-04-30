@@ -7,7 +7,9 @@ import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.Display;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
@@ -134,7 +136,7 @@ public class MwmApplication extends Application implements Application.ActivityL
     PreferenceManager.setDefaultValues(this, R.xml.prefs_main, false);
     mOrganicMaps = new OrganicMaps(getApplicationContext(), BuildConfig.FLAVOR, BuildConfig.APPLICATION_ID,
                                    BuildConfig.VERSION_CODE, BuildConfig.VERSION_NAME,
-                                   BuildConfig.FILE_PROVIDER_AUTHORITY, mLocationProviderFactory);
+                                   BuildConfig.APPLICATION_ID + ".fileprovider", mLocationProviderFactory);
 
     ConnectionState.INSTANCE.initialize(this);
 
@@ -144,11 +146,6 @@ public class MwmApplication extends Application implements Application.ActivityL
 
     registerActivityLifecycleCallbacks(this);
     mDisplayManager = new DisplayManager();
-
-    // OSS/Independent flavors: Start Bluetooth Sync Service
-    if (BuildConfig.FLAVOR.equals("oss") || BuildConfig.FLAVOR.equals("fdroid")) {
-        startService(new Intent(this, app.organicmaps.wear.BluetoothMessageListenerService.class));
-    }
   }
 
   public boolean initOrganicMaps(@NonNull Runnable onComplete) throws IOException
@@ -157,6 +154,19 @@ public class MwmApplication extends Application implements Application.ActivityL
     return mOrganicMaps.init(() -> {
       ThemeSwitcher.INSTANCE.restart(false);
       ProcessLifecycleOwner.get().getLifecycle().addObserver(mProcessLifecycleObserver);
+      
+      // OSS flavor: Start Bluetooth Sync Service after framework init
+      if (BuildConfig.FLAVOR.equals("oss")) {
+          startService(new Intent(this, app.organicmaps.wear.BluetoothMessageListenerService.class));
+      }
+
+      app.organicmaps.wear.WearSyncService.initSyncLayer(this);
+      
+      // Start Bluetooth service if selected in settings (for non-OSS flavors)
+      if (!BuildConfig.FLAVOR.equals("oss") && "BLUETOOTH".equals(PreferenceManager.getDefaultSharedPreferences(this).getString("pref_wear_os_backend", "GMS"))) {
+          startService(new Intent(this, app.organicmaps.wear.BluetoothMessageListenerService.class));
+      }
+
       onComplete.run();
     });
   }
@@ -183,12 +193,17 @@ public class MwmApplication extends Application implements Application.ActivityL
   public void onActivityStarted(@NonNull Activity activity)
   {}
 
+  @SuppressWarnings("deprecation")
   @Override
   public void onActivityResumed(@NonNull Activity activity)
   {
     Logger.d(TAG, "activity = " + activity);
     Utils.showOnLockScreen(Config.isShowOnLockScreenEnabled(), activity);
-    getSensorHelper().setRotation(activity.getWindowManager().getDefaultDisplay().getRotation());
+    final Display display = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                            ? activity.getDisplay()
+                            : activity.getWindowManager().getDefaultDisplay();
+    if (display != null)
+      getSensorHelper().setRotation(display.getRotation());
     mTopActivity = new WeakReference<>(activity);
   }
 

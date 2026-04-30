@@ -81,11 +81,18 @@
   <string name="pref_wear_os_map_enabled" translatable="false">pref_wear_os_map_enabled</string>
   <string name="pref_wear_os_map_download_mode" translatable="false">pref_wear_os_map_download_mode</string>
   <string name="pref_wear_os_offline_maps_enabled" translatable="false">pref_wear_os_offline_maps_enabled</string>
+  <string name="pref_wear_os_standalone_mode" translatable="false">pref_wear_os_standalone_mode</string>
+  <string name="pref_wear_os_backend" translatable="false">pref_wear_os_backend</string>
 
   <string-array name="wear_map_download_mode_values" translatable="false">
     <item>BLUETOOTH_ONLY</item>
     <item>AUTO</item>
     <item>WIFI_ONLY</item>
+  </string-array>
+
+  <string-array name="wear_backend_values" translatable="false">
+    <item>GMS</item>
+    <item>BLUETOOTH</item>
   </string-array>
 
 </resources>

@@ -167,9 +167,9 @@ public class ChartController implements OnChartValueSelectedListener
     Highlight curPos = getCurrentPosHighlight();
 
     if (mCurrentPositionOutOfTrack)
-      mChart.highlightValues(Collections.singletonList(h), Collections.singletonList(mFloatingMarkerView));
+      mChart.highlightValues(new Highlight[] {h});
     else
-      mChart.highlightValues(Arrays.asList(curPos, h), Arrays.asList(mCurrentLocationMarkerView, mFloatingMarkerView));
+      mChart.highlightValues(new Highlight[] {curPos, h});
     if (mTrack == null)
       return;
 
@@ -221,8 +221,7 @@ public class ChartController implements OnChartValueSelectedListener
 
   private void highlightChartCurrentLocation()
   {
-    mChart.highlightValues(Collections.singletonList(getCurrentPosHighlight()),
-                           Collections.singletonList(mCurrentLocationMarkerView));
+    mChart.highlightValues(new Highlight[] {getCurrentPosHighlight()});
   }
 
   @NonNull

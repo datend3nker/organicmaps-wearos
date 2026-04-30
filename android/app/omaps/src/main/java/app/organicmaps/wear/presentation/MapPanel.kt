@@ -35,6 +35,7 @@ import app.organicmaps.wear.NavigationIcons
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.*
+import android.content.Context
 
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.organicmaps.wear.presentation.navigation.SensorViewModel
@@ -44,7 +45,7 @@ fun MapPanel() {
     val context = LocalContext.current
     val app = context.applicationContext as WearApplication
     val navState by NavigationStateHolder.state.collectAsState()
-    val tilesSignal by MapTileStateHolder.tilesUpdateSignal.collectAsState()
+    val streamedTile by MapTileStateHolder.mapTile.collectAsState()
     val sensorViewModel: SensorViewModel = viewModel()
     val compassHeading by sensorViewModel.heading.collectAsState()
 
@@ -54,44 +55,37 @@ fun MapPanel() {
 
     val currentTileX = lonToTileX(centerLon, zoom)
     val currentTileY = latToTileY(centerLat, zoom)
+    var mapFeatures by remember { mutableStateOf<ByteArray?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var pendingRequestId by remember { mutableStateOf(0L) }
 
     // IMPROVED AUTO-ZOOM (Phone App Logic)
-    // Speed-based scale + turn approach.
     val targetViewSpan = remember(navState.speedMps, navState.distToTurnMeters, navState.routerType, navState.isActive) {
         if (navState.routerType != 0 || !navState.isActive) return@remember 0.003
         
         val speedKmH = navState.speedMps * 3.6
-        // Map speed to specific pre-defined view spans similar to phone app
         val speedSpan = when {
-            speedKmH < 30.0 -> 0.002 // city traffic
-            speedKmH < 70.0 -> 0.004 // rural
-            speedKmH < 100.0 -> 0.006 // highway
-            else -> 0.010 // autobahn
+            speedKmH < 30.0 -> 0.002
+            speedKmH < 70.0 -> 0.004
+            speedKmH < 100.0 -> 0.006
+            else -> 0.010
         }
         
         val turnDist = navState.distToTurnMeters
-        
-        // Approach Turn Zoom
         val targetSpan = if (turnDist > 0.0 && turnDist < 250.0) {
-            // Tight zoom right before a turn
             0.0015
         } else if (turnDist > 0.0 && turnDist < 500.0) {
-            // Intermediate preparation zoom
             0.002
         } else if (turnDist > 3000.0) {
-            // Extra zoom out on very long straightaways regardless of speed
             maxOf(speedSpan, 0.008)
         } else {
-            // Default to speed-based
             speedSpan
         }
-        
         targetSpan
     }
     
     val viewSpan by animateFloatAsState(
         targetValue = targetViewSpan.toFloat(),
-        // Extremely smooth timeline-based animation replaces the bouncy Spring
         animationSpec = tween(durationMillis = 2500, easing = FastOutSlowInEasing),
         label = "zoom"
     )
@@ -122,32 +116,58 @@ fun MapPanel() {
         label = "offset"
     )
 
-    LaunchedEffect(currentTileX, currentTileY, navState.offlineMapsEnabled, viewSpan) {
-        val range = if (navState.routerType == 0) 2 else 1
-        for (dx in -range..range) {
-            for (dy in -range..range) {
-                val tx = currentTileX + dx
-                val ty = currentTileY + dy
-                if (MapTileStateHolder.getTile(tx, ty, zoom) == null) {
-                    val minLon = tileXToLon(tx, zoom)
-                    val maxLon = tileXToLon(tx + 1, zoom)
-                    val maxLat = tileYToLat(ty, zoom)
-                    val minLat = tileYToLat(ty + 1, zoom)
-                    if (navState.offlineMapsEnabled && app.isFullyInitialized) {
-                        val features = Framework.nativeGetWearMapFeatures(minLat, minLon, maxLat, maxLon, zoom)
-                        if (features.isNotEmpty()) MapTileStateHolder.update(tx, ty, zoom, features)
-                    } else if (!navState.offlineMapsEnabled) {
-                        WearCommandService.requestMapTile(context, tx, ty, zoom, minLat, minLon, maxLat, maxLon)
-                    }
-                }
+    val useOfflineMaps = navState.offlineMapsEnabled || !navState.isPhoneConnected
+
+    LaunchedEffect(currentTileX, currentTileY, useOfflineMaps, viewSpan) {
+        val cachedFeatures = MapTileStateHolder.getCachedFeatures(centerLat, centerLon)
+        if (cachedFeatures != null) {
+            MapTileStateHolder.updateCache(centerLat, centerLon, cachedFeatures)
+            return@LaunchedEffect
+        }
+
+        if (useOfflineMaps && app.isFullyInitialized) {
+            val features = Framework.nativeGetWearMapFeatures(
+                centerLat - viewSpan,
+                centerLon - viewSpan,
+                centerLat + viewSpan,
+                centerLon + viewSpan,
+                16
+            )
+            if (features.isNotEmpty()) {
+                mapFeatures = features
+                MapTileStateHolder.updateCache(centerLat, centerLon, features)
+            } else if (!navState.isPhoneConnected) {
+                mapFeatures = null
             }
+        }
+        
+        if (!useOfflineMaps || (useOfflineMaps && mapFeatures == null && navState.isPhoneConnected)) {
+            val requestId = System.nanoTime()
+            pendingRequestId = requestId
+            WearCommandService.requestMapTile(
+                context,
+                requestId,
+                centerLat - viewSpan,
+                centerLon - viewSpan,
+                centerLat + viewSpan,
+                centerLon + viewSpan
+            )
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().clipToBounds().background(Color(0xFF242323)), contentAlignment = Alignment.Center) {
-        val currentTile = MapTileStateHolder.getTile(currentTileX, currentTileY, zoom)
-        @Suppress("UNUSED_VARIABLE")
-        val signal = tilesSignal
+    LaunchedEffect(streamedTile, pendingRequestId) {
+        val tile = streamedTile ?: return@LaunchedEffect
+        if (tile.requestId != pendingRequestId) {
+            return@LaunchedEffect
+        }
+
+        mapFeatures = tile.features
+        loading = false
+        MapTileStateHolder.updateCache(centerLat, centerLon, tile.features)
+    }
+
+    Box(modifier = Modifier.fillMaxSize().clipToBounds().background(Color(0xFFF1EEE8)), contentAlignment = Alignment.Center) {
+        val currentTile = mapFeatures
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val offsetValPx = verticalOffsetFraction * size.height
@@ -158,24 +178,16 @@ fun MapPanel() {
                 rotate(mapRotationAnimatable.value, pivot = Offset(userScreenX, userScreenY))
                 translate(top = offsetValPx)
             }) {
-                // 1. Draw Map Features (Phones app palette)
-                val range = if (navState.routerType == 0) 2 else 1
-                for (dx in -range..range) {
-                    for (dy in -range..range) {
-                        val tx = currentTileX + dx
-                        val ty = currentTileY + dy
-                        MapTileStateHolder.getTile(tx, ty, zoom)?.let { features ->
-                            drawTile(features, tx, ty, zoom, centerLat, centerLon, viewSpan.toDouble())
-                        }
-                    }
+                currentTile?.let { features ->
+                    drawTile(features, currentTileX, currentTileY, zoom, centerLat, centerLon, viewSpan.toDouble())
                 }
 
-                // 2. Draw Route & Full Turn Arrow
                 if (navState.routePoints.isNotEmpty()) {
                     val routePath = Path()
                     var turnPointIdx = -1
                     
-                    val screenPoints = navState.routePoints.mapIndexed { i, (lat, lon) ->
+                    val screenPoints = navState.routePoints.mapIndexed { i: Int, point: Pair<Double, Double> ->
+                        val (lat, lon) = point
                         val x = ((lon - (centerLon - viewSpan)) / (2 * viewSpan)) * size.width
                         val y = size.height - (((lat - (centerLat - viewSpan)) / (2 * viewSpan)) * size.height)
                         val point = Offset(x.toFloat(), y.toFloat())
@@ -190,20 +202,17 @@ fun MapPanel() {
                         point
                     }
                     
-                    // Main Route line
                     drawPath(
                         path = routePath, 
                         color = Color(0xFF3D5AFE),
                         style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                     
-                    // FULL TURN INDICATOR (Styled Arrow on Route) like phone app
-                    // Draw thick road-matching arrows for upcoming turns along the route
                     if (navState.isActive) {
                         for (i in 1 until screenPoints.size - 1) {
                             val p0 = screenPoints[i - 1]
-                            val p1 = screenPoints[i]     // The turn vertex
-                            val p2 = screenPoints[i + 1] // Next point
+                            val p1 = screenPoints[i]
+                            val p2 = screenPoints[i + 1]
                             
                             val angle1 = atan2(p1.y - p0.y, p1.x - p0.x)
                             val angle2 = atan2(p2.y - p1.y, p2.x - p1.x)
@@ -211,12 +220,10 @@ fun MapPanel() {
                             while (diff < -180) diff += 360
                             while (diff > 180) diff -= 360
                             
-                            // If angle difference is significant, draw a solid segment on this turn
                             if (abs(diff) > 25.0) {
                                 val dist01 = hypot(p1.x - p0.x, p1.y - p0.y)
                                 val dist12 = hypot(p2.x - p1.x, p2.y - p1.y)
                                 
-                                // Draw a segment leading up to and out of the turn vertex
                                 val backDist = minOf(40f, dist01 * 0.8f)
                                 val fwdDist = minOf(40f, dist12 * 0.8f)
                                 
@@ -232,20 +239,17 @@ fun MapPanel() {
                                     lineTo(endX, endY)
                                 }
                                 
-                                // Outer outline stroke for strong contrast
                                 drawPath(
                                     path = turnSegmentPath, 
-                                    color = Color(0xFF000000), // Solid black outline
+                                    color = Color(0xFF000000),
                                     style = Stroke(width = 11.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                                 )
-                                // Inner solid highlight color
                                 drawPath(
                                     path = turnSegmentPath, 
-                                    color = Color(0xFFFFFFFF), // High-visibility bright White over the Blue route
+                                    color = Color(0xFFFFFFFF),
                                     style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                                 )
                                 
-                                // Draw thick arrowhead at the end
                                 withTransform({
                                     rotate(Math.toDegrees(angle2.toDouble()).toFloat() + 90f, pivot = Offset(endX, endY))
                                 }) {
@@ -264,7 +268,6 @@ fun MapPanel() {
             }
         }
         
-        // Navigation Overlay
         if (navState.isActive && navState.distToTurn.isNotEmpty()) {
             Box(
                 modifier = Modifier
@@ -292,18 +295,65 @@ fun MapPanel() {
         // STATIC USER MARKER
         Canvas(modifier = Modifier.fillMaxSize()) {
             val userMarkerY = (size.height / 2) + (verticalOffsetFraction * size.height)
-            drawCircle(color = Color(0xFF00E5FF), radius = 7.dp.toPx(), center = Offset(size.width / 2, userMarkerY))
+            drawCircle(color = Color(0xFF3D5AFE), radius = 7.dp.toPx(), center = Offset(size.width / 2, userMarkerY))
             val arrowPath = Path().apply {
                 moveTo(size.width / 2, userMarkerY - 11.dp.toPx())
                 lineTo(size.width / 2 - 5.dp.toPx(), userMarkerY + 3.dp.toPx())
                 lineTo(size.width / 2 + 5.dp.toPx(), userMarkerY + 3.dp.toPx())
                 close()
             }
-            drawPath(path = arrowPath, color = Color(0xFF00E5FF))
+            drawPath(path = arrowPath, color = Color(0xFF3D5AFE))
         }
 
-        if (currentTile == null && !navState.offlineMapsEnabled && navState.routerType != 0) {
-            Text(text = "Loading...", color = Color.White.copy(alpha = 0.5f), modifier = Modifier.align(Alignment.Center).padding(top = 40.dp), style = MaterialTheme.typography.caption3)
+        if (currentTile == null && navState.offlineMapsEnabled) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "Map missing offline.",
+                        color = Color.White,
+                        style = MaterialTheme.typography.caption2,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row {
+                        androidx.wear.compose.material.Button(
+                            onClick = {
+                                val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
+                                prefs.edit().putBoolean("forceWatchOfflineMaps", false).apply()
+                                NavigationStateHolder.update(navState.copy(offlineMapsEnabled = false))
+                                WearCommandService.syncPreferences(context)
+                            },
+                            modifier = Modifier.height(32.dp).weight(1f),
+                            colors = androidx.wear.compose.material.ButtonDefaults.primaryButtonColors()
+                        ) {
+                            Text("Stream", style = MaterialTheme.typography.caption3)
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        androidx.wear.compose.material.Button(
+                            onClick = {
+                                NavigationStateHolder.update(navState.copy(openMapManager = true))
+                            },
+                            modifier = Modifier.height(32.dp).weight(1f),
+                            colors = androidx.wear.compose.material.ButtonDefaults.secondaryButtonColors()
+                        ) {
+                            Text("Manage", style = MaterialTheme.typography.caption3)
+                        }
+                    }
+                }
+            }
+        }
+else if (currentTile == null && !navState.isPhoneConnected) {
+            Text(
+                text = "Waiting for connection...",
+                color = Color.Black.copy(alpha = 0.5f),
+                modifier = Modifier.align(Alignment.Center).padding(top = 40.dp),
+                style = MaterialTheme.typography.caption3
+            )
         }
     }
 }
@@ -329,23 +379,40 @@ private fun DrawScope.drawTile(features: ByteArray, tx: Int, ty: Int, zoom: Int,
         pathsByType.getOrPut(type) { mutableListOf() }.add(mapPath)
     }
 
-    // Sort paths by standard Z-Order for proper under/over layering
-    val drawOrder = listOf(3, 2, 1, 7, 6, 5, 4) // Water -> Buildings -> Res -> Tertiary -> Secondary -> Primary -> Motorway
+    val drawOrder = listOf(3, 2, 1, 7, 6, 5, 4)
     val currentTypes = pathsByType.keys.toList()
-    val sortedTypes = currentTypes.sortedBy { drawOrder.indexOf(it).let { idx -> if (idx == -1) 0 else idx } }
+    val sortedTypes = currentTypes.sortedBy { drawOrder.indexOf(it).let { idx -> if (idx == -1) 99 else idx } }
 
     for (type in sortedTypes) {
         val paths = pathsByType[type] ?: continue
         for (mapPath in paths) {
             when (type) {
-                1 -> drawPath(path = mapPath, color = Color(0xFF383838), style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Residential
-                2 -> drawPath(path = mapPath, color = Color(0xFF2B2B2B)) // Buildings
-                3 -> drawPath(path = mapPath, color = Color(0xFF1C2A33)) // Water
-                4 -> drawPath(path = mapPath, color = Color(0xFFE67E22), style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Motorway/Trunk (Orange)
-                5 -> drawPath(path = mapPath, color = Color(0xFF95A5A6), style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Primary (Light)
-                6 -> drawPath(path = mapPath, color = Color(0xFF7F8C8D), style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Secondary
-                7 -> drawPath(path = mapPath, color = Color(0xFF4A4A4A), style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)) // Tertiary
-                else -> drawPath(path = mapPath, color = Color(0xFF383838), style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                1 -> { // Residential
+                    drawPath(path = mapPath, color = Color(0xFFC8C8C8), style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(path = mapPath, color = Color(0xFFFFFFFF), style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                2 -> drawPath(path = mapPath, color = Color(0xFFDCD7CE)) // Buildings
+                3 -> drawPath(path = mapPath, color = Color(0xFFADE1FF)) // Water
+                4 -> { // Motorway/Trunk
+                    drawPath(path = mapPath, color = Color(0xFFE0812F), style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(path = mapPath, color = Color(0xFFFFB366), style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                5 -> { // Primary
+                    drawPath(path = mapPath, color = Color(0xFFE0BB68), style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(path = mapPath, color = Color(0xFFFFD580), style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                6 -> { // Secondary
+                    drawPath(path = mapPath, color = Color(0xFFC8C8C8), style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(path = mapPath, color = Color(0xFFFFFFFF), style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                7 -> { // Tertiary
+                    drawPath(path = mapPath, color = Color(0xFFC8C8C8), style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(path = mapPath, color = Color(0xFFFFFFFF), style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                else -> {
+                    drawPath(path = mapPath, color = Color(0xFFC8C8C8), style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(path = mapPath, color = Color(0xFFFFFFFF), style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
             }
         }
     }

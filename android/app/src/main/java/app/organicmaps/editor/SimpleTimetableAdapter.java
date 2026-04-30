@@ -1,5 +1,6 @@
 package app.organicmaps.editor;
 
+import android.text.TextUtils;
 import android.util.SparseArray;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -10,10 +11,14 @@ import android.widget.TextView;
 import androidx.annotation.IdRes;
 import androidx.annotation.IntRange;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
 import app.organicmaps.R;
-import app.organicmaps.util.TimeFormatUtils;
+import app.organicmaps.editor.data.TimeFormatUtils;
+import app.organicmaps.sdk.editor.OpeningHours;
+import app.organicmaps.sdk.editor.data.HoursMinutes;
+import app.organicmaps.sdk.editor.data.Timetable;
 import app.organicmaps.util.UiUtils;
 
 import java.util.ArrayList;
@@ -22,7 +27,16 @@ import java.util.List;
 
 public class SimpleTimetableAdapter extends RecyclerView.Adapter<SimpleTimetableAdapter.ViewHolder>
 {
+  @NonNull
+  private final HoursMinutesPickerFragment.OnPickListener mListener;
+  @Nullable
+  private String mTimetables;
   private final List<Timetable> mItems = new ArrayList<>();
+
+  public SimpleTimetableAdapter(@NonNull HoursMinutesPickerFragment.OnPickListener listener)
+  {
+    mListener = listener;
+  }
 
   @NonNull
   @Override
@@ -44,6 +58,24 @@ public class SimpleTimetableAdapter extends RecyclerView.Adapter<SimpleTimetable
     return mItems.size();
   }
 
+  public void setTimetables(@Nullable String timetables)
+  {
+    mTimetables = timetables;
+    mItems.clear();
+
+    final Timetable[] parsedTimetables = TextUtils.isEmpty(timetables) ? null : OpeningHours.nativeTimetablesFromString(timetables);
+    if (parsedTimetables != null)
+      Collections.addAll(mItems, parsedTimetables);
+
+    notifyDataSetChanged();
+  }
+
+  @Nullable
+  public String getTimetables()
+  {
+    return mTimetables;
+  }
+
   public void setItems(List<Timetable> items)
   {
     mItems.clear();
@@ -54,6 +86,12 @@ public class SimpleTimetableAdapter extends RecyclerView.Adapter<SimpleTimetable
   public List<Timetable> getItems()
   {
     return Collections.unmodifiableList(mItems);
+  }
+
+  public void onHoursMinutesPicked(HoursMinutes from, HoursMinutes to, int id)
+  {
+    if (mListener != null)
+      mListener.onHoursMinutesPicked(from, to, id);
   }
 
   class ViewHolder extends RecyclerView.ViewHolder
@@ -112,7 +150,21 @@ public class SimpleTimetableAdapter extends RecyclerView.Adapter<SimpleTimetable
 
     void bind(Timetable item)
     {
-      // Binding logic...
+      for (int dayIndex = 1; dayIndex <= 7; dayIndex++)
+        days.get(dayIndex).setChecked(item.containsWeekday(dayIndex));
+
+      if (item.isFullday)
+      {
+        allday.setVisibility(View.VISIBLE);
+        schedule.setVisibility(View.GONE);
+      }
+      else
+      {
+        allday.setVisibility(View.GONE);
+        schedule.setVisibility(View.VISIBLE);
+        timeOpen.setText(item.workingTimespan.start.toString());
+        timeClose.setText(item.workingTimespan.end.toString());
+      }
     }
   }
 }

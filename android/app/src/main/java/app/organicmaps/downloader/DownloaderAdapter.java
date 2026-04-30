@@ -366,7 +366,7 @@ class DownloaderAdapter extends RecyclerView.Adapter<DownloaderAdapter.ViewHolde
   
   private MenuBottomSheetItem getSendToWatchMenuItem()
   {
-    return new MenuBottomSheetItem(app.organicmaps.R.string.downloader_send_to_watch, app.organicmaps.R.drawable.ic_share,
+    return new MenuBottomSheetItem(app.organicmaps.R.string.downloader_send_to_watch, app.organicmaps.R.drawable.ic_watch,
                                    () -> onSendToWatchActionSelected(mSelectedItem));
   }
   

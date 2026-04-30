@@ -21,10 +21,7 @@ android {
 
     multiDexEnabled true
 
-    def jniPackageName = "app.organicmaps"
-    resValue 'string', 'file_provider_authority', jniPackageName + '.fileprovider'
-    buildConfigField 'String', 'FILE_PROVIDER_AUTHORITY', '\"' + jniPackageName + '.fileprovider\"'
-    manifestPlaceholders = [FILE_PROVIDER_PLACEHOLDER: jniPackageName + '.fileprovider']
+    buildConfigField 'String', 'REVIEW_URL', '""'
 
     externalNativeBuild {
       cmake {
@@ -46,11 +43,23 @@ android {
       res.srcDirs = ['src/main/res']
       assets.srcDirs = ['src/main/assets']
     }
-    google { java.srcDirs = ['src/google/java', 'src/gms/java'] }
-    fdroid { java.srcDirs = ['src/google/java', 'src/fdroid/java'] }
-    web { java.srcDirs = ['src/google/java', 'src/gms/java'] }
-    huawei { java.srcDirs = ['src/google/java', 'src/gms/java'] }
-    oss { java.srcDirs = ['src/oss/java'] }
+    google {
+      java.srcDirs = ['src/google/java', 'src/gms/java']
+      manifest.srcFile 'src/gms/AndroidManifest.xml'
+    }
+    fdroid {
+      java.srcDirs = ['src/fdroid/java']
+      manifest.srcFile 'src/fdroid/AndroidManifest.xml'
+    }
+    web {
+      java.srcDirs = ['src/google/java', 'src/gms/java']
+      manifest.srcFile 'src/gms/AndroidManifest.xml'
+    }
+    huawei {
+      java.srcDirs = ['src/google/java', 'src/gms/java']
+      manifest.srcFile 'src/gms/AndroidManifest.xml'
+    }
+    oss { java.srcDirs = ['src/locationOss/java', 'src/oss/java'] }
   }
 
   flavorDimensions += 'default'
@@ -70,14 +79,12 @@ android {
 
     fdroid {
       dimension 'default'
-      applicationIdSuffix '.fdroid'
       versionName = android.defaultConfig.versionName + '-FDroid'
       buildConfigField 'String', 'SUPPORT_MAIL', '"fdroid@organicmaps.app"'
     }
 
     oss {
       dimension 'default'
-      applicationIdSuffix '.oss'
       versionName = android.defaultConfig.versionName + '-OSS'
       buildConfigField 'String', 'SUPPORT_MAIL', '"oss@organicmaps.app"'
     }
@@ -122,6 +129,11 @@ android {
     checkReleaseBuilds false
     abortOnError false
   }
+
+  androidResources {
+    ignoreAssetsPattern = '!.svn:!.git:!.DS_Store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~'
+    noCompress = ['txt', 'bin', 'html', 'png', 'json', 'mwm', 'ttf', 'sdf', 'ui', 'config', 'csv', 'spv', 'obj']
+  }
 }
 
 tasks.register('copyAssets', Copy) {
@@ -148,17 +160,22 @@ dependencies {
   implementation 'androidx.preference:preference:1.2.1'
   implementation 'com.google.android.material:material:1.9.0'
   implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+  implementation 'androidx.car.app:app:1.7.0'
+  implementation 'androidx.lifecycle:lifecycle-process:2.9.4'
+  implementation 'androidx.work:work-runtime:2.10.1'
+  implementation 'com.google.guava:guava:33.4.0-android'
+  implementation 'com.github.PhilJay:MPAndroidChart:v3.1.0'
 
   googleImplementation 'com.google.android.gms:play-services-location:21.3.0'
   webImplementation 'com.google.android.gms:play-services-location:21.3.0'
   huaweiImplementation 'com.google.android.gms:play-services-location:21.3.0'
-  fdroidImplementation 'org.microg.gms:play-services-location:0.3.6.244735'
+  fdroidImplementation 'com.google.android.gms:play-services-location:21.3.0'
   ossImplementation 'androidx.annotation:annotation:1.9.1'
   
   googleImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
   webImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
   huaweiImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
-  fdroidImplementation 'org.microg.gms:play-services-wearable:0.3.6.244735'
+  fdroidImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
 
   if (googleFirebaseServicesEnabled) {
     implementation platform('com.google.firebase:firebase-bom:33.11.0')

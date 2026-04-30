@@ -11,6 +11,7 @@ import app.organicmaps.sdk.settings.StoragePathManager
 import app.organicmaps.sdk.util.ConnectionState
 import app.organicmaps.sdk.routing.RoutingController
 import app.organicmaps.sdk.Framework
+import app.organicmaps.wear.BluetoothWearDataListenerService
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
@@ -71,9 +72,59 @@ class WearApplication : Application() {
             e.printStackTrace()
         }
 
-        // F-Droid: Start Bluetooth Listener Service
-        if (BuildConfig.FLAVOR == "fdroid" || BuildConfig.FLAVOR == "oss") {
-            startService(Intent(this, WearDataListenerService::class.java))
+        // Start appropriate communication backend
+        WearCommandService.initBackend(this)
+        
+        val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+        val selectedBackend = prefs.getString("pref_wear_os_backend", "GMS")
+        if (BuildConfig.FLAVOR == "oss" || selectedBackend == "BLUETOOTH") {
+            startService(Intent(this, BluetoothWearDataListenerService::class.java))
+        }
+
+        startPingLoop()
+    }
+
+    private var lastPongTime = System.currentTimeMillis()
+    private fun startPingLoop() {
+        MainScope().launch {
+            while (true) {
+                try {
+                    val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                    val disconnected = prefs.getBoolean("disconnectFromPhone", false)
+                    
+                    if (!disconnected) {
+                        WearCommandService.sendPing(this@WearApplication)
+                    } else {
+                         val currentState = NavigationStateHolder.state.value
+                         if (currentState.isPhoneConnected) {
+                             NavigationStateHolder.update(currentState.copy(isPhoneConnected = false))
+                         }
+                    }
+                } catch (e: Exception) {
+                    Log.e("WearApp", "Failed to send ping", e)
+                }
+                kotlinx.coroutines.delay(10000)
+                
+                val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                val disconnected = prefs.getBoolean("disconnectFromPhone", false)
+
+                // If no pong for 25 seconds, mark as disconnected
+                if (disconnected || System.currentTimeMillis() - lastPongTime > 25000) {
+                    val currentState = NavigationStateHolder.state.value
+                    if (currentState.isPhoneConnected) {
+                        NavigationStateHolder.update(currentState.copy(isPhoneConnected = false))
+                    }
+                }
+            }
+        }
+    }
+    
+    // Called from listeners
+    fun onPongReceived() {
+        lastPongTime = System.currentTimeMillis()
+        val currentState = NavigationStateHolder.state.value
+        if (!currentState.isPhoneConnected) {
+            NavigationStateHolder.update(currentState.copy(isPhoneConnected = true))
         }
     }
 
@@ -81,6 +132,26 @@ class WearApplication : Application() {
         val routingController = RoutingController.get()
         routingController.initialize(organicMaps.locationHelper)
         
+        organicMaps.locationHelper.addListener(object : app.organicmaps.sdk.location.LocationListener {
+            override fun onLocationUpdated(location: android.location.Location) {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    lat = location.latitude,
+                    lon = location.longitude,
+                    speedMps = location.speed.toDouble(),
+                    bearing = location.bearing
+                ))
+            }
+            override fun onLocationResolutionRequired(pendingIntent: android.app.PendingIntent) {}
+            override fun onLocationDisabled() {}
+        })
+        
+        try {
+            organicMaps.locationHelper.start()
+        } catch (_: SecurityException) {
+            Log.e("WearApplication", "Location permission missing at startup")
+        }
+
         MainScope().launch(Dispatchers.Main) {
             while (true) {
                 if (NavigationStateHolder.state.value.offlineMapsEnabled && routingController.isNavigating) {

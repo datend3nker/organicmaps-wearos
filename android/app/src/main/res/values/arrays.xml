@@ -22,4 +22,10 @@
     <item>@drawable/route_point_19</item>
     <item>@drawable/route_point_20</item>
   </integer-array>
+  <string-array name="pref_map_style_values" translatable="false">
+    <item>default</item>
+    <item>night</item>
+    <item>auto</item>
+    <item>nav_auto</item>
+  </string-array>
 </resources>

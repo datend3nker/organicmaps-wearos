@@ -1,9 +1,10 @@
 package app.organicmaps.wear
 
 import android.app.Service
-import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import android.util.Log
@@ -18,8 +19,8 @@ import kotlin.concurrent.thread
  * F-Droid implementation of data listener using raw Bluetooth RFCOMM Sockets.
  * This replaces the Google Play Services WearableListenerService.
  */
-class WearDataListenerService : Service() {
-    private val TAG = "WearDataListenerFdroid"
+class BluetoothWearDataListenerService : Service() {
+    private val TAG = "BluetoothDataListener"
     private val OM_WEAR_UUID = UUID.fromString("6d617073-7765-6172-6f73-73796e633130")
 
     private var serverSocket: BluetoothServerSocket? = null
@@ -41,7 +42,8 @@ class WearDataListenerService : Service() {
     private fun startListening() {
         isRunning = true
         thread {
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return@thread
+            val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            val adapter = bluetoothManager?.adapter ?: return@thread
             try {
                 serverSocket = adapter.listenUsingRfcommWithServiceRecord("OrganicMapsSync", OM_WEAR_UUID)
                 while (isRunning) {
@@ -94,6 +96,7 @@ class WearDataListenerService : Service() {
         val buffer = ByteBuffer.wrap(data)
         when (type.toInt()) {
             1 -> { // MSG_TYPE_NAV_STATUS
+                (application as WearApplication).onPongReceived()
                 val active = buffer.get().toInt() == 1
                 if (!active) {
                     NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isActive = false))
@@ -161,23 +164,99 @@ class WearDataListenerService : Service() {
             4 -> { // MSG_TYPE_PREFERENCES
                 val mapEnabled = buffer.get().toInt() == 1
                 val offlineMapsEnabled = buffer.get().toInt() == 1
+                val standaloneMode = buffer.get().toInt() == 1
+                
+                val modeLen = if (buffer.remaining() >= 4) buffer.int else 0
+                val mapDownloadMode = if (modeLen > 0 && buffer.remaining() >= modeLen) {
+                    val bytes = ByteArray(modeLen)
+                    buffer.get(bytes)
+                    String(bytes, StandardCharsets.UTF_8)
+                } else "AUTO"
+
+                val backendLen = if (buffer.remaining() >= 4) buffer.int else 0
+                val backend = if (backendLen > 0 && buffer.remaining() >= backendLen) {
+                    val bytes = ByteArray(backendLen)
+                    buffer.get(bytes)
+                    String(bytes, StandardCharsets.UTF_8)
+                } else "GMS"
+
+                val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                val isForcedOffline = prefs.getBoolean("forceWatchOfflineMaps", false)
+                val finalOfflineState = isForcedOffline || offlineMapsEnabled
+
+                prefs.edit()
+                    .putBoolean("mapEnabled", mapEnabled)
+                    .putBoolean("offlineMapsEnabled", offlineMapsEnabled)
+                    .putBoolean("disconnectFromPhone", standaloneMode)
+                    .putString("mapDownloadMode", mapDownloadMode)
+                    .putString("pref_wear_os_backend", backend)
+                    .apply()
+
+                WearCommandService.initBackend(this)
+                if (backend == "GMS" && app.organicmaps.wear.BuildConfig.FLAVOR != "oss") {
+                    stopService(Intent(this, BluetoothWearDataListenerService::class.java))
+                }
+
                 NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                     mapEnabled = mapEnabled,
-                    offlineMapsEnabled = offlineMapsEnabled
+                    offlineMapsEnabled = finalOfflineState
                 ))
             }
             5 -> { // MSG_TYPE_MAP_DOWNLOAD
                 val countryId = String(data, StandardCharsets.UTF_8)
-                NavigationStateHolder.update(NavigationStateHolder.state.value.copy(openMapManager = true))
-                // F-Droid: only local download on watch
+                val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                prefs.edit().putBoolean("forceWatchOfflineMaps", true).apply()
+                
+                NavigationStateHolder.update(NavigationStateHolder.state.value.copy(openMapManager = true, offlineMapsEnabled = true))
+                
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    try {
+                        val wearApp = applicationContext as app.organicmaps.wear.WearApplication
+                        wearApp.waitForInitializationBlocking()
+                        app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
+                        app.organicmaps.sdk.downloader.MapManager.startDownload("World")
+                    } catch (e: Throwable) {
+                        e.printStackTrace()
+                    }
+                }
                 launchOmaps()
             }
+            7 -> { // MSG_TYPE_MAP_PROGRESS
+                val countryLen = if (buffer.remaining() >= 4) buffer.int else 0
+                if (countryLen > 0 && buffer.remaining() >= countryLen + 4) {
+                    val countryBytes = ByteArray(countryLen)
+                    buffer.get(countryBytes)
+                    val countryId = String(countryBytes, StandardCharsets.UTF_8)
+                    val progress = buffer.int
+                    Log.d(TAG, "Received map progress via Bluetooth: $countryId -> $progress%")
+                }
+            }
             6 -> { // MSG_TYPE_MAP_TILE_RESPONSE
-                if (buffer.remaining() < 8) return
                 val requestId = buffer.long
-                val features = ByteArray(buffer.remaining())
+                val compressed = buffer.get().toInt() == 1
+                var features = ByteArray(buffer.remaining())
                 buffer.get(features)
+                
+                if (compressed) {
+                    try {
+                        features = GzipUtils.decompress(features)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Decompression failed", e)
+                        return
+                    }
+                }
                 MapTileStateHolder.update(requestId, features)
+            }
+            10 -> { // MSG_TYPE_COMMAND
+                val pathLen = if (buffer.remaining() >= 4) buffer.int else 0
+                if (pathLen > 0 && buffer.remaining() >= pathLen) {
+                    val pathBytes = ByteArray(pathLen)
+                    buffer.get(pathBytes)
+                    val path = String(pathBytes, StandardCharsets.UTF_8)
+                    if (path == "/pong") {
+                        (application as WearApplication).onPongReceived()
+                    }
+                }
             }
         }
     }

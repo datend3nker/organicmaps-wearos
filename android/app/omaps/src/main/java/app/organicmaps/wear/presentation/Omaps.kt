@@ -1,20 +1,29 @@
 package app.organicmaps.wear.presentation
 
 import android.os.Bundle
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.setValue
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.wear.compose.material.Icon
+import androidx.wear.compose.material.Text
+import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.HorizontalPager
+import androidx.wear.compose.foundation.pager.PagerState
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material.Text
 import app.organicmaps.wear.NavigationStateHolder
@@ -30,6 +39,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.vector.ImageVector
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class Omaps : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,9 +50,14 @@ class Omaps : ComponentActivity() {
         // Initialize state from prefs
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
         val isMapEnabled = prefs.getBoolean("mapEnabled", false)
-        if (NavigationStateHolder.state.value.mapEnabled != isMapEnabled) {
-            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(mapEnabled = isMapEnabled))
-        }
+        val isOfflineMapsEnabled = prefs.getBoolean("offlineMapsEnabled", false)
+        val routerType = prefs.getInt("routerType", 0)
+        
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+            mapEnabled = isMapEnabled,
+            offlineMapsEnabled = isOfflineMapsEnabled,
+            routerType = routerType
+        ))
         
         setContent {
             WearApp()
@@ -55,11 +71,15 @@ fun WearApp() {
     val isNavigating = navState.isActive
     val isMapEnabled = navState.mapEnabled
     
-    val pagerState = rememberPagerState(pageCount = { 
-        if (isNavigating) {
-            if (isMapEnabled) 3 else 2
-        } else 3 
-    })
+    val pagerState = remember(isNavigating, isMapEnabled) {
+        PagerState(
+            pageCount = { 
+                if (isNavigating) {
+                    if (isMapEnabled) 3 else 2
+                } else 3 
+            }
+        )
+    }
 
     androidx.compose.runtime.LaunchedEffect(navState.openMapManager) {
         if (navState.openMapManager && !isNavigating) {
@@ -76,7 +96,7 @@ fun WearApp() {
                     modifier = Modifier.fillMaxSize()
                 ) { page ->
                     when (page) {
-                        0 -> SearchScreen(onSearchClick = {})
+                        0 -> SearchScreen()
                         1 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen()
                         2 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
                     }
@@ -101,6 +121,40 @@ fun WearApp() {
                 }
             }
             
+            // Status Indicators
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 20.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (navState.offlineMapsEnabled) {
+                        Icon(
+                            imageVector = Icons.Default.Map,
+                            contentDescription = "Offline Mode",
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    if (navState.offlineMapsEnabled && !navState.isPhoneConnected) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    if (!navState.isPhoneConnected) {
+                        Icon(
+                            imageVector = Icons.Default.CloudOff,
+                            contentDescription = "Disconnected",
+                            tint = Color.Red,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+
             MapDownloadOverlay()
         }
     }
@@ -142,107 +196,5 @@ fun getTurnIcon(carDirection: Int, pedestrianDirection: Int): ImageVector {
         10, 11, 12 -> Icons.Default.Refresh // Roundabout
         14 -> Icons.Default.Place // ReachedYourDestination
         else -> Icons.Default.ArrowUpward
-    }
-}
-
-@Composable
-fun MapPanel() {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val navState by NavigationStateHolder.state.collectAsState()
-    val streamedTile by app.organicmaps.wear.MapTileStateHolder.mapTile.collectAsState()
-    
-    val centerLat = if (navState.lat != 0.0) navState.lat else 48.2082
-    val centerLon = if (navState.lon != 0.0) navState.lon else 16.3738
-    val span = 0.01 
-    
-    var mapFeatures by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
-    var loading by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    var pendingRequestId by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
-
-    androidx.compose.runtime.LaunchedEffect(centerLat, centerLon) {
-        val cached = app.organicmaps.wear.MapTileStateHolder.getCachedFeatures(centerLat, centerLon)
-        if (cached != null) {
-            mapFeatures = cached
-            loading = false
-            return@LaunchedEffect
-        }
-
-        val requestId = System.nanoTime()
-        pendingRequestId = requestId
-        loading = true
-        WearCommandService.requestMapTile(
-            context,
-            requestId,
-            centerLat - span,
-            centerLon - span,
-            centerLat + span,
-            centerLon + span
-        )
-    }
-
-    androidx.compose.runtime.LaunchedEffect(streamedTile, pendingRequestId) {
-        val tile = streamedTile ?: return@LaunchedEffect
-        if (tile.requestId != pendingRequestId) {
-            return@LaunchedEffect
-        }
-
-        mapFeatures = tile.features
-        loading = false
-        app.organicmaps.wear.MapTileStateHolder.updateCache(centerLat, centerLon, tile.features)
-    }
-    
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-            drawRect(color = androidx.compose.ui.graphics.Color(0xFF1E1E1E))
-            
-            val features = mapFeatures
-            if (features != null && features.isNotEmpty()) {
-                val buffer = java.nio.ByteBuffer.wrap(features).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                while (buffer.hasRemaining()) {
-                    val type = buffer.get()
-                    val count = buffer.getInt()
-                    
-                    val mapPath = androidx.compose.ui.graphics.Path()
-                    for (i in 0 until count) {
-                        val lon = buffer.getDouble()
-                        val lat = buffer.getDouble()
-                        
-                        val x = ((lon - (centerLon - span)) / (2 * span)) * size.width
-                        val y = size.height - (((lat - (centerLat - span)) / (2 * span)) * size.height)
-                        
-                        if (i == 0) mapPath.moveTo(x.toFloat(), y.toFloat())
-                        else mapPath.lineTo(x.toFloat(), y.toFloat())
-                    }
-                    
-                    if (type.toInt() == 1) {
-                        drawPath(path = mapPath, color = androidx.compose.ui.graphics.Color.Gray, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f))
-                    } else if (type.toInt() == 2) {
-                        drawPath(path = mapPath, color = androidx.compose.ui.graphics.Color(0xFF2A2A2A)) 
-                    }
-                }
-            }
-            
-            drawCircle(
-                color = androidx.compose.ui.graphics.Color.Cyan,
-                radius = 12f,
-                center = center
-            )
-        }
-        
-        if (loading) {
-            Text(
-                text = "Streaming map from phone...",
-                color = androidx.compose.ui.graphics.Color.White,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
-                style = androidx.wear.compose.material.MaterialTheme.typography.caption3
-            )
-        }
-
-        Text(
-            text = "Companion Stream Renderer",
-            color = androidx.compose.ui.graphics.Color.White,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
-            style = androidx.wear.compose.material.MaterialTheme.typography.caption3
-        )
     }
 }

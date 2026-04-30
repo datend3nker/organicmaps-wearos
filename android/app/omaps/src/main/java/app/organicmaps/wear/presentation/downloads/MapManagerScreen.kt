@@ -1,6 +1,8 @@
 package app.organicmaps.wear.presentation.downloads
 
 import android.content.Context
+import android.content.Intent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,15 +24,19 @@ import java.util.ArrayList
 fun MapManagerScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val navState by NavigationStateHolder.state.collectAsState()
+    
     val centerLat = if (navState.lat != 0.0) navState.lat else 48.2082
     val centerLon = if (navState.lon != 0.0) navState.lon else 16.3738
 
-    var currentRoot by remember { mutableStateOf<String?>(null) }
+    var pathStack by remember { mutableStateOf(listOf<String>()) }
+    val currentRoot = pathStack.lastOrNull()
+    
     var countries by remember { mutableStateOf<List<CountryItem>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    var loading by remember { mutableStateOf(value = true) }
 
     val prefs = remember { context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE) }
     var forceOffline by remember { mutableStateOf(prefs.getBoolean("forceWatchOfflineMaps", false)) }
+    var disconnectFromPhone by remember { mutableStateOf(prefs.getBoolean("disconnectFromPhone", false)) }
 
     LaunchedEffect(currentRoot, centerLat, centerLon) {
         withContext(Dispatchers.Main) {
@@ -46,7 +52,7 @@ fun MapManagerScreen() {
                     loading = false
                     delay(2000)
                 }
-            } catch (e: Throwable) {
+            } catch (_: Throwable) {
                 loading = false
             }
         }
@@ -55,40 +61,70 @@ fun MapManagerScreen() {
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 32.dp, bottom = 32.dp, start = 10.dp, end = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         item {
+            val title = if (currentRoot == null) "Map Manager" else MapManager.nativeGetName(currentRoot)
             Text(
-                "Map Manager",
+                title,
                 style = MaterialTheme.typography.title3,
                 color = Color(0xFF00E5FF),
                 modifier = Modifier.padding(bottom = 8.dp)
             )
         }
 
-        item {
-            ToggleChip(
-                checked = forceOffline,
-                onCheckedChange = { useOffline ->
-                    forceOffline = useOffline
-                    prefs.edit().putBoolean("forceWatchOfflineMaps", forceOffline).apply()
-                    NavigationStateHolder.update(navState.copy(offlineMapsEnabled = forceOffline))
-                },
-                label = { Text("Standalone Mode", style = MaterialTheme.typography.button) },
-                secondaryLabel = { Text(if (forceOffline) "Using local maps" else "Streaming from phone", style = MaterialTheme.typography.caption2) },
-                toggleControl = { Checkbox(checked = forceOffline) },
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-            )
-        }
-
-        if (currentRoot != null) {
+        if (currentRoot == null) {
+            item {
+                ToggleChip(
+                    checked = forceOffline,
+                    onCheckedChange = { useOffline ->
+                        forceOffline = useOffline
+                        prefs.edit().putBoolean("forceWatchOfflineMaps", forceOffline).apply()
+                        NavigationStateHolder.update(navState.copy(offlineMapsEnabled = forceOffline))
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                    },
+                    label = { Text("Offline Mode", style = MaterialTheme.typography.button) },
+                    secondaryLabel = { Text(if (forceOffline) "Using local maps" else "Streaming from phone", style = MaterialTheme.typography.caption2) },
+                    toggleControl = { Checkbox(checked = forceOffline) },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                )
+            }
+            
+            item {
+                ToggleChip(
+                    checked = disconnectFromPhone,
+                    onCheckedChange = { disconnect ->
+                        disconnectFromPhone = disconnect
+                        prefs.edit().putBoolean("disconnectFromPhone", disconnect).apply()
+                        
+                        val bluetoothServiceIntent = Intent(context, app.organicmaps.wear.BluetoothWearDataListenerService::class.java)
+                        if (disconnect) {
+                            NavigationStateHolder.update(navState.copy(isPhoneConnected = false))
+                            context.stopService(bluetoothServiceIntent)
+                        } else {
+                            // Try to reconnect
+                            app.organicmaps.wear.WearCommandService.initBackend(context)
+                            val selectedBackend = prefs.getString("pref_wear_os_backend", "GMS")
+                            if (app.organicmaps.wear.BuildConfig.FLAVOR == "oss" || selectedBackend == "BLUETOOTH") {
+                                context.startService(bluetoothServiceIntent)
+                            }
+                        }
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                    },
+                    label = { Text("Standalone Mode", style = MaterialTheme.typography.button) },
+                    secondaryLabel = { Text(if (disconnectFromPhone) "Phone link cut" else "Phone link active", style = MaterialTheme.typography.caption2) },
+                    toggleControl = { Switch(checked = disconnectFromPhone) },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                )
+            }
+        } else {
             item {
                 Button(
-                    onClick = { currentRoot = null },
+                    onClick = { pathStack = pathStack.dropLast(1) },
                     modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                     colors = ButtonDefaults.secondaryButtonColors()
                 ) {
-                    Text("Back to Top")
+                    Text("Back")
                 }
             }
         }
@@ -96,31 +132,70 @@ fun MapManagerScreen() {
         if (loading) {
             item { CircularProgressIndicator() }
         } else {
-            items(countries) { item ->
-                val statusText = when (item.status) {
-                    CountryItem.STATUS_DONE -> "Installed"
-                    CountryItem.STATUS_DOWNLOADABLE -> "Download (${String.format("%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
-                    CountryItem.STATUS_PROGRESS -> "Downloading ${item.progress.toInt()}%"
-                    CountryItem.STATUS_ENQUEUED -> "Enqueued"
-                    CountryItem.STATUS_FAILED -> "Error - Tap to retry"
-                    else -> if (item.isExpandable) "${item.childCount} regions" else "Status: ${item.status}"
-                }
-
-                Chip(
-                    onClick = {
-                        if (item.isExpandable) {
-                            currentRoot = item.id
-                        } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED) {
-                            MapManager.startDownload(item.id)
-                        } else if (item.status == CountryItem.STATUS_DONE) {
-                            MapManager.nativeDelete(item.id)
+            val groups = countries.groupBy { it.category }
+            val categories = groups.keys.sorted()
+            
+            for (cat in categories) {
+                val groupItems = groups[cat] ?: continue
+                if (currentRoot == null && groupItems.isNotEmpty()) {
+                    item {
+                        val header = when (cat) {
+                            CountryItem.CATEGORY_NEAR_ME -> "Near Me"
+                            CountryItem.CATEGORY_DOWNLOADED -> "Downloaded"
+                            else -> "Available"
                         }
-                    },
-                    label = { Text(item.name, maxLines = 1) },
-                    secondaryLabel = { Text(statusText, maxLines = 1, color = if (item.status == CountryItem.STATUS_DONE) Color.Green else Color.LightGray) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ChipDefaults.secondaryChipColors()
-                )
+                        Text(header, style = MaterialTheme.typography.caption1, color = Color.Gray, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+                    }
+                }
+                
+                items(groupItems) { item ->
+                    val isDownloading = item.status == CountryItem.STATUS_PROGRESS || item.status == CountryItem.STATUS_ENQUEUED || item.status == CountryItem.STATUS_APPLYING
+                    
+                    val statusText = when (item.status) {
+                        CountryItem.STATUS_DONE -> "Installed"
+                        CountryItem.STATUS_DOWNLOADABLE -> "Download (${java.lang.String.format(java.util.Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
+                        CountryItem.STATUS_PROGRESS -> "Downloading ${item.progress.toInt()}%"
+                        CountryItem.STATUS_ENQUEUED -> "Enqueued"
+                        CountryItem.STATUS_FAILED -> "Error - Tap to retry"
+                        else -> if (item.isExpandable) "${item.totalChildCount} regions" else "Status: ${item.status}"
+                    }
+
+                    Chip(
+                        onClick = {
+                            if (item.isExpandable) {
+                                pathStack = pathStack + item.id
+                            } else if ((item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED)) {
+                                MapManager.startDownload(item.id)
+                            } else if (item.status == CountryItem.STATUS_DONE) {
+                                MapManager.nativeDelete(item.id)
+                            }
+                        },
+                        label = { Text(item.name, maxLines = 1) },
+                        secondaryLabel = { 
+                            Column {
+                                Text(statusText, maxLines = 1, color = if (item.status == CountryItem.STATUS_DONE) Color.Green else Color.LightGray)
+                                if (isDownloading && item.progress > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(2.dp)
+                                            .padding(top = 2.dp)
+                                            .background(Color.Gray.copy(alpha = 0.3f))
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(item.progress / 100f)
+                                                .fillMaxHeight()
+                                                .background(Color(0xFF00E5FF))
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ChipDefaults.secondaryChipColors()
+                    )
+                }
             }
         }
     }

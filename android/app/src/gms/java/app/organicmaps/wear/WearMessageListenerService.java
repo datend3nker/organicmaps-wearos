@@ -7,6 +7,10 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import app.organicmaps.SplashActivity;
 import app.organicmaps.sdk.routing.RoutingController;
+import com.google.android.gms.wearable.DataEvent;
+import com.google.android.gms.wearable.DataEventBuffer;
+import com.google.android.gms.wearable.DataMap;
+import com.google.android.gms.wearable.DataMapItem;
 import com.google.android.gms.wearable.MessageEvent;
 import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.WearableListenerService;
@@ -45,19 +49,41 @@ public class WearMessageListenerService extends WearableListenerService implemen
     @Override
     public void onCreate() {
         super.onCreate();
-        ((GmsSyncLayer) WearSyncService.getSyncLayer()).addMessageListener(this);
+        WearSyncService.addMessageListener(this);
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
-        ((GmsSyncLayer) WearSyncService.getSyncLayer()).removeMessageListener(this);
+        WearSyncService.removeMessageListener(this);
     }
 
     @Override
     public void onMessageReceived(@NonNull MessageEvent messageEvent) {
         super.onMessageReceived(messageEvent);
-        ((GmsSyncLayer) WearSyncService.getSyncLayer()).notifyMessageReceived(messageEvent);
+        WearSyncService.getSyncLayer().notifyMessageReceived(
+            messageEvent.getPath(), messageEvent.getData(), messageEvent.getSourceNodeId());
+    }
+
+    @Override
+    public void onDataChanged(@NonNull DataEventBuffer dataEventBuffer) {
+        super.onDataChanged(dataEventBuffer);
+        for (DataEvent event : dataEventBuffer) {
+            if (event.getType() == DataEvent.TYPE_CHANGED && event.getDataItem().getUri().getPath().equals("/preferences/watch")) {
+                DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
+                boolean forceOffline = dataMap.getBoolean("forceWatchOfflineMaps", false);
+                String backend = dataMap.getString("backend", "GMS");
+                
+                mMainHandler.post(() -> {
+                    android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
+                    prefs.edit()
+                        .putBoolean(getString(R.string.pref_wear_os_offline_maps_enabled), forceOffline)
+                        .putString(getString(R.string.pref_wear_os_backend), backend)
+                        .apply();
+                    WearSyncService.initSyncLayer(this);
+                });
+            }
+        }
     }
 
     @Override
@@ -116,6 +142,7 @@ public class WearMessageListenerService extends WearableListenerService implemen
             }
             case PATH_PING -> {
                 Log.d(TAG, "Ping received from " + sourceNodeId);
+                WearSyncService.getSyncLayer().sendPong(getApplicationContext(), sourceNodeId);
             }
         }
     }

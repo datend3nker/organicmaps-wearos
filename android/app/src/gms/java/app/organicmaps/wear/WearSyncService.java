@@ -16,16 +16,60 @@ import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.Node;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.nio.ByteBuffer;
 
+import app.organicmaps.BuildConfig;
+import app.organicmaps.sync.BluetoothSyncLayer;
 import app.organicmaps.sync.GmsSyncLayer;
 import app.organicmaps.sync.ISyncLayer;
 
 public class WearSyncService {
-    private static final ISyncLayer sSyncLayer = new GmsSyncLayer();
+    private static ISyncLayer sSyncLayer;
+    private static final List<ISyncLayer.MessageListener> sListeners = new ArrayList<>();
 
-    public static ISyncLayer getSyncLayer() {
+    public static synchronized ISyncLayer getSyncLayer() {
+        if (sSyncLayer == null) {
+            initSyncLayer(null);
+        }
         return sSyncLayer;
+    }
+
+    public static synchronized void initSyncLayer(@Nullable Context context) {
+        if (sSyncLayer != null) {
+            sSyncLayer.stop();
+        }
+
+        if (BuildConfig.FLAVOR.equals("oss")) {
+            sSyncLayer = new BluetoothSyncLayer();
+        } else {
+            String backend = "GMS";
+            if (context != null) {
+                android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
+                backend = prefs.getString("pref_wear_os_backend", "GMS");
+            }
+
+            if ("BLUETOOTH".equals(backend)) {
+                sSyncLayer = new BluetoothSyncLayer();
+            } else {
+                sSyncLayer = new GmsSyncLayer();
+            }
+        }
+        
+        // Re-register all listeners to the new sync layer
+        for (ISyncLayer.MessageListener listener : sListeners) {
+            sSyncLayer.addMessageListener(listener);
+        }
+    }
+
+    public static synchronized void addMessageListener(ISyncLayer.MessageListener listener) {
+        sListeners.add(listener);
+        getSyncLayer().addMessageListener(listener);
+    }
+
+    public static synchronized void removeMessageListener(ISyncLayer.MessageListener listener) {
+        sListeners.remove(listener);
+        getSyncLayer().removeMessageListener(listener);
     }
 
     public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
@@ -63,5 +107,9 @@ public class WearSyncService {
     public static void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId,
                                            long requestId, @NonNull byte[] features) {
         sSyncLayer.sendMapTileResponse(context, nodeId, requestId, features);
+    }
+
+    public static void sendMapProgress(@NonNull Context context, @NonNull String countryId, int progress) {
+        sSyncLayer.sendMapProgress(context, countryId, progress);
     }
 }

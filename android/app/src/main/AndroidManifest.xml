@@ -198,37 +198,9 @@
         android:enabled="true"
         android:stopWithTask="false"/>
 
-    <service
-        android:name="app.organicmaps.wear.WearMessageListenerService"
-        android:exported="true">
-        <intent-filter>
-            <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
-            <data
-                android:host="*"
-                android:pathPrefix="/navigation"
-                android:scheme="wear" />
-            <data
-                android:host="*"
-                android:pathPrefix="/search"
-                android:scheme="wear" />
-            <data
-                android:host="*"
-                android:pathPrefix="/map"
-                android:scheme="wear" />
-            <data
-                android:host="*"
-                android:path="/ping"
-                android:scheme="wear" />
-            <data
-                android:host="*"
-                android:path="/pong"
-                android:scheme="wear" />
-        </intent-filter>
-    </service>
-
     <provider
       android:name="androidx.core.content.FileProvider"
-      android:authorities="${FILE_PROVIDER_PLACEHOLDER}"
+      android:authorities="${applicationId}.fileprovider"
       android:exported="false"
       android:grantUriPermissions="true">
       <meta-data

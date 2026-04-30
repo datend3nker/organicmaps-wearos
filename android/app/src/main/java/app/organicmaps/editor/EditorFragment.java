@@ -406,10 +406,10 @@ public class EditorFragment extends BaseMwmFragment implements View.OnClickListe
 
   private void initViews(View view)
   {
-    final View categoryBlock = view.findViewById(R.id.category);
+    final View categoryBlock = view.findViewById(R.id.block_category);
     // TODO show icon and fill it when core will implement that
     UiUtils.hide(categoryBlock.findViewById(R.id.icon));
-    mCategory = categoryBlock.findViewById(R.id.name);
+    mCategory = categoryBlock.findViewById(R.id.input);
     mCardName = view.findViewById(R.id.cv__name);
     mCardAddress = view.findViewById(R.id.cv__address);
     mCardDetails = view.findViewById(R.id.cv__details);
@@ -419,12 +419,12 @@ public class EditorFragment extends BaseMwmFragment implements View.OnClickListe
 
     // Address
     view.findViewById(R.id.block_street).setOnClickListener(this);
-    mStreet = view.findViewById(R.id.street);
-    View blockHouseNumber = view.findViewById(R.id.block_building);
+    mStreet = view.findViewById(R.id.block_street).findViewById(R.id.input);
+    View blockHouseNumber = view.findViewById(R.id.block_house_number);
     mHouseNumber = findInputAndInitBlock(blockHouseNumber, R.drawable.ic_building, R.string.house_number);
     mInputHouseNumber = blockHouseNumber.findViewById(R.id.custom_input);
 
-    initBlock(view, Metadata.MetadataType.FMD_POSTCODE, R.id.block_zipcode, R.drawable.ic_address,
+    initBlock(view, Metadata.MetadataType.FMD_POSTCODE, R.id.block_zip_code, R.drawable.ic_address,
               R.string.editor_zip_code, 0);
 
     // Details
@@ -435,14 +435,14 @@ public class EditorFragment extends BaseMwmFragment implements View.OnClickListe
     mBuildingLevels.setInputType(InputType.TYPE_CLASS_NUMBER);
     mInputBuildingLevels = mBlockLevels.findViewById(R.id.custom_input);
     View blockPhone = view.findViewById(R.id.block_phone);
-    mPhone = blockPhone.findViewById(R.id.phone);
-    mEditPhoneLink = blockPhone.findViewById(R.id.edit_phone);
+    mPhone = blockPhone.findViewById(R.id.input);
+    mEditPhoneLink = blockPhone.findViewById(R.id.input);
     mEditPhoneLink.setOnClickListener(this);
     mPhone.setOnClickListener(this);
     View websiteBlock = initBlock(view, Metadata.MetadataType.FMD_WEBSITE, R.id.block_website, R.drawable.ic_website,
                                   R.string.website, InputType.TYPE_TEXT_VARIATION_URI);
     View websiteMenuBlock =
-        initBlock(view, Metadata.MetadataType.FMD_WEBSITE_MENU, R.id.block_website_menu, R.drawable.ic_website_menu,
+      initBlock(view, Metadata.MetadataType.FMD_WEBSITE_MENU, R.id.block_website, R.drawable.ic_website_menu,
                   R.string.website_menu, InputType.TYPE_TEXT_VARIATION_URI);
     View emailBlock = initBlock(view, Metadata.MetadataType.FMD_EMAIL, R.id.block_email, R.drawable.ic_email,
                                 R.string.email, InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
@@ -484,7 +484,7 @@ public class EditorFragment extends BaseMwmFragment implements View.OnClickListe
     mEmptyOpeningHours.setOnClickListener(this);
     mOpeningHours = blockOpeningHours.findViewById(R.id.opening_hours);
     mOpeningHours.setOnClickListener(this);
-    final View cardMore = view.findViewById(R.id.cv__more);
+    final View cardMore = view.findViewById(R.id.cv__more_info);
     mDescription = findInput(cardMore);
     TextView osmInfo = view.findViewById(R.id.osm_info);
     osmInfo.setMovementMethod(LinkMovementMethod.getInstance());
@@ -535,7 +535,7 @@ public class EditorFragment extends BaseMwmFragment implements View.OnClickListe
     final int id = v.getId();
     if (id == R.id.edit_opening_hours || id == R.id.empty_opening_hours || id == R.id.opening_hours)
       mParent.editTimetable();
-    else if (id == R.id.phone || id == R.id.edit_phone)
+    else if (id == R.id.block_phone)
       mParent.editPhone();
     else if (id == R.id.block_wifi)
       mWifi.toggle();

@@ -1,27 +1,25 @@
 package app.organicmaps.wear;
 
-import android.app.Service;
 import android.content.Intent;
 import android.os.Handler;
-import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
-
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
+import app.organicmaps.SplashActivity;
+import app.organicmaps.sdk.routing.RoutingController;
+import com.google.android.gms.wearable.MessageEvent;
+import com.google.android.gms.wearable.Wearable;
+import com.google.android.gms.wearable.WearableListenerService;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
-import app.organicmaps.sdk.routing.RoutingController;
+import app.organicmaps.sync.GmsSyncLayer;
 import app.organicmaps.sync.ISyncLayer;
 
-/**
- * Background service for the OSS flavor to handle incoming Bluetooth messages.
- */
-public class BluetoothMessageListenerService extends Service implements ISyncLayer.MessageListener {
-    private static final String TAG = "BluetoothMsgListener";
-    private static final int SEARCH_SELECT_MIN_SIZE = 8 * 2 + 4;
+public class WearMessageListenerService extends WearableListenerService implements ISyncLayer.MessageListener {
+    private static final String TAG = "WearMessageListener";
+    private static final int SEARCH_SELECT_MIN_SIZE = Double.BYTES * 2 + Integer.BYTES;
     private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4;
 
     private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
@@ -33,7 +31,16 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+
     private WearMapTileRequestHandler mMapTileRequestHandler;
+
+    @NonNull
+    private WearMapTileRequestHandler getMapTileRequestHandler() {
+        if (mMapTileRequestHandler == null) {
+            mMapTileRequestHandler = new WearMapTileRequestHandler(this);
+        }
+        return mMapTileRequestHandler;
+    }
 
     @Override
     public void onCreate() {
@@ -48,43 +55,15 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
     }
 
     @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY;
-    }
-
-    @Nullable
-    @Override
-    public IBinder onBind(Intent intent) {
-        return null;
+    public void onMessageReceived(@NonNull MessageEvent messageEvent) {
+        super.onMessageReceived(messageEvent);
+        WearSyncService.getSyncLayer().notifyMessageReceived(
+            messageEvent.getPath(), messageEvent.getData(), messageEvent.getSourceNodeId());
     }
 
     @Override
     public void onMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId) {
         Log.d(TAG, "onMessageReceived: " + path);
-        if (path.equals("/preferences/watch")) {
-            ByteBuffer buffer = ByteBuffer.wrap(data);
-            boolean forceOffline = buffer.get() == 1;
-            int bLen = buffer.remaining() >= 4 ? buffer.getInt() : 0;
-            String backendStr = "GMS";
-            if (bLen > 0 && buffer.remaining() >= bLen) {
-                byte[] b = new byte[bLen];
-                buffer.get(b);
-                backendStr = new String(b, StandardCharsets.UTF_8);
-            }
-            
-            final boolean finalForceOffline = forceOffline;
-            final String finalBackend = backendStr;
-            mMainHandler.post(() -> {
-                android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
-                prefs.edit()
-                    .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_offline_maps_enabled), finalForceOffline)
-                    .putString(getString(app.organicmaps.R.string.pref_wear_os_backend), finalBackend)
-                    .apply();
-                WearSyncService.initSyncLayer(this);
-            });
-            return;
-        }
-
         switch (path) {
             case PATH_STOP_NAVIGATION -> mMainHandler.post(() -> {
                 Log.d(TAG, "Stopping navigation per watch request");
@@ -133,10 +112,8 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                 double maxLat = buffer.getDouble();
                 double maxLon = buffer.getDouble();
 
-                mMainHandler.post(() -> {
-                    if (mMapTileRequestHandler == null) mMapTileRequestHandler = new WearMapTileRequestHandler(this);
-                    mMapTileRequestHandler.handle(sourceNodeId, requestId, minLat, minLon, maxLat, maxLon);
-                });
+                mMainHandler.post(() -> getMapTileRequestHandler().handle(
+                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon));
             }
             case PATH_PING -> {
                 Log.d(TAG, "Ping received from " + sourceNodeId);

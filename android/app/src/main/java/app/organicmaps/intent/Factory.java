@@ -50,7 +50,7 @@ public class Factory
       else if (Intent.ACTION_SEND.equals(intent.getAction()))
         uris = Collections.singletonList(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri.class));
       else if (Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction()))
-        uris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+        uris = IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri.class);
       else
         uris = null;
       if (uris == null)

@@ -109,10 +109,17 @@ public class DownloaderService extends Service implements MapManager.StorageCall
         && ContextCompat.checkSelfPermission(this, POST_NOTIFICATIONS) != PERMISSION_GRANTED)
     {
       Logger.w(TAG, "Permission POST_NOTIFICATIONS is not granted, skipping notification");
-      return;
     }
-
-    mNotifier.notifyProgress(countryId, (int) bytesTotal, (int) bytesDownloaded);
+    else
+    {
+      mNotifier.notifyProgress(countryId, (int) bytesTotal, (int) bytesDownloaded);
+    }
+    
+    // Also notify watch
+    if (bytesTotal > 0) {
+        int progress = (int) (bytesDownloaded * 100 / bytesTotal);
+        app.organicmaps.wear.WearSyncService.sendMapProgress(this, countryId, progress);
+    }
   }
 
   @Override

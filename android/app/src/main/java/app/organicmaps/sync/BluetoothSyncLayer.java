@@ -2,6 +2,7 @@ package app.organicmaps.sync;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.location.Location;
@@ -26,6 +27,7 @@ import java.util.concurrent.Executors;
 import app.organicmaps.sdk.routing.RoutingInfo;
 import app.organicmaps.sdk.search.SearchRecents;
 import app.organicmaps.sdk.search.SearchResult;
+import app.organicmaps.util.GzipUtils;
 
 /**
  * OSS implementation of ISyncLayer using standard Bluetooth RFCOMM Sockets.
@@ -56,11 +58,22 @@ public class BluetoothSyncLayer implements ISyncLayer {
         android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
         boolean mapEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
         boolean offlineMapsEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_offline_maps_enabled), false);
-        
-        ByteBuffer buffer = ByteBuffer.allocate(2);
+        boolean standaloneMode = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), false);
+        String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
+        String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
+
+        byte[] modeBytes = mapDownloadMode.getBytes(StandardCharsets.UTF_8);
+        byte[] backendBytes = backend.getBytes(StandardCharsets.UTF_8);
+
+        ByteBuffer buffer = ByteBuffer.allocate(2 + 1 + 4 + modeBytes.length + 4 + backendBytes.length);
         buffer.put((byte) (mapEnabled ? 1 : 0));
         buffer.put((byte) (offlineMapsEnabled ? 1 : 0));
-        sendRawMessage(MSG_TYPE_PREFERENCES, buffer.array());
+        buffer.put((byte) (standaloneMode ? 1 : 0));
+        buffer.putInt(modeBytes.length);
+        buffer.put(modeBytes);
+        buffer.putInt(backendBytes.length);
+        buffer.put(backendBytes);
+        sendRawMessage(context, MSG_TYPE_PREFERENCES, buffer.array());
     }
 
     @Override
@@ -83,49 +96,53 @@ public class BluetoothSyncLayer implements ISyncLayer {
         buffer.put(streetBytes);
         buffer.put(distBytes);
         
-        sendRawMessage(MSG_TYPE_NAV_STATUS, buffer.array());
+        sendRawMessage(context, MSG_TYPE_NAV_STATUS, buffer.array());
     }
 
     @Override
     public void startNavigation(@NonNull Context context) {
         syncPreferences(context);
-        updateNavigation(context, app.organicmaps.sdk.Framework.nativeGetRouteFollowingInfo(), null);
+        RoutingInfo info = app.organicmaps.sdk.Framework.nativeGetRouteFollowingInfo();
+        if (info != null) {
+            updateNavigation(context, info, null);
+        }
     }
 
     @Override
     public void stopNavigation(@NonNull Context context) {
         ByteBuffer buffer = ByteBuffer.allocate(1);
         buffer.put((byte) 0); // Inactive
-        sendRawMessage(MSG_TYPE_NAV_STATUS, buffer.array());
+        sendRawMessage(context, MSG_TYPE_NAV_STATUS, buffer.array());
     }
 
     @Override
     public void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results, boolean isSearching) {
         int count = Math.min(results.length, 10);
-        int totalSize = 1; // isSearching
+        int calcTotalSize = 1; // isSearching
         List<byte[]> nameBytesList = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             byte[] b = results[i].getTitle(context).getBytes(StandardCharsets.UTF_8);
             nameBytesList.add(b);
-            totalSize += 4 + b.length + 8 + 8;
+            calcTotalSize += 4 + b.length + 8 + 8;
         }
         
-        ByteBuffer buffer = ByteBuffer.allocate(totalSize);
+        ByteBuffer buffer = ByteBuffer.allocate(calcTotalSize);
         buffer.put((byte) (isSearching ? 1 : 0));
         for (int i = 0; i < count; i++) {
-            buffer.putInt(nameBytesList.get(i).length);
-            buffer.put(nameBytesList.get(i));
+            byte[] b = nameBytesList.get(i);
+            buffer.putInt(b.length);
+            buffer.put(b);
             buffer.putDouble(results[i].lat);
             buffer.putDouble(results[i].lon);
         }
-        sendRawMessage(MSG_TYPE_SEARCH_RESULTS, buffer.array());
+        sendRawMessage(context, MSG_TYPE_SEARCH_RESULTS, buffer.array());
     }
 
     @Override
     public void sendSearchState(@NonNull Context context, boolean isSearching) {
         ByteBuffer buffer = ByteBuffer.allocate(1);
         buffer.put((byte) (isSearching ? 1 : 0));
-        sendRawMessage(MSG_TYPE_SEARCH_RESULTS, buffer.array());
+        sendRawMessage(context, MSG_TYPE_SEARCH_RESULTS, buffer.array());
     }
 
     @Override
@@ -146,20 +163,56 @@ public class BluetoothSyncLayer implements ISyncLayer {
             buffer.putInt(b.length);
             buffer.put(b);
         }
-        sendRawMessage(MSG_TYPE_SEARCH_HISTORY, buffer.array());
+        sendRawMessage(context, MSG_TYPE_SEARCH_HISTORY, buffer.array());
     }
 
     @Override
     public void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
-        sendRawMessage(MSG_TYPE_MAP_DOWNLOAD, countryId.getBytes(StandardCharsets.UTF_8));
+        sendRawMessage(context, MSG_TYPE_MAP_DOWNLOAD, countryId.getBytes(StandardCharsets.UTF_8));
     }
 
     @Override
     public void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId, long requestId, @NonNull byte[] features) {
-        ByteBuffer buffer = ByteBuffer.allocate(8 + features.length);
-        buffer.putLong(requestId);
-        buffer.put(features);
-        sendRawMessage(MSG_TYPE_MAP_TILE_RESPONSE, buffer.array());
+        mExecutor.execute(() -> {
+            byte[] dataToSend = features;
+            boolean compressed = false;
+            if (features.length > 512) {
+                try {
+                    dataToSend = GzipUtils.compress(features);
+                    compressed = true;
+                } catch (IOException e) {
+                    Log.w(TAG, "Compression failed, sending raw");
+                }
+            }
+
+            ByteBuffer buffer = ByteBuffer.allocate(8 + 1 + dataToSend.length);
+            buffer.putLong(requestId);
+            buffer.put((byte) (compressed ? 1 : 0));
+            buffer.put(dataToSend);
+            sendRawMessage(context, MSG_TYPE_MAP_TILE_RESPONSE, buffer.array());
+        });
+    }
+
+    @Override
+    public void sendPong(@NonNull Context context, @NonNull String nodeId) {
+        // Send a command type message with path /pong
+        byte[] pathBytes = "/pong".getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocate(4 + pathBytes.length);
+        buffer.putInt(pathBytes.length);
+        buffer.put(pathBytes);
+        sendRawMessage(context, MSG_TYPE_COMMAND, buffer.array());
+    }
+
+    @Override
+    public void sendMapProgress(@NonNull Context context, @NonNull String countryId, int progress) {
+        byte[] countryBytes = countryId.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocate(4 + countryBytes.length + 4);
+        buffer.putInt(countryBytes.length);
+        buffer.put(countryBytes);
+        buffer.putInt(progress);
+        
+        // MSG_TYPE 7 for progress
+        sendRawMessage(context, (byte) 7, buffer.array());
     }
 
     @Override
@@ -172,10 +225,11 @@ public class BluetoothSyncLayer implements ISyncLayer {
         mListeners.remove(listener);
     }
 
-    private void sendRawMessage(byte type, byte[] payload) {
+    private void sendRawMessage(@NonNull Context context, byte type, byte[] payload) {
+        final Context appContext = context.getApplicationContext();
         mExecutor.execute(() -> {
             try {
-                BluetoothSocket socket = getOrConnectSocket();
+                BluetoothSocket socket = getOrConnectSocket(appContext);
                 if (socket == null) return;
                 
                 OutputStream out = socket.getOutputStream();
@@ -192,10 +246,12 @@ public class BluetoothSyncLayer implements ISyncLayer {
         });
     }
 
-    private synchronized BluetoothSocket getOrConnectSocket() {
+    private synchronized BluetoothSocket getOrConnectSocket(@NonNull Context context) {
         if (mActiveSocket != null && mActiveSocket.isConnected()) return mActiveSocket;
         
-        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+        if (bluetoothManager == null) return null;
+        BluetoothAdapter adapter = bluetoothManager.getAdapter();
         if (adapter == null || !adapter.isEnabled()) return null;
         
         try {
@@ -222,6 +278,12 @@ public class BluetoothSyncLayer implements ISyncLayer {
             mActiveSocket = null;
         }
         mIsListening = false;
+    }
+
+    @Override
+    public void stop() {
+        closeSocket();
+        mExecutor.shutdown();
     }
 
     private void startListening() {
@@ -257,6 +319,13 @@ public class BluetoothSyncLayer implements ISyncLayer {
         }).start();
     }
 
+    @Override
+    public void notifyMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId) {
+        for (MessageListener listener : mListeners) {
+            listener.onMessageReceived(path, data, sourceNodeId);
+        }
+    }
+
     private void handleIncomingCommand(byte[] payload) {
         ByteBuffer buffer = ByteBuffer.wrap(payload);
         int pathLen = buffer.getInt();
@@ -266,9 +335,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
         byte[] data = new byte[buffer.remaining()];
         buffer.get(data);
         
-        for (MessageListener listener : mListeners) {
-            listener.onMessageReceived(path, data, "bluetooth_watch");
-        }
+        notifyMessageReceived(path, data, "bluetooth_watch");
     }
 
     private void startConnectionListener() {

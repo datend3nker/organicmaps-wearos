@@ -3,6 +3,7 @@ package app.organicmaps.maplayer;
 import android.animation.Animator;
 import android.animation.AnimatorInflater;
 import android.content.Context;
+import android.os.Build;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.view.View;
@@ -98,6 +99,7 @@ public class SearchWheel implements View.OnClickListener
     refreshSearchVisibility();
   }
 
+  @SuppressWarnings("deprecation")
   private boolean initSearchLayout()
   {
     if (mSearchLayout != null)
@@ -107,11 +109,20 @@ public class SearchWheel implements View.OnClickListener
     if (mSearchLayout == null)
       return false;
 
-    DisplayMetrics displayMetrics = new DisplayMetrics();
+    DisplayMetrics displayMetrics = mFrame.getContext().getResources().getDisplayMetrics();
     WindowManager windowmanager = (WindowManager) mFrame.getContext().getSystemService(Context.WINDOW_SERVICE);
-    windowmanager.getDefaultDisplay().getMetrics(displayMetrics);
+    int heightPixels;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+    {
+      heightPixels = windowmanager.getCurrentWindowMetrics().getBounds().height();
+    }
+    else
+    {
+      windowmanager.getDefaultDisplay().getMetrics(displayMetrics);
+      heightPixels = displayMetrics.heightPixels;
+    }
     // Get available screen height in DP
-    int height = Math.round(displayMetrics.heightPixels / displayMetrics.density);
+    int height = Math.round(heightPixels / displayMetrics.density);
     // If height is less than 400dp, the search wheel in a straight line
     // In this case, move the pivot for the animation
     if (height < 400)

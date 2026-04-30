@@ -21,6 +21,8 @@ public interface ISyncLayer {
     void sendSearchHistory(@NonNull Context context);
     void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId);
     void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId, long requestId, @NonNull byte[] features);
+    void sendPong(@NonNull Context context, @NonNull String nodeId);
+    void sendMapProgress(@NonNull Context context, @NonNull String countryId, int progress);
     
     interface MessageListener {
         void onMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId);
@@ -28,4 +30,8 @@ public interface ISyncLayer {
     
     void addMessageListener(@NonNull MessageListener listener);
     void removeMessageListener(@NonNull MessageListener listener);
+    
+    void notifyMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId);
+    
+    default void stop() {}
 }

@@ -24,7 +24,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -52,7 +51,7 @@ import app.organicmaps.sdk.bookmarks.data.MapObject
 import app.organicmaps.sdk.Router
 
 @Composable
-fun SearchScreen(onSearchClick: () -> Unit) {
+fun SearchScreen() {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
@@ -74,13 +73,15 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                             description = it.description.localizedFeatureType ?: "",
                             lat = it.lat,
                             lon = it.lon,
-                            type = it.type
+                            type = it.type,
                         )
                     }
-                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-                        searchResults = converted,
-                        isSearching = true
-                    ))
+                    NavigationStateHolder.update(
+                        NavigationStateHolder.state.value.copy(
+                            searchResults = converted,
+                            isSearching = true
+                        )
+                    )
                 }
             }
 
@@ -112,7 +113,7 @@ fun SearchScreen(onSearchClick: () -> Unit) {
         ))
         if (navState.offlineMapsEnabled) {
             SearchEngine.INSTANCE.cancel()
-            val hasLocation = navState.lat != 0.0 && navState.lon != 0.0
+            val hasLocation = (navState.lat != 0.0 && navState.lon != 0.0)
             SearchEngine.INSTANCE.search(context, query, false, System.nanoTime(), hasLocation, navState.lat, navState.lon)
         } else {
             WearCommandService.search(context, query)
@@ -186,7 +187,9 @@ fun SearchScreen(onSearchClick: () -> Unit) {
                     selectedResult = null
                     searchQuery = TextFieldValue("")
                 },
-                onCancel = { selectedResult = null }
+                onCancel = { 
+                    selectedResult = null 
+                }
             )
         } else {
             ScalingLazyColumn(
@@ -379,5 +382,5 @@ fun SearchResultChip(result: SearchResultItem, onClick: () -> Unit) {
 @Preview(device = WearDevices.SMALL_ROUND, showSystemUi = true)
 @Composable
 fun SearchScreenPreview() {
-    SearchScreen(onSearchClick = {})
+    SearchScreen()
 }

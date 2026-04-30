@@ -337,6 +337,37 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     if (mapDownloadModePref != null) {
         mapDownloadModePref.setOnPreferenceChangeListener(wearPrefsListener);
     }
+
+    final Preference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
+    if (standaloneModePref != null) {
+        standaloneModePref.setOnPreferenceChangeListener((preference, newValue) -> {
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
+            return true;
+        });
+    }
+
+    final Preference backendPref = findPreference(getString(R.string.pref_wear_os_backend));
+    if (backendPref != null) {
+        if (app.organicmaps.BuildConfig.FLAVOR.equals("oss")) {
+            backendPref.setVisible(false);
+        } else {
+            backendPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                // Update implementation
+                app.organicmaps.wear.WearSyncService.initSyncLayer(requireContext());
+                
+                // Start/stop Bluetooth service based on selection
+                Intent bluetoothService = new Intent(requireContext(), app.organicmaps.wear.BluetoothMessageListenerService.class);
+                if ("BLUETOOTH".equals(newValue)) {
+                    requireContext().startService(bluetoothService);
+                } else {
+                    requireContext().stopService(bluetoothService);
+                }
+
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
+                return true;
+            });
+        }
+    }
   }
 
   private void init3dModePrefsCallbacks()
