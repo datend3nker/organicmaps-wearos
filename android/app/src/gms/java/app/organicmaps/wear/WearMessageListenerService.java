@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import app.organicmaps.SplashActivity;
+import app.organicmaps.R;
 import app.organicmaps.sdk.routing.RoutingController;
 import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
@@ -24,7 +25,7 @@ import app.organicmaps.sync.ISyncLayer;
 public class WearMessageListenerService extends WearableListenerService implements ISyncLayer.MessageListener {
     private static final String TAG = "WearMessageListener";
     private static final int SEARCH_SELECT_MIN_SIZE = Double.BYTES * 2 + Integer.BYTES;
-    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4;
+    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4;
 
     private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
     private static final String PATH_SEARCH_QUERY = "/search/query";
@@ -32,6 +33,7 @@ public class WearMessageListenerService extends WearableListenerService implemen
     private static final String PATH_SEARCH_HISTORY_REQUEST = "/search/history/request";
     private static final String PATH_MAP_TILE_REQUEST = "/map/tile/request";
     private static final String PATH_PING = "/ping";
+    private static final String PATH_PREFERENCES_REQUEST = "/preferences/request";
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -71,13 +73,17 @@ public class WearMessageListenerService extends WearableListenerService implemen
         for (DataEvent event : dataEventBuffer) {
             if (event.getType() == DataEvent.TYPE_CHANGED && event.getDataItem().getUri().getPath().equals("/preferences/watch")) {
                 DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
-                boolean forceOffline = dataMap.getBoolean("forceWatchOfflineMaps", false);
+                boolean mapEnabled = dataMap.getBoolean("mapEnabled", false);
+                boolean watchLocalMode = dataMap.getBoolean("watchLocalMode", false);
+                boolean standaloneMode = dataMap.getBoolean("standaloneMode", false);
                 String backend = dataMap.getString("backend", "GMS");
                 
                 mMainHandler.post(() -> {
                     android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
                     prefs.edit()
-                        .putBoolean(getString(R.string.pref_wear_os_offline_maps_enabled), forceOffline)
+                        .putBoolean(getString(R.string.pref_wear_os_map_enabled), mapEnabled)
+                        .putBoolean(getString(R.string.pref_wear_os_watch_local_mode), watchLocalMode)
+                        .putBoolean(getString(R.string.pref_wear_os_standalone_mode), standaloneMode)
                         .putString(getString(R.string.pref_wear_os_backend), backend)
                         .apply();
                     WearSyncService.initSyncLayer(this);
@@ -93,6 +99,7 @@ public class WearMessageListenerService extends WearableListenerService implemen
             case PATH_STOP_NAVIGATION -> mMainHandler.post(() -> {
                 Log.d(TAG, "Stopping navigation per watch request");
                 RoutingController.get().cancel();
+                app.organicmaps.routing.NavigationService.stopService(this);
             });
             case PATH_SEARCH_QUERY -> {
                 String query = new String(data, StandardCharsets.UTF_8);
@@ -136,13 +143,18 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 double minLon = buffer.getDouble();
                 double maxLat = buffer.getDouble();
                 double maxLon = buffer.getDouble();
+                int routerType = buffer.getInt();
 
                 mMainHandler.post(() -> getMapTileRequestHandler().handle(
-                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon));
+                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType));
             }
             case PATH_PING -> {
                 Log.d(TAG, "Ping received from " + sourceNodeId);
                 WearSyncService.getSyncLayer().sendPong(getApplicationContext(), sourceNodeId);
+            }
+            case PATH_PREFERENCES_REQUEST -> {
+                Log.d(TAG, "Watch requested settings sync");
+                WearSyncService.getSyncLayer().syncPreferences(getApplicationContext());
             }
         }
     }

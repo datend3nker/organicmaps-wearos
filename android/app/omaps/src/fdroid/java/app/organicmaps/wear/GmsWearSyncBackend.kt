@@ -57,12 +57,12 @@ class GmsWearSyncBackend : IWearSyncBackend {
 
     override fun syncPreferences(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val forceOffline = prefs.getBoolean("forceWatchOfflineMaps", false)
+        val forceOffline = prefs.getBoolean("forceWatchLocalMode", false)
         val backend = prefs.getString("pref_wear_os_backend", "GMS")
         
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/preferences/watch")
         val map = putDataMapReq.dataMap
-        map.putBoolean("forceWatchOfflineMaps", forceOffline)
+        map.putBoolean("forceWatchLocalMode", forceOffline)
         map.putString("backend", backend ?: "GMS")
         
         val putDataReq = putDataMapReq.asPutDataRequest()

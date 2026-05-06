@@ -20,11 +20,14 @@ object NavigationIcons {
         // Mapping based on app.organicmaps.sdk.routing.CarDirection enum
         return when (carDirection) {
             0, 1, 13 -> Icons.Default.ArrowUpward // NoTurn, GoStraight, StartAtEndOfStreet
-            2, 3, 4 -> Icons.AutoMirrored.Filled.ArrowForward // TurnRight variants
-            5, 6, 7 -> Icons.AutoMirrored.Filled.ArrowBack // TurnLeft variants
-            8, 9 -> Icons.Default.Refresh // UTurn variants (Refresh as fallback)
-            10, 11, 12 -> Icons.Default.Refresh // Roundabout
+            2, 3 -> Icons.AutoMirrored.Filled.ArrowForward // TurnRight, TurnSharpRight
+            4 -> Icons.Default.NorthEast // TurnSlightRight
+            5, 6 -> Icons.AutoMirrored.Filled.ArrowBack // TurnLeft, TurnSharpLeft
+            7 -> Icons.Default.NorthWest // TurnSlightLeft
+            8, 9, 10, 11, 12 -> Icons.Default.Refresh // UTurn and Roundabout variants
             14 -> Icons.Default.Place // ReachedYourDestination
+            15 -> Icons.Default.West // ExitHighwayToLeft
+            16 -> Icons.Default.East // ExitHighwayToRight
             else -> Icons.Default.ArrowUpward
         }
     }

@@ -10,8 +10,9 @@ public final class MapFeaturesExtractor {
     private MapFeaturesExtractor() {}
 
     @NonNull
-    public static byte[] extract(double minLat, double minLon, double maxLat, double maxLon, int scale) {
+    public static byte[] extract(double minLat, double minLon, double maxLat, double maxLon, int scale, int routerType) {
         int clampedScale = Math.max(1, Math.min(20, scale));
-        return Framework.nativeGetWearMapFeatures(minLat, minLon, maxLat, maxLon, clampedScale);
+        // Use a higher scale for extraction to ensure enough points are returned for the watch display
+        return Framework.nativeGetWearMapFeatures(minLat, minLon, maxLat, maxLon, Math.max(clampedScale, 18), routerType, 0);
     }
 }

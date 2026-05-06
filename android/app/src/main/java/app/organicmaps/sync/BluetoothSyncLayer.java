@@ -56,9 +56,9 @@ public class BluetoothSyncLayer implements ISyncLayer {
     @Override
     public void syncPreferences(@NonNull Context context) {
         android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
-        boolean mapEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
-        boolean offlineMapsEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_offline_maps_enabled), false);
         boolean standaloneMode = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), false);
+        boolean mapEnabled = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
+        boolean watchLocalMode = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), false);
         String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
         String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
 
@@ -67,7 +67,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
         ByteBuffer buffer = ByteBuffer.allocate(2 + 1 + 4 + modeBytes.length + 4 + backendBytes.length);
         buffer.put((byte) (mapEnabled ? 1 : 0));
-        buffer.put((byte) (offlineMapsEnabled ? 1 : 0));
+        buffer.put((byte) (watchLocalMode ? 1 : 0));
         buffer.put((byte) (standaloneMode ? 1 : 0));
         buffer.putInt(modeBytes.length);
         buffer.put(modeBytes);
@@ -117,21 +117,37 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results, boolean isSearching) {
-        int count = Math.min(results.length, 10);
+        int count = Math.min(results.length, 15);
         int calcTotalSize = 1; // isSearching
         List<byte[]> nameBytesList = new ArrayList<>();
+        List<byte[]> descBytesList = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            byte[] b = results[i].getTitle(context).getBytes(StandardCharsets.UTF_8);
-            nameBytesList.add(b);
-            calcTotalSize += 4 + b.length + 8 + 8;
+            SearchResult res = results[i];
+            byte[] nb = res.getTitle(context).getBytes(StandardCharsets.UTF_8);
+            nameBytesList.add(nb);
+            
+            String desc = "";
+            if (res.description != null) {
+                if (res.description.localizedFeatureType != null) desc = res.description.localizedFeatureType;
+                else if (res.description.region != null) desc = res.description.region;
+            }
+            byte[] db = desc.getBytes(StandardCharsets.UTF_8);
+            descBytesList.add(db);
+            
+            calcTotalSize += 4 + nb.length + 4 + db.length + 8 + 8;
         }
         
         ByteBuffer buffer = ByteBuffer.allocate(calcTotalSize);
         buffer.put((byte) (isSearching ? 1 : 0));
         for (int i = 0; i < count; i++) {
-            byte[] b = nameBytesList.get(i);
-            buffer.putInt(b.length);
-            buffer.put(b);
+            byte[] nb = nameBytesList.get(i);
+            buffer.putInt(nb.length);
+            buffer.put(nb);
+            
+            byte[] db = descBytesList.get(i);
+            buffer.putInt(db.length);
+            buffer.put(db);
+
             buffer.putDouble(results[i].lat);
             buffer.putDouble(results[i].lon);
         }

@@ -87,6 +87,8 @@ class WearApplication : Application() {
     private var lastPongTime = System.currentTimeMillis()
     private fun startPingLoop() {
         MainScope().launch {
+            // Initial delay to allow connection setup
+            kotlinx.coroutines.delay(3000)
             while (true) {
                 try {
                     val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
@@ -94,6 +96,10 @@ class WearApplication : Application() {
                     
                     if (!disconnected) {
                         WearCommandService.sendPing(this@WearApplication)
+                        // Trigger connection check via service
+                        WearCommandService.checkConnection(this@WearApplication) { connected ->
+                            if (connected) onPongReceived()
+                        }
                     } else {
                          val currentState = NavigationStateHolder.state.value
                          if (currentState.isPhoneConnected) {
@@ -108,8 +114,8 @@ class WearApplication : Application() {
                 val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
                 val disconnected = prefs.getBoolean("disconnectFromPhone", false)
 
-                // If no pong for 25 seconds, mark as disconnected
-                if (disconnected || System.currentTimeMillis() - lastPongTime > 25000) {
+                // If no pong for 35 seconds, mark as disconnected
+                if (disconnected || System.currentTimeMillis() - lastPongTime > 35000) {
                     val currentState = NavigationStateHolder.state.value
                     if (currentState.isPhoneConnected) {
                         NavigationStateHolder.update(currentState.copy(isPhoneConnected = false))
@@ -154,7 +160,7 @@ class WearApplication : Application() {
 
         MainScope().launch(Dispatchers.Main) {
             while (true) {
-                if (NavigationStateHolder.state.value.offlineMapsEnabled && routingController.isNavigating) {
+                if (NavigationStateHolder.state.value.watchLocalMode && routingController.isNavigating) {
                     val info = Framework.nativeGetRouteFollowingInfo()
                     if (info != null) {
                         val currentState = NavigationStateHolder.state.value
@@ -163,10 +169,13 @@ class WearApplication : Application() {
                             nextStreet = info.nextStreet ?: "",
                             carDirection = info.carDirection.ordinal,
                             pedestrianDirection = info.pedestrianDirection.ordinal,
+                            exitNum = info.exitNum,
                             isActive = true,
                             distToTarget = info.distToTarget?.toString(this@WearApplication) ?: "",
                             eta = info.totalTimeInSeconds,
-                            completionPercent = info.completionPercent
+                            completionPercent = info.completionPercent,
+                            turnLat = info.turnLat,
+                            turnLon = info.turnLon
                         ))
                     }
                 }

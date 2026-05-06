@@ -22,7 +22,7 @@ import app.organicmaps.sync.ISyncLayer;
 public class BluetoothMessageListenerService extends Service implements ISyncLayer.MessageListener {
     private static final String TAG = "BluetoothMsgListener";
     private static final int SEARCH_SELECT_MIN_SIZE = 8 * 2 + 4;
-    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4;
+    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4;
 
     private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
     private static final String PATH_SEARCH_QUERY = "/search/query";
@@ -30,6 +30,7 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
     private static final String PATH_SEARCH_HISTORY_REQUEST = "/search/history/request";
     private static final String PATH_MAP_TILE_REQUEST = "/map/tile/request";
     private static final String PATH_PING = "/ping";
+    private static final String PATH_PREFERENCES_REQUEST = "/preferences/request";
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -63,7 +64,10 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
         Log.d(TAG, "onMessageReceived: " + path);
         if (path.equals("/preferences/watch")) {
             ByteBuffer buffer = ByteBuffer.wrap(data);
-            boolean forceOffline = buffer.get() == 1;
+            boolean mapEnabled = buffer.get() == 1;
+            buffer.get(); // skip legacy forceOffline byte
+            boolean watchLocalMode = buffer.get() == 1;
+            boolean standaloneMode = buffer.get() == 1;
             int bLen = buffer.remaining() >= 4 ? buffer.getInt() : 0;
             String backendStr = "GMS";
             if (bLen > 0 && buffer.remaining() >= bLen) {
@@ -72,12 +76,16 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                 backendStr = new String(b, StandardCharsets.UTF_8);
             }
             
-            final boolean finalForceOffline = forceOffline;
+            final boolean finalMapEnabled = mapEnabled;
+            final boolean finalWatchLocalMode = watchLocalMode;
+            final boolean finalStandaloneMode = standaloneMode;
             final String finalBackend = backendStr;
             mMainHandler.post(() -> {
                 android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
                 prefs.edit()
-                    .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_offline_maps_enabled), finalForceOffline)
+                    .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_map_enabled), finalMapEnabled)
+                    .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), finalWatchLocalMode)
+                    .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), finalStandaloneMode)
                     .putString(getString(app.organicmaps.R.string.pref_wear_os_backend), finalBackend)
                     .apply();
                 WearSyncService.initSyncLayer(this);
@@ -89,6 +97,7 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
             case PATH_STOP_NAVIGATION -> mMainHandler.post(() -> {
                 Log.d(TAG, "Stopping navigation per watch request");
                 RoutingController.get().cancel();
+                app.organicmaps.routing.NavigationService.stopService(this);
             });
             case PATH_SEARCH_QUERY -> {
                 String query = new String(data, StandardCharsets.UTF_8);
@@ -132,15 +141,20 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                 double minLon = buffer.getDouble();
                 double maxLat = buffer.getDouble();
                 double maxLon = buffer.getDouble();
+                int routerType = buffer.getInt();
 
                 mMainHandler.post(() -> {
                     if (mMapTileRequestHandler == null) mMapTileRequestHandler = new WearMapTileRequestHandler(this);
-                    mMapTileRequestHandler.handle(sourceNodeId, requestId, minLat, minLon, maxLat, maxLon);
+                    mMapTileRequestHandler.handle(sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType);
                 });
             }
             case PATH_PING -> {
                 Log.d(TAG, "Ping received from " + sourceNodeId);
                 WearSyncService.getSyncLayer().sendPong(getApplicationContext(), sourceNodeId);
+            }
+            case PATH_PREFERENCES_REQUEST -> {
+                Log.d(TAG, "Watch requested settings sync");
+                WearSyncService.getSyncLayer().syncPreferences(getApplicationContext());
             }
         }
     }

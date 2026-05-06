@@ -878,10 +878,10 @@
     <string name="pref_wear_os_backend_summary">GMS is recommended for most devices</string>
     <string name="pref_wear_map_enabled_title">Enable Map on Watch</string>
     <string name="pref_wear_map_enabled_summary">Show vector map on the watch screen (requires more battery)</string>
-    <string name="pref_wear_os_offline_maps_title">Offline Mode (Watch)</string>
-    <string name="pref_wear_os_offline_maps_summary">Use local maps on the watch instead of streaming from phone</string>
-    <string name="pref_wear_os_standalone_mode_title">Standalone Mode (Watch)</string>
-    <string name="pref_wear_os_standalone_mode_summary">Cut connection to phone; watch will work independently</string>
+    <string name="pref_wear_os_watch_local_mode_title">Watch Local Mode</string>
+    <string name="pref_wear_os_watch_local_mode_summary">Prefer using local maps installed on the watch instead of streaming from phone</string>
+    <string name="pref_wear_os_standalone_mode_title">Watch Standalone Mode</string>
+    <string name="pref_wear_os_standalone_mode_summary">Fully independent operation; uses watch GPS and local maps only</string>
     <string name="pref_wear_map_download_mode_title">Watch Download Policy</string>
 
     <string name="downloader_send_to_watch">Send to Watch</string>

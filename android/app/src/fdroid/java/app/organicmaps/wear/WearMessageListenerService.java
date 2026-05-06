@@ -20,7 +20,7 @@ import app.organicmaps.sync.ISyncLayer;
 public class WearMessageListenerService extends WearableListenerService implements ISyncLayer.MessageListener {
     private static final String TAG = "WearMessageListener";
     private static final int SEARCH_SELECT_MIN_SIZE = Double.BYTES * 2 + Integer.BYTES;
-    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4;
+    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4;
 
     private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
     private static final String PATH_SEARCH_QUERY = "/search/query";
@@ -111,9 +111,10 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 double minLon = buffer.getDouble();
                 double maxLat = buffer.getDouble();
                 double maxLon = buffer.getDouble();
+                int routerType = buffer.getInt();
 
                 mMainHandler.post(() -> getMapTileRequestHandler().handle(
-                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon));
+                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType));
             }
             case PATH_PING -> {
                 Log.d(TAG, "Ping received from " + sourceNodeId);

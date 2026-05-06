@@ -126,7 +126,9 @@ public final class MapManager
    * if {@code root} is {@code null}, list of downloaded countries is returned.
    */
   public static native void nativeListItems(@Nullable String root, double lat, double lon, boolean hasLocation,
-                                            boolean myMapsMode, List<CountryItem> result);
+                                            boolean myMapsMode, @NonNull List<CountryItem> result);
+
+  public static native void nativeSearchItems(@NonNull String query, @NonNull List<CountryItem> result);
 
   /**
    * Sets following attributes of the given {@code item}:

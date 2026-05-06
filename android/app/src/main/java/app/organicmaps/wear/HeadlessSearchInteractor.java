@@ -32,30 +32,35 @@ public class HeadlessSearchInteractor implements SearchListener {
     }
 
     public void startSearch(@NonNull String query) {
-        Log.d(TAG, "Starting headless search for: " + query);
+        Log.d(TAG, "startSearch requested for: " + query);
         try {
             if (MwmApplication.from(mContext).getOrganicMaps().arePlatformAndCoreInitialized()) {
+                Log.d(TAG, "Framework already initialized, performing search.");
                 performSearch(query);
                 return;
             }
+            Log.d(TAG, "Initializing framework for headless search...");
             boolean asyncInit = MwmApplication.from(mContext).initOrganicMaps(() -> {
-                Log.d(TAG, "Framework initialized headless.");
+                Log.d(TAG, "Framework initialization callback triggered.");
                 performSearch(query);
             });
             if (!asyncInit) {
+                Log.d(TAG, "Framework initialized synchronously.");
                 performSearch(query);
             }
         } catch (java.io.IOException e) {
-            Log.e(TAG, "Failed to init organic maps: ", e);
+            Log.e(TAG, "Failed to init organic maps for search: ", e);
             WearSyncService.sendSearchState(mContext, false);
         }
     }
 
     private void performSearch(@NonNull String query) {
+        Log.d(TAG, "performSearch: " + query);
         WearSyncService.sendSearchState(mContext, true);
         mLastResults = null;
         mLastSearchTimestamp = System.nanoTime();
         SearchEngine.INSTANCE.cancel();
+        Framework.nativeRestoreDownloadQueue();
         
         Location loc = MwmApplication.from(mContext).getLocationHelper().getSavedLocation();
         if (loc == null) {
@@ -79,11 +84,11 @@ public class HeadlessSearchInteractor implements SearchListener {
         // Initialize the viewport for the search engine, otherwise searches are endlessly delayed
         // since the search API waits for the map to be rendered and `OnViewportChanged` to be called.
         // On headless Wear OS we never render the map, so we set a synthetic viewport.
-        int zoom = hasLocation ? 16 : 1;
+        int zoom = hasLocation ? 14 : 1;
         Framework.nativeSetSearchViewport(lat, lon, zoom);
 
         boolean success = SearchEngine.INSTANCE.search(mContext, query, false, mLastSearchTimestamp, hasLocation, lat, lon);
-        Log.d(TAG, "Started search? " + success);
+        Log.d(TAG, "SearchEngine.search success? " + success);
         if (!success) {
             WearSyncService.sendSearchState(mContext, false);
         }
@@ -91,16 +96,22 @@ public class HeadlessSearchInteractor implements SearchListener {
 
     @Override
     public void onResultsUpdate(@NonNull SearchResult[] results, long timestamp) {
-        if (timestamp != mLastSearchTimestamp) return;
-        Log.d(TAG, "onResultsUpdate: " + results.length);
+        if (timestamp != mLastSearchTimestamp) {
+            Log.w(TAG, "Ignoring stale results update");
+            return;
+        }
+        Log.d(TAG, "onResultsUpdate: " + results.length + " items");
         mLastResults = results;
         WearSyncService.sendSearchResults(mContext, results, true);
     }
 
     @Override
     public void onResultsEnd(long timestamp) {
-        if (timestamp != mLastSearchTimestamp) return;
-        Log.d(TAG, "onResultsEnd");
+        if (timestamp != mLastSearchTimestamp) {
+            Log.w(TAG, "Ignoring stale results end");
+            return;
+        }
+        Log.d(TAG, "onResultsEnd. Final count: " + (mLastResults != null ? mLastResults.length : 0));
         if (mLastResults != null) {
             WearSyncService.sendSearchResults(mContext, mLastResults, false);
         } else {

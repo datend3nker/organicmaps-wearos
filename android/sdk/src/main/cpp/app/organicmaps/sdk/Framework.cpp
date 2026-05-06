@@ -1091,43 +1091,64 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativePokeSearchInViewport(JNI
 #include "indexer/ftypes_matcher.hpp"
 
 JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMapFeatures(
-    JNIEnv * env, jclass, jdouble minLat, jdouble minLon, jdouble maxLat, jdouble maxLon, jint scale)
+    JNIEnv * env, jclass, jdouble minLat, jdouble minLon, jdouble maxLat, jdouble maxLon, jint scale, jint routerType, jint poiCategoriesMask)
 {
   std::vector<uint8_t> buffer;
   
-  m2::RectD rect;
-  rect.Add(mercator::FromLatLon(minLat, minLon));
-  rect.Add(mercator::FromLatLon(maxLat, maxLon));
+  m2::RectD rect(mercator::FromLatLon(minLat, minLon), mercator::FromLatLon(maxLat, maxLon));
 
   if (rect.IsValid())
   {
     frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
         auto geomType = ft.GetGeomType();
-        if (geomType == feature::GeomType::Point) return;
-
-        std::vector<m2::PointD> points;
-        ft.ForEachPoint([&](m2::PointD const & p) {
-          points.push_back(p);
-        }, scale);
-
-        if (points.size() < 2) return;
 
         feature::TypesHolder types(ft);
-        uint8_t type = 1; // Default road/line
+        uint8_t type = 0;
 
-        using namespace ftypes;
         using namespace ftypes;
         if (geomType == feature::GeomType::Line) {
             HighwayClass hw = GetHighwayClass(types);
+
+            // Filter for car mode (routerType 0)
+            if (routerType == 0) {
+                if (hw == HighwayClass::Pedestrian || hw == HighwayClass::ServiceMinor) {
+                    return;
+                }
+            }
+
             if (hw == HighwayClass::Trunk) type = 4;
             else if (hw == HighwayClass::Primary) type = 5;
             else if (hw == HighwayClass::Secondary) type = 6;
             else if (hw == HighwayClass::Tertiary) type = 7;
             else type = 1;
-        } else {
+        } else if (geomType == feature::GeomType::Area) {
             if (IsBuildingChecker::Instance()(types)) type = 2;
             else type = 3; // Area/Water
+        } else if (geomType == feature::GeomType::Point) {
+            // POI Categories
+            if (poiCategoriesMask == 0) return;
+
+            if ((poiCategoriesMask & 1) && IsEatChecker::Instance()(types)) type = 100;
+            else if ((poiCategoriesMask & 2) && IsOperatorOthersPoiChecker::Instance()(types)) type = 101; // Includes fuel
+            else if ((poiCategoriesMask & 4) && IsHotelChecker::Instance()(types)) type = 102;
+            else if ((poiCategoriesMask & 8) && IsATMChecker::Instance()(types)) type = 103;
+            else if ((poiCategoriesMask & 16) && OneLevelPOIChecker()(types)) type = 105; // General POIs (Shops, Pharmacy, etc.)
+            else if ((poiCategoriesMask & 32) && IsPoiChecker::Instance()(types)) type = 106; // Everything else that OM considers a POI
         }
+
+        if (type == 0) return;
+
+        std::vector<m2::PointD> points;
+        if (geomType == feature::GeomType::Point) {
+            points.push_back(ft.GetCenter());
+        } else {
+            // Use a higher scale for point extraction to avoid over-simplification
+            ft.ForEachPoint([&](m2::PointD const & p) {
+              points.push_back(p);
+            }, 19);
+        }
+
+        if (points.empty() || (geomType != feature::GeomType::Point && points.size() < 2)) return;
 
         buffer.push_back(type);
         

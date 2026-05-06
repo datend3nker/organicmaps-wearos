@@ -16,7 +16,6 @@ import androidx.compose.material.icons.filled.DirectionsTransit
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,10 +62,10 @@ fun SearchScreen() {
     val listState = rememberScalingLazyListState()
 
     // Standalone Search Logic
-    DisposableEffect(navState.offlineMapsEnabled) {
+    DisposableEffect(navState.watchLocalMode) {
         val listener = object : SearchListener {
             override fun onResultsUpdate(results: Array<out SearchResult>, timestamp: Long) {
-                if (navState.offlineMapsEnabled) {
+                if (navState.watchLocalMode) {
                     val converted = results.map {
                         SearchResultItem(
                             name = it.getTitle(context),
@@ -86,12 +85,12 @@ fun SearchScreen() {
             }
 
             override fun onResultsEnd(timestamp: Long) {
-                if (navState.offlineMapsEnabled) {
+                if (navState.watchLocalMode) {
                     NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isSearching = false))
                 }
             }
         }
-        if (navState.offlineMapsEnabled) {
+        if (navState.watchLocalMode) {
             SearchEngine.INSTANCE.addListener(listener)
         }
         onDispose {
@@ -101,7 +100,7 @@ fun SearchScreen() {
 
     // Request history on launch
     LaunchedEffect(Unit) {
-        if (!navState.offlineMapsEnabled) {
+        if (!navState.watchLocalMode) {
             WearCommandService.requestSearchHistory(context)
         }
     }
@@ -111,7 +110,7 @@ fun SearchScreen() {
             isSearching = true,
             searchResults = emptyList()
         ))
-        if (navState.offlineMapsEnabled) {
+        if (navState.watchLocalMode) {
             SearchEngine.INSTANCE.cancel()
             val hasLocation = (navState.lat != 0.0 && navState.lon != 0.0)
             SearchEngine.INSTANCE.search(context, query, false, System.nanoTime(), hasLocation, navState.lat, navState.lon)
@@ -141,25 +140,20 @@ fun SearchScreen() {
 
     Scaffold(
         timeText = {
-            val errorColor = Color.Red
             TimeText(
                 startLinearContent = {
-                    if (!navState.isPhoneConnected && !navState.offlineMapsEnabled) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Disconnected",
-                            tint = errorColor,
-                            modifier = Modifier.size(10.dp)
-                        )
-                        Spacer(modifier = Modifier.width(2.dp))
+                    if (!navState.isPhoneConnected && !navState.watchLocalMode) {
+                        Text("OFFLINE", style = TextStyle(color = Color.Red, fontSize = 10.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold))
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
                 },
                 startCurvedContent = {
-                    if (!navState.isPhoneConnected && !navState.offlineMapsEnabled) {
+                    if (!navState.isPhoneConnected && !navState.watchLocalMode) {
                         curvedText(
-                            text = "!",
+                            text = "OFFLINE",
                             style = CurvedTextStyle(
-                                color = errorColor
+                                color = Color.Red,
+                                fontSize = 10.sp
                             )
                         )
                     }
@@ -171,7 +165,7 @@ fun SearchScreen() {
             ModeSelectionScreen(
                 result = selectedResult!!,
                 onModeSelected = { routerType ->
-                    if (navState.offlineMapsEnabled) {
+                    if (navState.watchLocalMode) {
                         val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
                         val router = when (routerType) {
                             0 -> Router.Vehicle

@@ -26,6 +26,10 @@ class WearDataListenerService : WearableListenerService() {
     override fun onCreate() {
         super.onCreate()
         checkPhoneConnection()
+        scope.launch {
+            delay(2000)
+            checkPhoneConnection()
+        }
     }
 
     override fun onDestroy() {
@@ -45,8 +49,9 @@ class WearDataListenerService : WearableListenerService() {
         scope.launch {
             try {
                 val nodes = Wearable.getNodeClient(this@WearDataListenerService).connectedNodes.await()
-                if (nodes.isEmpty()) {
-                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = false))
+                NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = nodes.isNotEmpty()))
+                if (nodes.isNotEmpty()) {
+                    WearCommandService.requestPreferences(this@WearDataListenerService)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to check nodes", e)
@@ -67,6 +72,10 @@ class WearDataListenerService : WearableListenerService() {
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         Log.d(TAG, "onMessageReceived: ${messageEvent.path}")
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+            isPhoneConnected = true,
+            lastMessageTimestamp = System.currentTimeMillis()
+        ))
         if (messageEvent.path == PATH_PONG) {
             (applicationContext as WearApplication).onPongReceived()
             return
@@ -82,10 +91,10 @@ class WearDataListenerService : WearableListenerService() {
             
             // Force offline maps to true if the user pushes a map from phone
             val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
-            prefs.edit().putBoolean("forceWatchOfflineMaps", true).apply()
+            prefs.edit().putBoolean("forceWatchLocalMode", true).apply()
             
             val currentState = NavigationStateHolder.state.value
-            NavigationStateHolder.update(currentState.copy(openMapManager = true, offlineMapsEnabled = true))
+            NavigationStateHolder.update(currentState.copy(openMapManager = true, watchLocalMode = true))
 
             val appCtx = applicationContext
             val countryIdToDownload = countryId
@@ -103,22 +112,33 @@ class WearDataListenerService : WearableListenerService() {
             launchOmaps() // Show UI so user sees progress
         } else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
             val buffer = ByteBuffer.wrap(messageEvent.data)
-            if (buffer.remaining() < 8) { // 1 long (requestId)
+            if (buffer.remaining() < 9) { // 1 long (requestId) + 1 byte (compressed flag)
                 Log.w(TAG, "Received malformed map tile response")
                 return
             }
 
             val requestId = buffer.long
-            val features = ByteArray(buffer.remaining())
+            val compressed = buffer.get().toInt() == 1
+            var features = ByteArray(buffer.remaining())
             buffer.get(features)
+
+            if (compressed) {
+                try {
+                    features = GzipUtils.decompress(features)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Decompression failed", e)
+                    return
+                }
+            }
             MapTileStateHolder.update(requestId, features)
         }
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
-        if (dataEvents.count > 0) {
-            NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = true))
-        }
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+            isPhoneConnected = true,
+            lastMessageTimestamp = System.currentTimeMillis()
+        ))
         for (event in dataEvents) {
             val uri = event.dataItem.uri
             if (event.type == DataEvent.TYPE_CHANGED) {
@@ -164,6 +184,7 @@ class WearDataListenerService : WearableListenerService() {
                             nextStreet = dataMap.getString("nextStreet") ?: currentState.nextStreet,
                             carDirection = dataMap.getInt("carDirection", currentState.carDirection),
                             pedestrianDirection = dataMap.getInt("pedestrianDirection", currentState.pedestrianDirection),
+                            exitNum = dataMap.getInt("exitNum", currentState.exitNum),
                             isActive = dataMap.getBoolean("active", currentState.isActive),
                             speedMps = dataMap.getDouble("speedMps", currentState.speedMps),
                             speedLimitMps = dataMap.getDouble("speedLimitMps", currentState.speedLimitMps),
@@ -205,18 +226,19 @@ class WearDataListenerService : WearableListenerService() {
                     "/preferences" -> {
                         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
                         val mapEnabled = dataMap.getBoolean("mapEnabled", false)
-                        val offlineMapsEnabled = dataMap.getBoolean("offlineMapsEnabled", false)
+                        val watchLocalMode = dataMap.getBoolean("watchLocalMode", false)
                         val standaloneMode = dataMap.getBoolean("standaloneMode", false)
                         val mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY")
                         val backend = dataMap.getString("backend", "GMS")
                         
-                        // Standalone mode is a manual link cut
-                        val isForcedOffline = prefs.getBoolean("forceWatchOfflineMaps", false)
-                        val finalOfflineState = isForcedOffline || offlineMapsEnabled
+                        // Standalone mode is a manual link cut or forced from phone
+                        val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
+                        val finalOfflineState = standaloneMode || isForcedOffline || watchLocalMode
+                        val finalMapEnabled = standaloneMode || mapEnabled
                         
                         prefs.edit()
                             .putBoolean("mapEnabled", mapEnabled)
-                            .putBoolean("offlineMapsEnabled", offlineMapsEnabled)
+                            .putBoolean("watchLocalMode", watchLocalMode)
                             .putBoolean("disconnectFromPhone", standaloneMode)
                             .putString("mapDownloadMode", mapDownloadMode)
                             .putString("pref_wear_os_backend", backend)
@@ -231,10 +253,11 @@ class WearDataListenerService : WearableListenerService() {
                         }
 
                         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-                            mapEnabled = mapEnabled,
-                            offlineMapsEnabled = finalOfflineState // Apply forced state if set
+                            mapEnabled = finalMapEnabled,
+                            watchLocalMode = finalOfflineState, // Apply forced state if set
+                            standaloneMode = standaloneMode
                         ))
-                        Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, phoneOfflineMaps=$offlineMapsEnabled, finalUsedState=$finalOfflineState, backend=$backend")
+                        Log.d(TAG, "Preferences updated: mapEnabled=$finalMapEnabled, phoneWatchLocalMode=$watchLocalMode, finalUsedState=$finalOfflineState, standalone=$standaloneMode, backend=$backend")
                     }
                     "/map/download/progress" -> {
                         val countryId = dataMap.getString("countryId") ?: return

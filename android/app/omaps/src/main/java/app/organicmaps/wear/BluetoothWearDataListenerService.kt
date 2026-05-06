@@ -73,6 +73,10 @@ class BluetoothWearDataListenerService : Service() {
                     val payload = ByteArray(length)
                     input.readFully(payload)
                     
+                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+                        isPhoneConnected = true,
+                        lastMessageTimestamp = System.currentTimeMillis()
+                    ))
                     processMessage(type.toByte(), payload)
                 }
             } catch (e: Exception) {
@@ -141,9 +145,17 @@ class BluetoothWearDataListenerService : Service() {
                     val nameLen = buffer.int
                     val name = String(data, buffer.position(), nameLen, StandardCharsets.UTF_8)
                     buffer.position(buffer.position() + nameLen)
+                    
+                    val descLen = if (buffer.remaining() >= 4) buffer.int else 0
+                    val desc = if (descLen > 0 && buffer.remaining() >= descLen) {
+                        val s = String(data, buffer.position(), descLen, StandardCharsets.UTF_8)
+                        buffer.position(buffer.position() + descLen)
+                        s
+                    } else ""
+                    
                     val lat = buffer.double
                     val lon = buffer.double
-                    results.add(SearchResultItem(name, "", lat, lon))
+                    results.add(SearchResultItem(name, desc, lat, lon))
                 }
                 NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                     searchResults = results,
@@ -163,7 +175,7 @@ class BluetoothWearDataListenerService : Service() {
             }
             4 -> { // MSG_TYPE_PREFERENCES
                 val mapEnabled = buffer.get().toInt() == 1
-                val offlineMapsEnabled = buffer.get().toInt() == 1
+                val watchLocalMode = buffer.get().toInt() == 1
                 val standaloneMode = buffer.get().toInt() == 1
                 
                 val modeLen = if (buffer.remaining() >= 4) buffer.int else 0
@@ -181,12 +193,12 @@ class BluetoothWearDataListenerService : Service() {
                 } else "GMS"
 
                 val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
-                val isForcedOffline = prefs.getBoolean("forceWatchOfflineMaps", false)
-                val finalOfflineState = isForcedOffline || offlineMapsEnabled
+                val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
+                val finalOfflineState = isForcedOffline || watchLocalMode
 
                 prefs.edit()
                     .putBoolean("mapEnabled", mapEnabled)
-                    .putBoolean("offlineMapsEnabled", offlineMapsEnabled)
+                    .putBoolean("watchLocalMode", watchLocalMode)
                     .putBoolean("disconnectFromPhone", standaloneMode)
                     .putString("mapDownloadMode", mapDownloadMode)
                     .putString("pref_wear_os_backend", backend)
@@ -199,15 +211,16 @@ class BluetoothWearDataListenerService : Service() {
 
                 NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                     mapEnabled = mapEnabled,
-                    offlineMapsEnabled = finalOfflineState
+                    watchLocalMode = finalOfflineState,
+                    standaloneMode = standaloneMode
                 ))
             }
             5 -> { // MSG_TYPE_MAP_DOWNLOAD
                 val countryId = String(data, StandardCharsets.UTF_8)
                 val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
-                prefs.edit().putBoolean("forceWatchOfflineMaps", true).apply()
+                prefs.edit().putBoolean("forceWatchLocalMode", true).apply()
                 
-                NavigationStateHolder.update(NavigationStateHolder.state.value.copy(openMapManager = true, offlineMapsEnabled = true))
+                NavigationStateHolder.update(NavigationStateHolder.state.value.copy(openMapManager = true, watchLocalMode = true))
                 
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     try {

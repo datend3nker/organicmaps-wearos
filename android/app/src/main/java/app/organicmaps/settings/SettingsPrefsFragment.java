@@ -35,8 +35,30 @@ import app.organicmaps.util.Utils;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.util.Locale;
 
+import android.content.SharedPreferences;
+import androidx.preference.PreferenceManager;
+
 public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements LanguagesFragment.Listener
 {
+  private final SharedPreferences.OnSharedPreferenceChangeListener mSharedPreferenceChangeListener = (sharedPreferences, key) -> {
+    if (key != null && key.startsWith("pref_wear_os_"))
+      onResume(); // Simple way to refresh all UI
+  };
+
+  @Override
+  public void onCreate(@Nullable Bundle savedInstanceState)
+  {
+    super.onCreate(savedInstanceState);
+    PreferenceManager.getDefaultSharedPreferences(requireContext()).registerOnSharedPreferenceChangeListener(mSharedPreferenceChangeListener);
+  }
+
+  @Override
+  public void onDestroy()
+  {
+    super.onDestroy();
+    PreferenceManager.getDefaultSharedPreferences(requireContext()).unregisterOnSharedPreferenceChangeListener(mSharedPreferenceChangeListener);
+  }
+
   @Override
   protected int getXmlResources()
   {
@@ -92,7 +114,10 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 
   private void updateProfileSettingsPrefsSummary()
   {
-    final Preference pref = getPreference(getString(R.string.pref_osm_profile));
+    final Preference pref = findPreference(getString(R.string.pref_osm_profile));
+    if (pref == null)
+      return;
+
     if (OsmOAuth.isAuthorized())
     {
       final String username = OsmOAuth.getUsername();
@@ -230,10 +255,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     if (pref == null)
       return;
 
-    if (!SharedPropertiesUtils.shouldShowEmulateBadStorageSetting())
-      removePreference(getString(R.string.pref_settings_general), pref);
-    else
-      pref.setVisible(true);
+    pref.setVisible(SharedPropertiesUtils.shouldShowEmulateBadStorageSetting());
   }
 
   private void initAutoZoomPrefsCallbacks()
@@ -257,7 +279,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     if (!MwmApplication.from(requireContext())
              .getLocationProviderFactory()
              .isGoogleLocationAvailable(requireActivity().getApplicationContext()))
-      removePreference(getString(R.string.pref_privacy), pref);
+      pref.setVisible(false);
     else
     {
       ((TwoStatePreference) pref).setChecked(Config.useGoogleServices());
@@ -328,7 +350,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
         mapEnabledPref.setOnPreferenceChangeListener(wearPrefsListener);
     }
 
-    final Preference offlineMapsPref = findPreference(getString(R.string.pref_wear_os_offline_maps_enabled));
+    final Preference offlineMapsPref = findPreference(getString(R.string.pref_wear_os_watch_local_mode));
     if (offlineMapsPref != null) {
         offlineMapsPref.setOnPreferenceChangeListener(wearPrefsListener);
     }

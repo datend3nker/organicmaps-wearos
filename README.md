@@ -31,6 +31,7 @@ Organic Maps is the ultimate companion app for travellers, tourists, hikers, and
 - Dark Mode to protect your eyes
 - Countries and regions don't take a lot of space
 - Free and open-source
+- **Full-featured Wear OS Companion**: Offline maps, independent search, standalone navigation, and manual interaction (panning/zooming) directly on your wrist
 
 ## Why Organic?
 

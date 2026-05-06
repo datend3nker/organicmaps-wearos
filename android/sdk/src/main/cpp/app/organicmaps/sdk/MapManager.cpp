@@ -294,6 +294,57 @@ JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeListItems(JN
     PutItemsToList(env, result, available, ItemCategory::AVAILABLE, nullptr);
 }
 
+#include "base/string_utils.hpp"
+
+// static void nativeSearchItems(@NonNull String query, @NonNull List<CountryItem> result);
+JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeSearchItems(JNIEnv * env, jclass clazz,
+                                                                                jstring query, jobject result)
+{
+  std::string const nQuery = jni::ToNativeString(env, query);
+  if (nQuery.empty())
+    return;
+
+  storage::CountriesVec all;
+  GetStorage().GetChildren(GetStorage().GetRootId(), all);
+
+  auto const & ciBuilder = CountryItemBuilder::Instance(env);
+  auto const listAddMethod = jni::ListBuilder::Instance(env).m_add;
+
+  // Simple recursive search through all nodes
+  std::function<void(storage::CountryId const &)> search;
+  search = [&](storage::CountryId const & id) {
+    std::string name = GetStorage().GetNodeLocalName(id);
+    std::string query = nQuery;
+
+    // Manual case-insensitive substring search
+    std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+    std::transform(query.begin(), query.end(), query.begin(), ::tolower);
+
+    if (name.find(query) != std::string::npos)
+    {
+      storage::NodeAttrs attrs;
+      GetStorage().GetNodeAttrs(id, attrs);
+
+      using SLR = jni::TScopedLocalRef;
+      SLR const item(env, ciBuilder.Create(env, SLR(env, jni::ToJavaString(env, id))));
+
+      int const category = attrs.m_present ? ItemCategory::DOWNLOADED : ItemCategory::AVAILABLE;
+      env->SetIntField(item.get(), ciBuilder.m_Category, category);
+
+      UpdateItem(env, item.get(), attrs);
+      env->CallBooleanMethod(result, listAddMethod, item.get());
+    }
+
+    storage::CountriesVec children;
+    GetStorage().GetChildren(id, children);
+    for (auto const & child : children)
+      search(child);
+  };
+
+  for (auto const & rootChild : all)
+    search(rootChild);
+}
+
 // static void nativeUpdateItem(CountryItem item);
 JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeGetAttributes(JNIEnv * env, jclass, jobject item)
 {

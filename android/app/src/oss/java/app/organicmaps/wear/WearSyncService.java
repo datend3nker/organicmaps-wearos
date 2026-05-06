@@ -2,26 +2,15 @@ package app.organicmaps.wear;
 
 import android.content.Context;
 import android.location.Location;
-import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import app.organicmaps.sdk.routing.RoutingInfo;
-import app.organicmaps.sdk.search.SearchRecents;
 import app.organicmaps.sdk.search.SearchResult;
-import com.google.android.gms.tasks.Task;
-import com.google.android.gms.wearable.DataItem;
-import com.google.android.gms.wearable.DataMap;
-import com.google.android.gms.wearable.PutDataMapRequest;
-import com.google.android.gms.wearable.Wearable;
-import com.google.android.gms.wearable.Node;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.nio.ByteBuffer;
 
-import app.organicmaps.BuildConfig;
 import app.organicmaps.sync.BluetoothSyncLayer;
-import app.organicmaps.sync.GmsSyncLayer;
 import app.organicmaps.sync.ISyncLayer;
 
 public class WearSyncService {
@@ -40,21 +29,7 @@ public class WearSyncService {
             sSyncLayer.stop();
         }
 
-        if (BuildConfig.FLAVOR.equals("oss")) {
-            sSyncLayer = new BluetoothSyncLayer();
-        } else {
-            String backend = "GMS";
-            if (context != null) {
-                android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
-                backend = prefs.getString("pref_wear_os_backend", "GMS");
-            }
-
-            if ("BLUETOOTH".equals(backend)) {
-                sSyncLayer = new BluetoothSyncLayer();
-            } else {
-                sSyncLayer = new GmsSyncLayer();
-            }
-        }
+        sSyncLayer = new BluetoothSyncLayer();
         
         // Re-register all listeners to the new sync layer
         for (ISyncLayer.MessageListener listener : sListeners) {

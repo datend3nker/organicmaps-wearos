@@ -64,6 +64,7 @@ public final class HeadlessRouteInteractor {
         controller.prepare(startPoint, endPoint, router);
         controller.checkAndBuildRoute();
 
+        WearSyncService.startNavigation(mContext);
         Log.d(TAG, "Headless route planning requested for '" + name + "' via " + router);
     }
 

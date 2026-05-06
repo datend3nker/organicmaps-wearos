@@ -17,6 +17,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         private const val PATH_SEARCH_HISTORY_REQUEST = "/search/history/request"
         private const val PATH_MAP_TILE_REQUEST = "/map/tile/request"
         private const val PATH_PING = "/ping"
+        private const val PATH_PREFERENCES_REQUEST = "/preferences/request"
     }
 
     override fun stopNavigation(context: Context) {
@@ -41,13 +42,14 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, PATH_SEARCH_SELECT, buffer.array())
     }
 
-    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) {
-        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4))
+    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, routerType: Int) {
+        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4) + Int.SIZE_BYTES)
         buffer.putLong(requestId)
         buffer.putDouble(minLat)
         buffer.putDouble(minLon)
         buffer.putDouble(maxLat)
         buffer.putDouble(maxLon)
+        buffer.putInt(routerType)
         sendMessage(context, PATH_MAP_TILE_REQUEST, buffer.array())
     }
 
@@ -57,16 +59,37 @@ class GmsWearSyncBackend : IWearSyncBackend {
 
     override fun syncPreferences(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val forceOffline = prefs.getBoolean("forceWatchOfflineMaps", false)
+        val mapEnabled = prefs.getBoolean("mapEnabled", false)
+        val forceOffline = prefs.getBoolean("forceWatchLocalMode", false)
+        val watchLocalMode = prefs.getBoolean("watchLocalMode", false)
+        val standaloneMode = prefs.getBoolean("disconnectFromPhone", false)
         val backend = prefs.getString("pref_wear_os_backend", "GMS")
         
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/preferences/watch")
         val map = putDataMapReq.dataMap
-        map.putBoolean("forceWatchOfflineMaps", forceOffline)
+        map.putBoolean("mapEnabled", mapEnabled)
+        map.putBoolean("forceWatchLocalMode", forceOffline)
+        map.putBoolean("watchLocalMode", watchLocalMode)
+        map.putBoolean("standaloneMode", standaloneMode)
         map.putString("backend", backend ?: "GMS")
         
         val putDataReq = putDataMapReq.asPutDataRequest()
         Wearable.getDataClient(context).putDataItem(putDataReq)
+    }
+
+    override fun requestPreferences(context: Context) {
+        sendMessage(context, PATH_PREFERENCES_REQUEST, byteArrayOf())
+    }
+
+    override fun checkConnection(context: Context, callback: (Boolean) -> Unit) {
+        val nodeClient = Wearable.getNodeClient(context)
+        nodeClient.connectedNodes.addOnCompleteListener { task ->
+            if (task.isSuccessful && task.result != null) {
+                callback(task.result.isNotEmpty())
+            } else {
+                callback(false)
+            }
+        }
     }
 
     private fun sendMessage(context: Context, path: String, data: ByteArray) {

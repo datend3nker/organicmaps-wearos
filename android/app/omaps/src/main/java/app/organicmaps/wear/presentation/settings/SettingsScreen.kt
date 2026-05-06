@@ -10,13 +10,43 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
+import app.organicmaps.wear.NavigationStateHolder
 
 @Composable
 fun SettingsScreen() {
+    var showPoiSettings by remember { mutableStateOf(false) }
+
+    if (showPoiSettings) {
+        PoiSettingsScreen(onBack = { showPoiSettings = false })
+    } else {
+        MainSettingsList(onOpenPoiSettings = { showPoiSettings = true })
+    }
+}
+
+@Composable
+fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
     val context = LocalContext.current
+    val navState by NavigationStateHolder.state.collectAsState()
     val prefs = remember { context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE) }
+    
     var autoDownload by remember { mutableStateOf(prefs.getBoolean("autoDownloadRouteMaps", true)) }
     var backend by remember { mutableStateOf(prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS") }
+    var mapEnabled by remember { mutableStateOf(navState.mapEnabled) }
+    var watchLocalMode by remember { mutableStateOf(navState.watchLocalMode) }
+    var standaloneMode by remember { mutableStateOf(navState.standaloneMode) }
+
+    // Update local state when navState changes (from phone sync)
+    LaunchedEffect(navState.mapEnabled, navState.watchLocalMode, navState.standaloneMode) {
+        mapEnabled = navState.mapEnabled
+        watchLocalMode = navState.watchLocalMode
+        standaloneMode = navState.standaloneMode
+    }
+
+    // Request fresh settings when screen is opened
+    LaunchedEffect(Unit) {
+        app.organicmaps.wear.WearCommandService.requestPreferences(context)
+        app.organicmaps.wear.WearCommandService.sendPing(context)
+    }
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -25,17 +55,106 @@ fun SettingsScreen() {
     ) {
         item {
             Text(
-                "Settings",
+                "Watch Settings",
                 style = MaterialTheme.typography.title3,
-                color = MaterialTheme.colors.primary,
+                color = Color(0xFF00E5FF),
                 modifier = Modifier.padding(bottom = 16.dp)
+            )
+        }
+
+        item {
+            Chip(
+                onClick = onOpenPoiSettings,
+                label = { Text("Map Details") },
+                secondaryLabel = { Text("Configure POIs") },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                colors = ChipDefaults.secondaryChipColors()
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = mapEnabled,
+                onCheckedChange = { 
+                    mapEnabled = it
+                    prefs.edit().putBoolean("mapEnabled", it).apply()
+                    NavigationStateHolder.update(navState.copy(mapEnabled = it))
+                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                },
+                label = { Text("Map UI") },
+                secondaryLabel = { Text(if (mapEnabled) "Map is visible" else "Map is hidden") },
+                toggleControl = {
+                    Switch(checked = mapEnabled, enabled = !standaloneMode)
+                },
+                enabled = !standaloneMode,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = watchLocalMode,
+                onCheckedChange = { 
+                    watchLocalMode = it
+                    prefs.edit().putBoolean("watchLocalMode", it).apply()
+                    if (!it) prefs.edit().putBoolean("forceWatchLocalMode", false).apply()
+                    NavigationStateHolder.update(navState.copy(watchLocalMode = it))
+                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                },
+                label = { Text("Local Maps") },
+                secondaryLabel = { Text(if (watchLocalMode) "Using watch storage" else "Streaming from phone") },
+                toggleControl = {
+                    Switch(checked = watchLocalMode, enabled = !standaloneMode)
+                },
+                enabled = !standaloneMode,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = standaloneMode,
+                onCheckedChange = { 
+                    standaloneMode = it
+                    prefs.edit().putBoolean("disconnectFromPhone", it).apply()
+                    val newState = navState.copy(
+                        standaloneMode = it,
+                        mapEnabled = if (it) true else navState.mapEnabled,
+                        watchLocalMode = if (it) true else navState.watchLocalMode
+                    )
+                    NavigationStateHolder.update(newState)
+                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                },
+                label = { Text("Standalone") },
+                secondaryLabel = { Text(if (standaloneMode) "Independent mode" else "Connected to phone") },
+                toggleControl = {
+                    Switch(checked = standaloneMode, enabled = true)
+                },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = autoDownload,
+                onCheckedChange = { 
+                    autoDownload = it
+                    prefs.edit().putBoolean("autoDownloadRouteMaps", it).apply()
+                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                },
+                label = { Text("Auto-Download") },
+                secondaryLabel = { Text("Fetch maps for routes") },
+                toggleControl = {
+                    Switch(checked = autoDownload, enabled = true)
+                },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )
         }
 
         if (app.organicmaps.wear.BuildConfig.FLAVOR != "oss") {
             item {
                 Text(
-                    "Communication Backend",
+                    "Sync Backend",
                     style = MaterialTheme.typography.caption2,
                     modifier = Modifier.padding(top = 8.dp)
                 )
@@ -52,13 +171,12 @@ fun SettingsScreen() {
                         if (newBackend == "BLUETOOTH") {
                             context.startService(intent)
                         } else if (app.organicmaps.wear.BuildConfig.FLAVOR != "oss") {
-                            // Only stop if we are not in OSS flavor where Bluetooth is mandatory
                             context.stopService(intent)
                         }
-                        // Re-init command service backend
                         app.organicmaps.wear.WearCommandService.initBackend(context)
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
                     },
-                    label = { Text("Use Google Play Services") },
+                    label = { Text("Google Services") },
                     secondaryLabel = { Text(if (backend == "GMS") "Recommended" else "Using Bluetooth") },
                     toggleControl = {
                         Checkbox(checked = backend == "GMS", enabled = true)
@@ -66,21 +184,6 @@ fun SettingsScreen() {
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                 )
             }
-        }
-
-        item {
-            ToggleChip(
-                checked = autoDownload,
-                onCheckedChange = { 
-                    autoDownload = it
-                    prefs.edit().putBoolean("autoDownloadRouteMaps", it).apply()
-                },
-                label = { Text("Auto-download Route Maps") },
-                toggleControl = {
-                    Switch(checked = autoDownload, enabled = true)
-                },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-            )
         }
     }
 }

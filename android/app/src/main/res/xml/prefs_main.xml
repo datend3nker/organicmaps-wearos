@@ -199,9 +199,9 @@
       android:defaultValue="false"
       android:order="3" />
     <androidx.preference.SwitchPreferenceCompat
-      android:key="@string/pref_wear_os_offline_maps_enabled"
-      android:title="@string/pref_wear_os_offline_maps_title"
-      android:summary="@string/pref_wear_os_offline_maps_summary"
+      android:key="@string/pref_wear_os_watch_local_mode"
+      android:title="@string/pref_wear_os_watch_local_mode_title"
+      android:summary="@string/pref_wear_os_watch_local_mode_summary"
       app:singleLineTitle="false"
       android:dependency="@string/pref_wear_os_map_enabled"
       android:order="4" />
@@ -212,7 +212,7 @@
       android:entries="@array/wear_map_download_mode"
       android:entryValues="@array/wear_map_download_mode_values"
       android:defaultValue="BLUETOOTH_ONLY"
-      android:dependency="@string/pref_wear_os_offline_maps_enabled"
+      android:dependency="@string/pref_wear_os_watch_local_mode"
       android:order="5" />
   </androidx.preference.PreferenceCategory>
 </androidx.preference.PreferenceScreen>

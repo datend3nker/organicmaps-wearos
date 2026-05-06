@@ -28,7 +28,8 @@ data class NavigationState(
     val searchResults: List<SearchResultItem> = emptyList(),
     val searchHistory: List<String> = emptyList(),
     val mapEnabled: Boolean = false,
-    val offlineMapsEnabled: Boolean = false,
+    val watchLocalMode: Boolean = false,
+    val standaloneMode: Boolean = false,
     val lat: Double = 0.0,
     val lon: Double = 0.0,
     val turnLat: Double = 0.0,
@@ -37,7 +38,13 @@ data class NavigationState(
     val routerType: Int = 0, // 0: Vehicle, 1: Pedestrian, 2: Bicycle, 3: Transit
     val routePoints: List<Pair<Double, Double>> = emptyList(),
     val openMapManager: Boolean = false,
-    val isPhoneConnected: Boolean = false
+    val isPhoneConnected: Boolean = false,
+    val lastMessageTimestamp: Long = 0L,
+    val poiCategoriesMask: Int = 0,
+    val manualCenterLat: Double = 0.0,
+    val manualCenterLon: Double = 0.0,
+    val manualViewSpan: Float = 0.003f,
+    val isExploreMode: Boolean = false
 )
 
 object NavigationStateHolder {

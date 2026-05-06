@@ -80,7 +80,7 @@
   <string name="pref_wear_os" translatable="false">pref_wear_os</string>
   <string name="pref_wear_os_map_enabled" translatable="false">pref_wear_os_map_enabled</string>
   <string name="pref_wear_os_map_download_mode" translatable="false">pref_wear_os_map_download_mode</string>
-  <string name="pref_wear_os_offline_maps_enabled" translatable="false">pref_wear_os_offline_maps_enabled</string>
+  <string name="pref_wear_os_watch_local_mode" translatable="false">pref_wear_os_watch_local_mode</string>
   <string name="pref_wear_os_standalone_mode" translatable="false">pref_wear_os_standalone_mode</string>
   <string name="pref_wear_os_backend" translatable="false">pref_wear_os_backend</string>
 

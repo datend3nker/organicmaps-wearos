@@ -36,16 +36,16 @@ public class GmsSyncLayer implements ISyncLayer {
     @Override
     public void syncPreferences(@NonNull Context context) {
         android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
-        boolean mapEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
-        boolean offlineMapsEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_offline_maps_enabled), false);
         boolean standaloneMode = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), false);
+        boolean mapEnabled = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
+        boolean watchLocalMode = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), false);
         String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
         String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
 
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_PREFERENCES);
         DataMap map = putDataMapReq.getDataMap();
         map.putBoolean("mapEnabled", mapEnabled);
-        map.putBoolean("offlineMapsEnabled", offlineMapsEnabled);
+        map.putBoolean("watchLocalMode", watchLocalMode);
         map.putBoolean("standaloneMode", standaloneMode);
         map.putString("mapDownloadMode", mapDownloadMode);
         map.putString("backend", backend);
@@ -159,7 +159,12 @@ public class GmsSyncLayer implements ISyncLayer {
             SearchResult res = results[i];
             DataMap resMap = new DataMap();
             resMap.putString("name", res.getTitle(context) != null ? res.getTitle(context) : "");
-            resMap.putString("description", (res.description != null && res.description.localizedFeatureType != null) ? res.description.localizedFeatureType : "");
+            String desc = "";
+            if (res.description != null) {
+                if (res.description.localizedFeatureType != null) desc = res.description.localizedFeatureType;
+                else if (res.description.region != null) desc = res.description.region;
+            }
+            resMap.putString("description", desc);
             resMap.putDouble("lat", res.lat);
             resMap.putDouble("lon", res.lon);
             resMap.putInt("type", res.type);
@@ -218,9 +223,21 @@ public class GmsSyncLayer implements ISyncLayer {
 
     @Override
     public void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId, long requestId, @NonNull byte[] features) {
-        ByteBuffer payload = ByteBuffer.allocate(8 + features.length);
+        byte[] dataToSend = features;
+        boolean compressed = false;
+        if (features.length > 512) {
+            try {
+                dataToSend = app.organicmaps.util.GzipUtils.compress(features);
+                compressed = true;
+            } catch (java.io.IOException e) {
+                Log.w(TAG, "Compression failed, sending raw");
+            }
+        }
+
+        ByteBuffer payload = ByteBuffer.allocate(8 + 1 + dataToSend.length);
         payload.putLong(requestId);
-        payload.put(features);
+        payload.put((byte) (compressed ? 1 : 0));
+        payload.put(dataToSend);
 
         Wearable.getMessageClient(context)
                 .sendMessage(nodeId, PATH_MAP_TILE_RESPONSE, payload.array())

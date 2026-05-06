@@ -61,8 +61,8 @@ public class LocationHelper implements BaseLocationProvider.Listener
   private long mInterval;
   private boolean mInFirstRun;
   private boolean mActive;
-  private Handler mHandler;
-  private Runnable mLocationTimeoutRunnable = this::notifyLocationUpdateTimeout;
+  private final Handler mHandler;
+  private final Runnable mLocationTimeoutRunnable = this::notifyLocationUpdateTimeout;
 
   @NonNull
   private final GnssStatusCompat.Callback mGnssStatusCallback = new GnssStatusCompat.Callback() {

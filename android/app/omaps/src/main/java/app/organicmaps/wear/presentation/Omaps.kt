@@ -42,6 +42,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+import android.view.KeyEvent
+
 class Omaps : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,18 +52,39 @@ class Omaps : ComponentActivity() {
         // Initialize state from prefs
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
         val isMapEnabled = prefs.getBoolean("mapEnabled", false)
-        val isOfflineMapsEnabled = prefs.getBoolean("offlineMapsEnabled", false)
+        val isOfflineMapsEnabled = prefs.getBoolean("watchLocalMode", false)
         val routerType = prefs.getInt("routerType", 0)
+        val poiMask = prefs.getInt("poiCategoriesMask", 0)
         
         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
             mapEnabled = isMapEnabled,
-            offlineMapsEnabled = isOfflineMapsEnabled,
-            routerType = routerType
+            watchLocalMode = isOfflineMapsEnabled,
+            routerType = routerType,
+            poiCategoriesMask = poiMask
         ))
         
         setContent {
             WearApp()
         }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val navState = NavigationStateHolder.state.value
+        if (navState.isActive && navState.mapEnabled && navState.isExploreMode) {
+            when (keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_NAVIGATE_IN -> {
+                    val newSpan = (navState.manualViewSpan * 0.8f).coerceIn(0.0005f, 0.05f)
+                    NavigationStateHolder.update(navState.copy(manualViewSpan = newSpan))
+                    return true
+                }
+                KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_NAVIGATE_OUT -> {
+                    val newSpan = (navState.manualViewSpan * 1.2f).coerceIn(0.0005f, 0.05f)
+                    NavigationStateHolder.update(navState.copy(manualViewSpan = newSpan))
+                    return true
+                }
+            }
+        }
+        return super.onKeyDown(keyCode, event)
     }
 }
 
@@ -93,7 +116,8 @@ fun WearApp() {
             if (!isNavigating) {
                 HorizontalPager(
                     state = pagerState,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    userScrollEnabled = !navState.isExploreMode
                 ) { page ->
                     when (page) {
                         0 -> SearchScreen()
@@ -104,7 +128,8 @@ fun WearApp() {
             } else {
                 HorizontalPager(
                     state = pagerState,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    userScrollEnabled = !navState.isExploreMode
                 ) { page ->
                     if (isMapEnabled) {
                         when (page) {
@@ -133,7 +158,7 @@ fun WearApp() {
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (navState.offlineMapsEnabled) {
+                    if (navState.watchLocalMode) {
                         Icon(
                             imageVector = Icons.Default.Map,
                             contentDescription = "Offline Mode",
@@ -141,7 +166,7 @@ fun WearApp() {
                             modifier = Modifier.size(14.dp)
                         )
                     }
-                    if (navState.offlineMapsEnabled && !navState.isPhoneConnected) {
+                    if (navState.watchLocalMode && !navState.isPhoneConnected) {
                         Spacer(modifier = Modifier.width(6.dp))
                     }
                     if (!navState.isPhoneConnected) {
@@ -170,7 +195,10 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
         distanceToNextTurn = navState.distToTurn,
         turnIcon = getTurnIcon(navState.carDirection, navState.pedestrianDirection), 
         remainingTime = navState.nextStreet,
-        onCancelClick = { WearCommandService.stopNavigation(context) },
+        onCancelClick = { 
+            WearCommandService.stopNavigation(context)
+            NavigationStateHolder.update(navState.copy(isActive = false))
+        },
         deviceRotation = deviceRotation
     )
 }

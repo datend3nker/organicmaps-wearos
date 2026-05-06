@@ -82,10 +82,10 @@ class WearDataListenerService : WearableListenerService() {
             
             // Force offline maps to true if the user pushes a map from phone
             val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
-            prefs.edit().putBoolean("forceWatchOfflineMaps", true).apply()
+            prefs.edit().putBoolean("forceWatchLocalMode", true).apply()
             
             val currentState = NavigationStateHolder.state.value
-            NavigationStateHolder.update(currentState.copy(openMapManager = true, offlineMapsEnabled = true))
+            NavigationStateHolder.update(currentState.copy(openMapManager = true, watchLocalMode = true))
 
             val appCtx = applicationContext
             val countryIdToDownload = countryId
@@ -205,18 +205,18 @@ class WearDataListenerService : WearableListenerService() {
                     "/preferences" -> {
                         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
                         val mapEnabled = dataMap.getBoolean("mapEnabled", false)
-                        val offlineMapsEnabled = dataMap.getBoolean("offlineMapsEnabled", false)
+                        val watchLocalMode = dataMap.getBoolean("watchLocalMode", false)
                         val standaloneMode = dataMap.getBoolean("standaloneMode", false)
                         val mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY")
                         val backend = dataMap.getString("backend", "GMS")
                         
                         // Standalone mode is a manual link cut
-                        val isForcedOffline = prefs.getBoolean("forceWatchOfflineMaps", false)
-                        val finalOfflineState = isForcedOffline || offlineMapsEnabled
+                        val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
+                        val finalOfflineState = isForcedOffline || watchLocalMode
                         
                         prefs.edit()
                             .putBoolean("mapEnabled", mapEnabled)
-                            .putBoolean("offlineMapsEnabled", offlineMapsEnabled)
+                            .putBoolean("watchLocalMode", watchLocalMode)
                             .putBoolean("disconnectFromPhone", standaloneMode)
                             .putString("mapDownloadMode", mapDownloadMode)
                             .putString("pref_wear_os_backend", backend)
@@ -232,9 +232,9 @@ class WearDataListenerService : WearableListenerService() {
 
                         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                             mapEnabled = mapEnabled,
-                            offlineMapsEnabled = finalOfflineState // Apply forced state if set
+                            watchLocalMode = finalOfflineState // Apply forced state if set
                         ))
-                        Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, phoneOfflineMaps=$offlineMapsEnabled, finalUsedState=$finalOfflineState, backend=$backend")
+                        Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, phoneOfflineMaps=$watchLocalMode, finalUsedState=$finalOfflineState, backend=$backend")
                     }
                     "/map/download/progress" -> {
                         val countryId = dataMap.getString("countryId") ?: return
