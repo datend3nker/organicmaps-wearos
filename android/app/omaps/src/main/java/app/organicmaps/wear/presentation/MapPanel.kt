@@ -248,12 +248,14 @@ fun MapPanel() {
 
                 if (navState.routePoints.isNotEmpty()) {
                     val routePath = Path()
-                    navState.routePoints.forEachIndexed { i, point ->
+                    val screenPoints = navState.routePoints.mapIndexed { i, point ->
                         val (lat, lon) = point
-                        val x = ((lon - (effectiveLon - viewSpan)) / (2 * viewSpan)) * size.width
-                        val y = size.height - (((lat - (effectiveLat - viewSpan)) / (2 * viewSpan)) * size.height)
-                        if (i == 0) routePath.moveTo(x.toFloat(), y.toFloat())
-                        else routePath.lineTo(x.toFloat(), y.toFloat())
+                        val x = (((lon - (effectiveLon - viewSpan)) / (2 * viewSpan)) * size.width).toFloat()
+                        val y = (size.height - (((lat - (effectiveLat - viewSpan)) / (2 * viewSpan)) * size.height)).toFloat()
+                        val pointOffset = Offset(x, y)
+                        if (i == 0) routePath.moveTo(x, y)
+                        else routePath.lineTo(x, y)
+                        pointOffset
                     }
                     
                     drawPath(
@@ -261,6 +263,67 @@ fun MapPanel() {
                         color = Color(0xFF3D5AFE),
                         style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
+                    
+                    // Highlight the current turn area on the route line
+                    if (navState.isActive && navState.turnLat != 0.0) {
+                        var bestTurnIdx = -1
+                        var minDist = 0.001 // ~100m tolerance for path matching
+                        
+                        for (i in 0 until navState.routePoints.size) {
+                            val d = hypot(navState.routePoints[i].first - navState.turnLat, 
+                                          navState.routePoints[i].second - navState.turnLon)
+                            if (d < minDist) {
+                                minDist = d
+                                bestTurnIdx = i
+                            }
+                        }
+
+                        if (bestTurnIdx != -1) {
+                            // Find range of points to highlight around the turn
+                            val startIdx = (bestTurnIdx - 3).coerceAtLeast(0)
+                            val endIdx = (bestTurnIdx + 3).coerceAtMost(screenPoints.size - 1)
+                            
+                            if (endIdx > startIdx) {
+                                val highlightPath = Path()
+                                highlightPath.moveTo(screenPoints[startIdx].x, screenPoints[startIdx].y)
+                                for (i in startIdx + 1..endIdx) {
+                                    highlightPath.lineTo(screenPoints[i].x, screenPoints[i].y)
+                                }
+                                
+                                // Glowing highlight for the turn area
+                                drawPath(
+                                    path = highlightPath,
+                                    color = Color.White,
+                                    style = Stroke(width = 12.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                drawPath(
+                                    path = highlightPath,
+                                    color = Color(0xFF3D5AFE),
+                                    style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                
+                                // Draw a direction arrow at the exact junction
+                                val p1 = screenPoints[bestTurnIdx]
+                                if (bestTurnIdx < screenPoints.size - 1) {
+                                    val p2 = screenPoints[bestTurnIdx + 1]
+                                    val angle = atan2(p2.y - p1.y, p2.x - p1.x)
+                                    val arrowHead = Path().apply {
+                                        moveTo(0f, 0f) // Tip at (0,0)
+                                        lineTo(-12.dp.toPx(), -7.dp.toPx())
+                                        lineTo(-9.dp.toPx(), 0f)
+                                        lineTo(-12.dp.toPx(), 7.dp.toPx())
+                                        close()
+                                    }
+                                    withTransform({
+                                        translate(p1.x, p1.y)
+                                        rotate(Math.toDegrees(angle.toDouble()).toFloat(), pivot = Offset(0f, 0f))
+                                    }) {
+                                        drawPath(arrowHead, Color.White)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -429,30 +492,30 @@ private fun DrawScope.drawTile(features: ByteArray, centerLat: Double, centerLon
         val mapPath = pathsByType[type] ?: continue
         when (type) {
             1 -> { // Residential
-                drawPath(mapPath, Color(0xFFC8C8C8), style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFBDBDBD), style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
                 drawPath(mapPath, Color(0xFFFFFFFF), style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
-            2 -> drawPath(mapPath, Color(0xFFDCD7CE)) // Buildings
-            3 -> drawPath(mapPath, Color(0xFFADE1FF)) // Water
+            2 -> drawPath(mapPath, Color(0xFFE0E0E0)) // Buildings
+            3 -> drawPath(mapPath, Color(0xFFA2D9FF)) // Water
             4 -> { // Motorway/Trunk
-                drawPath(mapPath, Color(0xFFE0812F), style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFFFB366), style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFD84315), style = Stroke(width = 8.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFFF8A65), style = Stroke(width = 6.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             5 -> { // Primary
-                drawPath(mapPath, Color(0xFFE0BB68), style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFFFD580), style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFF9A825), style = Stroke(width = 7.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFFFF176), style = Stroke(width = 5.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             6 -> { // Secondary
-                drawPath(mapPath, Color(0xFFC8C8C8), style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFFFFFFF), style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFF9E9E9E), style = Stroke(width = 6.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFF5F5F5), style = Stroke(width = 4.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             7 -> { // Tertiary
-                drawPath(mapPath, Color(0xFFC8C8C8), style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFFFFFFF), style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFAAAAAA), style = Stroke(width = 5.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFFFFFFF), style = Stroke(width = 4.0.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             else -> {
-                drawPath(mapPath, Color(0xFFC8C8C8), style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFFFFFFF), style = Stroke(width = 2.0.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFBDBDBD), style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFFFFFFF), style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
         }
     }

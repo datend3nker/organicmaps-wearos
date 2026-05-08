@@ -1095,7 +1095,9 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
 {
   std::vector<uint8_t> buffer;
   
-  m2::RectD rect(mercator::FromLatLon(minLat, minLon), mercator::FromLatLon(maxLat, maxLon));
+  m2::RectD rect;
+  rect.Add(mercator::FromLatLon(minLat, minLon));
+  rect.Add(mercator::FromLatLon(maxLat, maxLon));
 
   if (rect.IsValid())
   {
@@ -1134,6 +1136,8 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
             else if ((poiCategoriesMask & 8) && IsATMChecker::Instance()(types)) type = 103;
             else if ((poiCategoriesMask & 16) && OneLevelPOIChecker()(types)) type = 105; // General POIs (Shops, Pharmacy, etc.)
             else if ((poiCategoriesMask & 32) && IsPoiChecker::Instance()(types)) type = 106; // Everything else that OM considers a POI
+
+            if (type == 0) return;
         }
 
         if (type == 0) return;

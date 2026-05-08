@@ -186,6 +186,7 @@ class WearDataListenerService : WearableListenerService() {
                             pedestrianDirection = dataMap.getInt("pedestrianDirection", currentState.pedestrianDirection),
                             exitNum = dataMap.getInt("exitNum", currentState.exitNum),
                             isActive = dataMap.getBoolean("active", currentState.isActive),
+                            isNavigating = dataMap.getBoolean("active", currentState.isNavigating),
                             speedMps = dataMap.getDouble("speedMps", currentState.speedMps),
                             speedLimitMps = dataMap.getDouble("speedLimitMps", currentState.speedLimitMps),
                             bearing = dataMap.getFloat("bearing", currentState.bearing),
@@ -225,6 +226,10 @@ class WearDataListenerService : WearableListenerService() {
                     }
                     "/preferences" -> {
                         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                        val timestamp = dataMap.getLong("timestamp", 0)
+                        val lastApplied = prefs.getLong("last_sync_timestamp", 0)
+                        if (timestamp < lastApplied) return
+
                         val mapEnabled = dataMap.getBoolean("mapEnabled", false)
                         val watchLocalMode = dataMap.getBoolean("watchLocalMode", false)
                         val standaloneMode = dataMap.getBoolean("standaloneMode", false)
@@ -237,6 +242,7 @@ class WearDataListenerService : WearableListenerService() {
                         val finalMapEnabled = standaloneMode || mapEnabled
                         
                         prefs.edit()
+                            .putLong("last_sync_timestamp", timestamp)
                             .putBoolean("mapEnabled", mapEnabled)
                             .putBoolean("watchLocalMode", watchLocalMode)
                             .putBoolean("disconnectFromPhone", standaloneMode)

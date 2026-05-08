@@ -40,11 +40,12 @@ data class NavigationState(
     val openMapManager: Boolean = false,
     val isPhoneConnected: Boolean = false,
     val lastMessageTimestamp: Long = 0L,
-    val poiCategoriesMask: Int = 0,
+    val poiCategoriesMask: Int = 0x3F, // Default to all POIs
     val manualCenterLat: Double = 0.0,
     val manualCenterLon: Double = 0.0,
     val manualViewSpan: Float = 0.003f,
-    val isExploreMode: Boolean = false
+    val isExploreMode: Boolean = false,
+    val isNavigating: Boolean = false
 )
 
 object NavigationStateHolder {

@@ -49,6 +49,8 @@ import app.organicmaps.sdk.routing.RoutingController
 import app.organicmaps.sdk.bookmarks.data.MapObject
 import app.organicmaps.sdk.Router
 
+import app.organicmaps.sdk.Framework
+
 @Composable
 fun SearchScreen() {
     val context = LocalContext.current
@@ -68,8 +70,8 @@ fun SearchScreen() {
                 if (navState.watchLocalMode) {
                     val converted = results.map {
                         SearchResultItem(
-                            name = it.getTitle(context),
-                            description = it.description.localizedFeatureType ?: "",
+                            name = it.getTitle(context) ?: "",
+                            description = if (it.description != null) it.description.localizedFeatureType ?: "" else "",
                             lat = it.lat,
                             lon = it.lon,
                             type = it.type,
@@ -112,7 +114,11 @@ fun SearchScreen() {
         ))
         if (navState.watchLocalMode) {
             SearchEngine.INSTANCE.cancel()
+            Framework.nativeRestoreDownloadQueue()
             val hasLocation = (navState.lat != 0.0 && navState.lon != 0.0)
+            if (hasLocation) {
+                Framework.nativeSetSearchViewport(navState.lat, navState.lon, 14)
+            }
             SearchEngine.INSTANCE.search(context, query, false, System.nanoTime(), hasLocation, navState.lat, navState.lon)
         } else {
             WearCommandService.search(context, query)
@@ -173,7 +179,10 @@ fun SearchScreen() {
                             2 -> Router.Bicycle
                             else -> Router.Transit
                         }
-                        RoutingController.get().prepare(null, destination, router)
+                        val controller = RoutingController.get()
+                        controller.prepare(null, destination, router)
+                        controller.checkAndBuildRoute()
+                        controller.start()
                         NavigationStateHolder.update(navState.copy(isActive = true))
                     } else {
                         WearCommandService.selectSearchResult(context, selectedResult!!, routerType)

@@ -34,6 +34,7 @@ public class WearMessageListenerService extends WearableListenerService implemen
     private static final String PATH_MAP_TILE_REQUEST = "/map/tile/request";
     private static final String PATH_PING = "/ping";
     private static final String PATH_PREFERENCES_REQUEST = "/preferences/request";
+    private static final String PATH_START_NAVIGATION_REQUEST = "/navigation/start/request";
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -73,6 +74,7 @@ public class WearMessageListenerService extends WearableListenerService implemen
         for (DataEvent event : dataEventBuffer) {
             if (event.getType() == DataEvent.TYPE_CHANGED && event.getDataItem().getUri().getPath().equals("/preferences/watch")) {
                 DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
+                long timestamp = dataMap.getLong("timestamp", 0);
                 boolean mapEnabled = dataMap.getBoolean("mapEnabled", false);
                 boolean watchLocalMode = dataMap.getBoolean("watchLocalMode", false);
                 boolean standaloneMode = dataMap.getBoolean("standaloneMode", false);
@@ -80,7 +82,11 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 
                 mMainHandler.post(() -> {
                     android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
+                    long lastApplied = prefs.getLong("pref_wear_os_last_sync_timestamp", 0);
+                    if (timestamp < lastApplied) return;
+
                     prefs.edit()
+                        .putLong("pref_wear_os_last_sync_timestamp", timestamp)
                         .putBoolean(getString(R.string.pref_wear_os_map_enabled), mapEnabled)
                         .putBoolean(getString(R.string.pref_wear_os_watch_local_mode), watchLocalMode)
                         .putBoolean(getString(R.string.pref_wear_os_standalone_mode), standaloneMode)
@@ -156,6 +162,10 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 Log.d(TAG, "Watch requested settings sync");
                 WearSyncService.getSyncLayer().syncPreferences(getApplicationContext());
             }
+            case PATH_START_NAVIGATION_REQUEST -> mMainHandler.post(() -> {
+                Log.d(TAG, "Watch requested to start navigation");
+                RoutingController.get().start();
+            });
         }
     }
 }

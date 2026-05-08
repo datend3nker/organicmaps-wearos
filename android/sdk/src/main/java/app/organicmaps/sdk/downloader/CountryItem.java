@@ -60,6 +60,7 @@ public final class CountryItem implements Comparable<CountryItem>
   public int status;
   public int errorCode;
   public boolean present;
+  public boolean isGroup;
 
   /**
    * This value represents the percentage of download (values span from 0 to 100)
@@ -145,7 +146,7 @@ public final class CountryItem implements Comparable<CountryItem>
 
   public boolean isExpandable()
   {
-    return (totalChildCount > 1);
+    return isGroup;
   }
 
   @Override

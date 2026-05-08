@@ -70,7 +70,7 @@ struct CountryItemBuilder
   jmethodID m_ctor;
   jfieldID m_Id, m_Name, m_DirectParentId, m_TopmostParentId, m_DirectParentName, m_TopmostParentName, m_Description,
       m_Size, m_EnqueuedSize, m_TotalSize, m_ChildCount, m_TotalChildCount, m_Present, m_Progress, m_DownloadedBytes,
-      m_BytesToDownload, m_Category, m_Status, m_ErrorCode;
+      m_BytesToDownload, m_Category, m_Status, m_ErrorCode, m_IsGroup;
 
   CountryItemBuilder(JNIEnv * env)
   {
@@ -96,6 +96,7 @@ struct CountryItemBuilder
     m_Category = env->GetFieldID(m_class, "category", "I");
     m_Status = env->GetFieldID(m_class, "status", "I");
     m_ErrorCode = env->GetFieldID(m_class, "errorCode", "I");
+    m_IsGroup = env->GetFieldID(m_class, "isGroup", "Z");
   }
 
   DECLARE_BUILDER_INSTANCE(CountryItemBuilder);
@@ -241,6 +242,10 @@ static void UpdateItem(JNIEnv * env, jobject item, storage::NodeAttrs const & at
   env->SetFloatField(item, ciBuilder.m_Progress, percentage);
   env->SetLongField(item, ciBuilder.m_DownloadedBytes, attrs.m_downloadingProgress.m_bytesDownloaded);
   env->SetLongField(item, ciBuilder.m_BytesToDownload, attrs.m_downloadingProgress.m_bytesTotal);
+
+  storage::NodeStatuses statuses;
+  GetStorage().GetNodeStatuses(GetRootId(env, (jstring)env->GetObjectField(item, ciBuilder.m_Id)), statuses);
+  env->SetBooleanField(item, ciBuilder.m_IsGroup, statuses.m_groupNode);
 }
 
 static void PutItemsToList(
@@ -316,11 +321,21 @@ JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeSearchItems(
     std::string name = GetStorage().GetNodeLocalName(id);
     std::string query = nQuery;
 
-    // Manual case-insensitive substring search
+    // Improved fuzzier search: check if all query words are present in the name
     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
     std::transform(query.begin(), query.end(), query.begin(), ::tolower);
 
-    if (name.find(query) != std::string::npos)
+    bool match = true;
+    std::stringstream ss(query);
+    std::string word;
+    while (ss >> word) {
+        if (name.find(word) == std::string::npos) {
+            match = false;
+            break;
+        }
+    }
+
+    if (match)
     {
       storage::NodeAttrs attrs;
       GetStorage().GetNodeAttrs(id, attrs);

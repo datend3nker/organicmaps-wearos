@@ -43,4 +43,5 @@ object WearCommandService {
     fun syncPreferences(context: Context) = getBackend(context).syncPreferences(context)
     fun requestPreferences(context: Context) = getBackend(context).requestPreferences(context)
     fun checkConnection(context: Context, callback: (Boolean) -> Unit) = getBackend(context).checkConnection(context, callback)
+    fun startNavigation(context: Context) = getBackend(context).startNavigation(context)
 }

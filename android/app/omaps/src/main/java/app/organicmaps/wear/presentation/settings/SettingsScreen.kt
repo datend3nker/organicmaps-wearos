@@ -30,6 +30,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
     val prefs = remember { context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE) }
     
     var autoDownload by remember { mutableStateOf(prefs.getBoolean("autoDownloadRouteMaps", true)) }
+    var mapDownloadMode by remember { mutableStateOf(prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY") }
     var backend by remember { mutableStateOf(prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS") }
     var mapEnabled by remember { mutableStateOf(navState.mapEnabled) }
     var watchLocalMode by remember { mutableStateOf(navState.watchLocalMode) }
@@ -149,6 +150,27 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
                 },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )
+        }
+
+        item {
+            val modes = listOf("BLUETOOTH_ONLY", "WIFI_ONLY", "AUTO")
+            val modeLabels = listOf("Bluetooth", "Wi-Fi", "Auto")
+            
+            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                Text("Download Policy", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
+                Chip(
+                    onClick = {
+                        val nextIdx = (modes.indexOf(mapDownloadMode) + 1) % modes.size
+                        mapDownloadMode = modes[nextIdx]
+                        prefs.edit().putString("mapDownloadMode", mapDownloadMode).apply()
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                    },
+                    label = { Text(modeLabels[modes.indexOf(mapDownloadMode)]) },
+                    secondaryLabel = { Text("Tap to change") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ChipDefaults.secondaryChipColors()
+                )
+            }
         }
 
         if (app.organicmaps.wear.BuildConfig.FLAVOR != "oss") {

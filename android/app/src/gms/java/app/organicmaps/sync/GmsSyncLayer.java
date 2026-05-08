@@ -49,6 +49,7 @@ public class GmsSyncLayer implements ISyncLayer {
         map.putBoolean("standaloneMode", standaloneMode);
         map.putString("mapDownloadMode", mapDownloadMode);
         map.putString("backend", backend);
+        map.putLong("timestamp", System.currentTimeMillis());
         
         com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         Wearable.getDataClient(context).putDataItem(putDataReq)
@@ -66,7 +67,7 @@ public class GmsSyncLayer implements ISyncLayer {
         map.putInt("carDirection", info.carDirection.ordinal());
         map.putInt("pedestrianDirection", info.pedestrianDirection.ordinal());
         map.putInt("exitNum", info.exitNum);
-        map.putBoolean("active", true);
+        map.putBoolean("active", app.organicmaps.sdk.routing.RoutingController.get().isNavigating());
         map.putDouble("completionPercent", info.completionPercent);
         map.putString("distToTarget", info.distToTarget != null ? info.distToTarget.toString(context) : "");
         map.putInt("eta", info.totalTimeInSeconds);

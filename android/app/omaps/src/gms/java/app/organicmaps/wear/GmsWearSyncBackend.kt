@@ -18,6 +18,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         private const val PATH_MAP_TILE_REQUEST = "/map/tile/request"
         private const val PATH_PING = "/ping"
         private const val PATH_PREFERENCES_REQUEST = "/preferences/request"
+        private const val PATH_START_NAVIGATION_REQUEST = "/navigation/start/request"
     }
 
     override fun stopNavigation(context: Context) {
@@ -72,6 +73,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         map.putBoolean("watchLocalMode", watchLocalMode)
         map.putBoolean("standaloneMode", standaloneMode)
         map.putString("backend", backend ?: "GMS")
+        map.putLong("timestamp", System.currentTimeMillis())
         
         val putDataReq = putDataMapReq.asPutDataRequest()
         Wearable.getDataClient(context).putDataItem(putDataReq)
@@ -79,6 +81,10 @@ class GmsWearSyncBackend : IWearSyncBackend {
 
     override fun requestPreferences(context: Context) {
         sendMessage(context, PATH_PREFERENCES_REQUEST, byteArrayOf())
+    }
+
+    override fun startNavigation(context: Context) {
+        sendMessage(context, PATH_START_NAVIGATION_REQUEST, byteArrayOf())
     }
 
     override fun checkConnection(context: Context, callback: (Boolean) -> Unit) {

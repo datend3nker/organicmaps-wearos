@@ -37,6 +37,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+
 @Composable
 fun MapManagerScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -69,9 +73,21 @@ fun MapManagerScreen() {
                     } else {
                         MapManager.nativeSearchItems(searchQuery, result)
                     }
-                    countries = result
+                    
+                    // Improved sorting: downloading first, then present, then category/name
+                    countries = result.filter { it.id != "World" && it.id != "WorldCoasts" }.sortedWith { a, b ->
+                        val aDownloading = a.status == CountryItem.STATUS_PROGRESS || a.status == CountryItem.STATUS_ENQUEUED
+                        val bDownloading = b.status == CountryItem.STATUS_PROGRESS || b.status == CountryItem.STATUS_ENQUEUED
+                        if (aDownloading != bDownloading) return@sortedWith if (aDownloading) -1 else 1
+                        
+                        if (a.present != b.present) return@sortedWith if (a.present) -1 else 1
+                        
+                        if (a.category != b.category) return@sortedWith a.category.compareTo(b.category)
+                        
+                        a.name.compareTo(b.name)
+                    }
                     loading = false
-                    delay(2000)
+                    delay(800) // Faster polling for live feedback
                 }
             } catch (_: Throwable) {
                 loading = false
@@ -146,12 +162,12 @@ fun MapManagerScreen() {
         if (loading) {
             item { CircularProgressIndicator() }
         } else {
-            val downloadedCount = countries.count { it.status == CountryItem.STATUS_DONE }
-            if (currentRoot == null && downloadedCount > 0 && searchQuery.isEmpty()) {
+            val downloadedItems = countries.filter { it.present }
+            if (currentRoot == null && downloadedItems.isNotEmpty() && searchQuery.isEmpty()) {
                 item {
                     Text("Downloaded", style = MaterialTheme.typography.caption1, color = Color(0xFF00FF00), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
                 }
-                items(countries.filter { it.status == CountryItem.STATUS_DONE }) { item ->
+                items(downloadedItems) { item ->
                     CountryItemRow(item, pathStack) { pathStack = it }
                 }
                 item {
@@ -160,7 +176,7 @@ fun MapManagerScreen() {
                 }
             }
 
-            val groups = countries.filter { currentRoot != null || it.status != CountryItem.STATUS_DONE || searchQuery.isNotEmpty() }.groupBy { it.category }
+            val groups = countries.filter { currentRoot != null || !it.present || searchQuery.isNotEmpty() }.groupBy { it.category }
             val categories = groups.keys.sorted()
             
             for (cat in categories) {
@@ -189,6 +205,10 @@ fun MapManagerScreen() {
 @Composable
 fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit) {
     val isDownloading = item.status == CountryItem.STATUS_PROGRESS || item.status == CountryItem.STATUS_ENQUEUED || item.status == CountryItem.STATUS_APPLYING
+    val isInstalled = item.status == CountryItem.STATUS_DONE
+    
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
     
     val statusText = when (item.status) {
         CountryItem.STATUS_DONE -> "Installed"
@@ -199,20 +219,18 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
         else -> if (item.isExpandable) "${item.totalChildCount} regions" else "Status: ${item.status}"
     }
 
+    val chipColor = if (isPressed && isInstalled) {
+        ChipDefaults.chipColors(backgroundColor = Color.Red.copy(alpha = 0.5f))
+    } else {
+        ChipDefaults.secondaryChipColors()
+    }
+
     Chip(
-        onClick = {
-            if (item.isExpandable) {
-                onPathStackChanged(pathStack + item.id)
-            } else if ((item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED)) {
-                MapManager.startDownload(item.id)
-            } else if (item.status == CountryItem.STATUS_DONE) {
-                MapManager.nativeDelete(item.id)
-            }
-        },
+        onClick = { },
         label = { Text(item.name, maxLines = 1) },
         secondaryLabel = { 
             Column {
-                Text(statusText, maxLines = 1, color = if (item.status == CountryItem.STATUS_DONE) Color.Green else Color.LightGray)
+                Text(statusText, maxLines = 1, color = if (isInstalled) Color.Green else Color.LightGray)
                 if (isDownloading && item.progress > 0) {
                     Box(
                         modifier = Modifier
@@ -231,7 +249,24 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
                 }
             }
         },
-        modifier = Modifier.fillMaxWidth(),
-        colors = ChipDefaults.secondaryChipColors()
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    if (item.isExpandable) {
+                        onPathStackChanged(pathStack + item.id)
+                    } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED) {
+                        MapManager.startDownload(item.id)
+                    }
+                },
+                onLongClick = {
+                    if (isInstalled) {
+                        MapManager.nativeDelete(item.id)
+                    }
+                }
+            ),
+        colors = chipColor
     )
 }

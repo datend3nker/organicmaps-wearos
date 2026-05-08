@@ -127,6 +127,15 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       pref.setSummary(R.string.not_signed_in);
   }
 
+  private void updateWearOsPrefsSummary()
+  {
+    final Preference pref = findPreference(getString(R.string.pref_wear_os_backend));
+    if (pref != null) {
+        String backend = PreferenceManager.getDefaultSharedPreferences(requireContext()).getString(getString(R.string.pref_wear_os_backend), "GMS");
+        pref.setSummary(backend.equals("GMS") ? "Google Play Services" : "Bluetooth (OSS)");
+    }
+  }
+
   @Override
   public void onResume()
   {
@@ -136,6 +145,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     updateVoiceInstructionsPrefsSummary();
     updateRoutingSettingsPrefsSummary();
     updateMapLanguageCodeSummary();
+    updateWearOsPrefsSummary();
   }
 
   @Override

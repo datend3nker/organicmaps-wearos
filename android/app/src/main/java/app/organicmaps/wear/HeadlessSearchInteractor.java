@@ -84,10 +84,10 @@ public class HeadlessSearchInteractor implements SearchListener {
         // Initialize the viewport for the search engine, otherwise searches are endlessly delayed
         // since the search API waits for the map to be rendered and `OnViewportChanged` to be called.
         // On headless Wear OS we never render the map, so we set a synthetic viewport.
-        int zoom = hasLocation ? 14 : 1;
+        int zoom = hasLocation ? 13 : 1; // Slightly tighter zoom for better address matching
         Framework.nativeSetSearchViewport(lat, lon, zoom);
 
-        boolean success = SearchEngine.INSTANCE.search(mContext, query, false, mLastSearchTimestamp, hasLocation, lat, lon);
+        boolean success = SearchEngine.INSTANCE.search(mContext, query, false, mLastSearchTimestamp, true, lat, lon);
         Log.d(TAG, "SearchEngine.search success? " + success);
         if (!success) {
             WearSyncService.sendSearchState(mContext, false);

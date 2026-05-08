@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.MaterialTheme
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.PagerState
@@ -44,10 +45,20 @@ import kotlinx.coroutines.withContext
 
 import android.view.KeyEvent
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+
 class Omaps : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setTheme(android.R.style.Theme_DeviceDefault)
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 101)
+            }
+        }
         
         // Initialize state from prefs
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
@@ -90,8 +101,9 @@ class Omaps : ComponentActivity() {
 
 @Composable
 fun WearApp() {
+    val context = LocalContext.current
     val navState by NavigationStateHolder.state.collectAsState()
-    val isNavigating = navState.isActive
+    val isNavigating = navState.isNavigating
     val isMapEnabled = navState.mapEnabled
     
     val pagerState = remember(isNavigating, isMapEnabled) {
@@ -180,6 +192,24 @@ fun WearApp() {
                 }
             }
 
+            if (navState.isActive && !navState.isNavigating) {
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
+                    androidx.wear.compose.material.Button(
+                        onClick = { 
+                            if (navState.standaloneMode || navState.watchLocalMode) {
+                                app.organicmaps.sdk.routing.RoutingController.get().start()
+                                NavigationStateHolder.update(navState.copy(isNavigating = true))
+                            } else {
+                                WearCommandService.startNavigation(context)
+                            }
+                        },
+                        modifier = Modifier.padding(bottom = 24.dp)
+                    ) {
+                        Text("Start Navigation", style = MaterialTheme.typography.button)
+                    }
+                }
+            }
+
             MapDownloadOverlay()
         }
     }
@@ -199,7 +229,8 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
             WearCommandService.stopNavigation(context)
             NavigationStateHolder.update(navState.copy(isActive = false))
         },
-        deviceRotation = deviceRotation
+        deviceRotation = deviceRotation,
+        exitNum = navState.exitNum
     )
 }
 

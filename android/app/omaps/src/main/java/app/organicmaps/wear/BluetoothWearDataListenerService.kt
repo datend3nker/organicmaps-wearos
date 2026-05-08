@@ -40,6 +40,12 @@ class BluetoothWearDataListenerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startListening() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "BLUETOOTH_CONNECT permission missing")
+                return
+            }
+        }
         isRunning = true
         thread {
             val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
@@ -124,6 +130,7 @@ class BluetoothWearDataListenerService : Service() {
                 val currentState = NavigationStateHolder.state.value
                 NavigationStateHolder.update(currentState.copy(
                     isActive = true,
+                    isNavigating = true,
                     carDirection = carDir,
                     pedestrianDirection = pedDir,
                     exitNum = exitNum,

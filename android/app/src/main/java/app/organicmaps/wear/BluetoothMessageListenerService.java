@@ -31,6 +31,7 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
     private static final String PATH_MAP_TILE_REQUEST = "/map/tile/request";
     private static final String PATH_PING = "/ping";
     private static final String PATH_PREFERENCES_REQUEST = "/preferences/request";
+    private static final String PATH_START_NAVIGATION_REQUEST = "/navigation/start/request";
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -156,6 +157,10 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                 Log.d(TAG, "Watch requested settings sync");
                 WearSyncService.getSyncLayer().syncPreferences(getApplicationContext());
             }
+            case PATH_START_NAVIGATION_REQUEST -> mMainHandler.post(() -> {
+                Log.d(TAG, "Watch requested to start navigation");
+                RoutingController.get().start();
+            });
         }
     }
 }

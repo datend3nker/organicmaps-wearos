@@ -23,6 +23,7 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         private const val PATH_MAP_TILE_REQUEST = "/map/tile/request"
         private const val PATH_PING = "/ping"
         private const val PATH_PREFERENCES_REQUEST = "/preferences/request"
+        private const val PATH_START_NAVIGATION_REQUEST = "/navigation/start/request"
 
         private const val MSG_TYPE_COMMAND = 10.toByte()
     }
@@ -90,6 +91,10 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         sendMessage(context, PATH_PREFERENCES_REQUEST, byteArrayOf())
     }
 
+    override fun startNavigation(context: Context) {
+        sendMessage(context, PATH_START_NAVIGATION_REQUEST, byteArrayOf())
+    }
+
     override fun checkConnection(context: Context, callback: (Boolean) -> Unit) {
         callback(true) // For now, assume Bluetooth is "ready"
     }
@@ -123,6 +128,13 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
     }
 
     private fun getOrConnectSocket(context: Context): BluetoothSocket? {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "BLUETOOTH_CONNECT permission missing")
+                return null
+            }
+        }
+
         synchronized(this) {
             if (activeSocket?.isConnected == true) return activeSocket
             

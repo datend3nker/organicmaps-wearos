@@ -29,6 +29,10 @@ import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import androidx.wear.tooling.preview.devices.WearDevices
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
+
 @Composable
 fun NavigationScreen(
     distanceToNextTurn: String,
@@ -36,6 +40,7 @@ fun NavigationScreen(
     remainingTime: String,
     onCancelClick: () -> Unit,
     deviceRotation: Float = 0f,
+    exitNum: Int = 0,
 ) {
     Scaffold(
         timeText = { TimeText() }
@@ -58,15 +63,35 @@ fun NavigationScreen(
                 textAlign = TextAlign.Center
             )
 
-            // Large turn icon
-            Icon(
-                imageVector = turnIcon,
-                contentDescription = "Turn icon",
-                modifier = Modifier
-                    .size(64.dp)
-                    .rotate(deviceRotation),
-                tint = MaterialTheme.colors.onBackground
-            )
+            // Large turn icon with optional exit number
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = turnIcon,
+                    contentDescription = "Turn icon",
+                    modifier = Modifier
+                        .size(64.dp)
+                        .rotate(deviceRotation),
+                    tint = MaterialTheme.colors.onBackground
+                )
+                if (exitNum > 0) {
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .background(MaterialTheme.colors.surface, CircleShape)
+                            .padding(2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = exitNum.toString(),
+                            style = MaterialTheme.typography.title3.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            ),
+                            color = MaterialTheme.colors.onSurface
+                        )
+                    }
+                }
+            }
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 // Street name

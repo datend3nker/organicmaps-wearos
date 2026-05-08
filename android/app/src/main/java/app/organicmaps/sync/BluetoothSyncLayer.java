@@ -82,7 +82,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
         byte[] distBytes = info.distToTurn != null ? info.distToTurn.toString(context).getBytes(StandardCharsets.UTF_8) : new byte[0];
         
         ByteBuffer buffer = ByteBuffer.allocate(1 + 1 + 1 + 1 + 4 + 8 + 8 + 8 + 8 + 4 + 4 + streetBytes.length + distBytes.length);
-        buffer.put((byte) 1); // Active
+        buffer.put((byte) (app.organicmaps.sdk.routing.RoutingController.get().isNavigating() ? 1 : 0)); // Active
         buffer.put((byte) info.carDirection.ordinal());
         buffer.put((byte) info.pedestrianDirection.ordinal());
         buffer.put((byte) info.exitNum);
