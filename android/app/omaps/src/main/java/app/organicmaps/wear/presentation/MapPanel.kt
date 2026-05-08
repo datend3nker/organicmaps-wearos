@@ -440,13 +440,19 @@ fun MapPanel() {
             if (userScreenX in 0f..size.width && userScreenY in 0f..size.height) {
                 val markerColor = Color(0xFF4CAF50)
                 drawCircle(markerColor, radius = 7.dp.toPx(), center = Offset(userScreenX, userScreenY))
-                val arrowPath = Path().apply {
-                    moveTo(userScreenX, userScreenY - 11.dp.toPx())
-                    lineTo(userScreenX - 5.dp.toPx(), userScreenY + 3.dp.toPx())
-                    lineTo(userScreenX + 5.dp.toPx(), userScreenY + 3.dp.toPx())
-                    close()
+                
+                withTransform({
+                    translate(userScreenX, userScreenY)
+                    rotate(if (navState.isExploreMode) 0f else 360f - mapRotationAnimatable.value)
+                }) {
+                    val arrowPath = Path().apply {
+                        moveTo(0f, -11.dp.toPx()) // Tip points UP
+                        lineTo(-5.dp.toPx(), 3.dp.toPx()) // Left base
+                        lineTo(5.dp.toPx(), 3.dp.toPx()) // Right base
+                        close()
+                    }
+                    drawPath(arrowPath, markerColor)
                 }
-                drawPath(arrowPath, markerColor)
             }
         }
     }

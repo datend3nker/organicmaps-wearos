@@ -78,7 +78,9 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 boolean mapEnabled = dataMap.getBoolean("mapEnabled", false);
                 boolean watchLocalMode = dataMap.getBoolean("watchLocalMode", false);
                 boolean standaloneMode = dataMap.getBoolean("standaloneMode", false);
+                boolean autoDownload = dataMap.getBoolean("autoDownloadRouteMaps", true);
                 String backend = dataMap.getString("backend", "GMS");
+                String mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY");
                 
                 mMainHandler.post(() -> {
                     android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
@@ -91,6 +93,8 @@ public class WearMessageListenerService extends WearableListenerService implemen
                         .putBoolean(getString(R.string.pref_wear_os_watch_local_mode), watchLocalMode)
                         .putBoolean(getString(R.string.pref_wear_os_standalone_mode), standaloneMode)
                         .putString(getString(R.string.pref_wear_os_backend), backend)
+                        .putString(getString(R.string.pref_wear_os_map_download_mode), mapDownloadMode)
+                        // Note: Auto-Download is typically watch-side only, but could be saved if desired.
                         .apply();
                     WearSyncService.initSyncLayer(this);
                 });

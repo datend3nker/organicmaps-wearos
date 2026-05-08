@@ -69,6 +69,9 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
             buffer.get(); // skip legacy forceOffline byte
             boolean watchLocalMode = buffer.get() == 1;
             boolean standaloneMode = buffer.get() == 1;
+            boolean autoDownload = true;
+            if (buffer.remaining() > 0) autoDownload = buffer.get() == 1;
+            
             int bLen = buffer.remaining() >= 4 ? buffer.getInt() : 0;
             String backendStr = "GMS";
             if (bLen > 0 && buffer.remaining() >= bLen) {
@@ -77,10 +80,19 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                 backendStr = new String(b, StandardCharsets.UTF_8);
             }
             
+            String downloadModeStr = "BLUETOOTH_ONLY";
+            int dLen = buffer.remaining() >= 4 ? buffer.getInt() : 0;
+            if (dLen > 0 && buffer.remaining() >= dLen) {
+                byte[] d = new byte[dLen];
+                buffer.get(d);
+                downloadModeStr = new String(d, StandardCharsets.UTF_8);
+            }
+            
             final boolean finalMapEnabled = mapEnabled;
             final boolean finalWatchLocalMode = watchLocalMode;
             final boolean finalStandaloneMode = standaloneMode;
             final String finalBackend = backendStr;
+            final String finalDownloadMode = downloadModeStr;
             mMainHandler.post(() -> {
                 android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
                 prefs.edit()
@@ -88,6 +100,7 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                     .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), finalWatchLocalMode)
                     .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), finalStandaloneMode)
                     .putString(getString(app.organicmaps.R.string.pref_wear_os_backend), finalBackend)
+                    .putString(getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), finalDownloadMode)
                     .apply();
                 WearSyncService.initSyncLayer(this);
             });

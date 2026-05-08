@@ -57,13 +57,24 @@ class GmsWearSyncBackend : IWearSyncBackend {
 
     override fun syncPreferences(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val forceOffline = prefs.getBoolean("forceWatchLocalMode", false)
+        val mapEnabled = prefs.getBoolean("mapEnabled", false)
+        val forceOffline = prefs.getBoolean("forceWatchLocalMode", false) // legacy
+        val watchLocalMode = prefs.getBoolean("watchLocalMode", false)
+        val standaloneMode = prefs.getBoolean("disconnectFromPhone", false)
+        val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
+        val downloadMode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY"
         val backend = prefs.getString("pref_wear_os_backend", "GMS")
         
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/preferences/watch")
         val map = putDataMapReq.dataMap
+        map.putBoolean("mapEnabled", mapEnabled)
         map.putBoolean("forceWatchLocalMode", forceOffline)
+        map.putBoolean("watchLocalMode", watchLocalMode)
+        map.putBoolean("standaloneMode", standaloneMode)
+        map.putBoolean("autoDownloadRouteMaps", autoDownload)
+        map.putString("mapDownloadMode", downloadMode)
         map.putString("backend", backend ?: "GMS")
+        map.putLong("timestamp", System.currentTimeMillis())
         
         val putDataReq = putDataMapReq.asPutDataRequest()
         Wearable.getDataClient(context).putDataItem(putDataReq)

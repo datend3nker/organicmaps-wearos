@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
@@ -74,13 +75,15 @@ fun MapManagerScreen() {
                         MapManager.nativeSearchItems(searchQuery, result)
                     }
                     
-                    // Improved sorting: downloading first, then present, then category/name
+                    // Improved sorting: downloading first, then done/partly, then category/name
                     countries = result.filter { it.id != "World" && it.id != "WorldCoasts" }.sortedWith { a, b ->
-                        val aDownloading = a.status == CountryItem.STATUS_PROGRESS || a.status == CountryItem.STATUS_ENQUEUED
-                        val bDownloading = b.status == CountryItem.STATUS_PROGRESS || b.status == CountryItem.STATUS_ENQUEUED
+                        val aDownloading = a.status == CountryItem.STATUS_PROGRESS || a.status == CountryItem.STATUS_ENQUEUED || a.status == CountryItem.STATUS_APPLYING
+                        val bDownloading = b.status == CountryItem.STATUS_PROGRESS || b.status == CountryItem.STATUS_ENQUEUED || b.status == CountryItem.STATUS_APPLYING
                         if (aDownloading != bDownloading) return@sortedWith if (aDownloading) -1 else 1
                         
-                        if (a.present != b.present) return@sortedWith if (a.present) -1 else 1
+                        val aDone = a.status == CountryItem.STATUS_DONE || a.status == CountryItem.STATUS_PARTLY || a.present
+                        val bDone = b.status == CountryItem.STATUS_DONE || b.status == CountryItem.STATUS_PARTLY || b.present
+                        if (aDone != bDone) return@sortedWith if (aDone) -1 else 1
                         
                         if (a.category != b.category) return@sortedWith a.category.compareTo(b.category)
                         
@@ -220,38 +223,17 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
     }
 
     val chipColor = if (isPressed && isInstalled) {
-        ChipDefaults.chipColors(backgroundColor = Color.Red.copy(alpha = 0.5f))
+        Color.Red.copy(alpha = 0.5f)
     } else {
-        ChipDefaults.secondaryChipColors()
+        MaterialTheme.colors.surface
     }
 
-    Chip(
-        onClick = { },
-        label = { Text(item.name, maxLines = 1) },
-        secondaryLabel = { 
-            Column {
-                Text(statusText, maxLines = 1, color = if (isInstalled) Color.Green else Color.LightGray)
-                if (isDownloading && item.progress > 0) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(2.dp)
-                            .padding(top = 2.dp)
-                            .background(Color.Gray.copy(alpha = 0.3f))
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(item.progress / 100f)
-                                .fillMaxHeight()
-                                .background(Color(0xFF00E5FF))
-                        )
-                    }
-                }
-            }
-        },
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
+            .clip(RoundedCornerShape(16.dp))
+            .background(chipColor)
+                .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = {
@@ -266,7 +248,28 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
                         MapManager.nativeDelete(item.id)
                     }
                 }
-            ),
-        colors = chipColor
-    )
+            )
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Column {
+            Text(item.name, maxLines = 1, style = MaterialTheme.typography.button)
+            Text(statusText, maxLines = 1, style = MaterialTheme.typography.caption2, color = if (isInstalled) Color.Green else Color.LightGray)
+            if (isDownloading && item.progress > 0) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .padding(top = 4.dp)
+                        .background(Color.Gray.copy(alpha = 0.3f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(item.progress / 100f)
+                            .fillMaxHeight()
+                            .background(Color(0xFF00E5FF))
+                    )
+                }
+            }
+        }
+    }
 }

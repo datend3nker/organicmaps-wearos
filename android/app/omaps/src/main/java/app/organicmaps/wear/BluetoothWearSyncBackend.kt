@@ -73,16 +73,22 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         val forceOffline = prefs.getBoolean("forceWatchLocalMode", false)
         val watchLocalMode = prefs.getBoolean("watchLocalMode", false)
         val standaloneMode = prefs.getBoolean("disconnectFromPhone", false)
+        val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
+        val downloadMode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY"
         val backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS"
         
         val backendBytes = backend.toByteArray(StandardCharsets.UTF_8)
-        val buffer = ByteBuffer.allocate(1 + 1 + 1 + 1 + 4 + backendBytes.size)
+        val downloadModeBytes = downloadMode.toByteArray(StandardCharsets.UTF_8)
+        val buffer = ByteBuffer.allocate(1 + 1 + 1 + 1 + 1 + 4 + backendBytes.size + 4 + downloadModeBytes.size)
         buffer.put((if (mapEnabled) 1 else 0).toByte())
         buffer.put((if (forceOffline) 1 else 0).toByte())
         buffer.put((if (watchLocalMode) 1 else 0).toByte())
         buffer.put((if (standaloneMode) 1 else 0).toByte())
+        buffer.put((if (autoDownload) 1 else 0).toByte())
         buffer.putInt(backendBytes.size)
         buffer.put(backendBytes)
+        buffer.putInt(downloadModeBytes.size)
+        buffer.put(downloadModeBytes)
         
         sendMessage(context, "/preferences/watch", buffer.array())
     }
