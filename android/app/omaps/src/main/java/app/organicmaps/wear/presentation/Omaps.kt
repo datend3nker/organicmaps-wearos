@@ -193,19 +193,33 @@ fun WearApp() {
             }
 
             if (navState.isActive && !navState.isNavigating) {
+                val routeReady = navState.isRouteReady || (!navState.isRouteBuilding && navState.routeBuildProgress >= 100)
                 Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
                     androidx.wear.compose.material.Button(
-                        onClick = { 
+                        onClick = {
                             if (navState.standaloneMode || navState.watchLocalMode) {
                                 app.organicmaps.sdk.routing.RoutingController.get().start()
-                                NavigationStateHolder.update(navState.copy(isNavigating = true))
+                                NavigationStateHolder.update(navState.copy(
+                                    isNavigating = true,
+                                    isRouteBuilding = false,
+                                    isRouteReady = false,
+                                    routeBuildProgress = 100
+                                ))
                             } else {
                                 WearCommandService.startNavigation(context)
                             }
                         },
+                        enabled = routeReady,
                         modifier = Modifier.padding(bottom = 24.dp)
                     ) {
-                        Text("Start Navigation", style = MaterialTheme.typography.button)
+                        Text(
+                            if (navState.isRouteBuilding && !routeReady) {
+                                "Calculating ${navState.routeBuildProgress}%"
+                            } else {
+                                "Start Navigation"
+                            },
+                            style = MaterialTheme.typography.button
+                        )
                     }
                 }
             }

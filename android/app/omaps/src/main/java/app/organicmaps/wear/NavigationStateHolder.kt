@@ -45,7 +45,10 @@ data class NavigationState(
     val manualCenterLon: Double = 0.0,
     val manualViewSpan: Float = 0.003f,
     val isExploreMode: Boolean = false,
-    val isNavigating: Boolean = false
+    val isNavigating: Boolean = false,
+    val routeBuildProgress: Int = 0,
+    val isRouteBuilding: Boolean = false,
+    val isRouteReady: Boolean = false
 )
 
 object NavigationStateHolder {

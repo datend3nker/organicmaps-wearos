@@ -137,6 +137,80 @@ class WearApplication : Application() {
     private fun setupLocalNavigationListener() {
         val routingController = RoutingController.get()
         routingController.initialize(organicMaps.locationHelper)
+        routingController.attach(object : RoutingController.Container {
+            override fun onPlanningStarted() {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    isRouteBuilding = true,
+                    isRouteReady = false,
+                    routeBuildProgress = 0,
+                    routePoints = emptyList(),
+                    distToTurn = "",
+                    nextStreet = "",
+                    distToTarget = "",
+                    eta = 0,
+                    completionPercent = 0.0,
+                    turnLat = 0.0,
+                    turnLon = 0.0
+                ))
+            }
+
+            override fun onPlanningCancelled() {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    isRouteBuilding = false,
+                    isRouteReady = false,
+                    routeBuildProgress = 0,
+                    routePoints = emptyList()
+                ))
+            }
+
+            override fun onBuiltRoute() {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    isRouteBuilding = false,
+                    isRouteReady = true,
+                    routeBuildProgress = 100
+                ))
+            }
+
+            override fun onNavigationStarted() {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    isNavigating = true,
+                    isRouteBuilding = false,
+                    isRouteReady = false,
+                    routeBuildProgress = 100
+                ))
+            }
+
+            override fun onNavigationCancelled() {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    isNavigating = false,
+                    isRouteReady = false,
+                    routePoints = emptyList()
+                ))
+            }
+
+            override fun updateBuildProgress(progress: Int, router: app.organicmaps.sdk.Router) {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    routeBuildProgress = progress.coerceIn(0, 100),
+                    isRouteBuilding = progress in 0 until 100,
+                    isRouteReady = progress >= 100
+                ))
+            }
+
+            override fun onStartRouteBuilding() {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    isRouteBuilding = true,
+                    isRouteReady = false,
+                    routeBuildProgress = 0
+                ))
+            }
+        })
         
         organicMaps.locationHelper.addListener(object : app.organicmaps.sdk.location.LocationListener {
             override fun onLocationUpdated(location: android.location.Location) {
@@ -160,17 +234,21 @@ class WearApplication : Application() {
 
         MainScope().launch(Dispatchers.Main) {
             while (true) {
-                if (NavigationStateHolder.state.value.watchLocalMode && routingController.isNavigating) {
+                if (NavigationStateHolder.state.value.watchLocalMode && (routingController.isNavigating || routingController.isBuilt())) {
                     val info = Framework.nativeGetRouteFollowingInfo()
+                    val routeJunctions = Framework.nativeGetRouteJunctionPoints(50.0)
+                    val routePoints = routeJunctions?.map { it.mLat to it.mLon } ?: emptyList()
                     if (info != null) {
                         val currentState = NavigationStateHolder.state.value
                         NavigationStateHolder.update(currentState.copy(
+                            isActive = true,
+                            isNavigating = routingController.isNavigating,
+                            routePoints = routePoints,
                             distToTurn = info.distToTurn?.toString(this@WearApplication) ?: "",
                             nextStreet = info.nextStreet ?: "",
                             carDirection = info.carDirection.ordinal,
                             pedestrianDirection = info.pedestrianDirection.ordinal,
                             exitNum = info.exitNum,
-                            isActive = true,
                             distToTarget = info.distToTarget?.toString(this@WearApplication) ?: "",
                             eta = info.totalTimeInSeconds,
                             completionPercent = info.completionPercent,

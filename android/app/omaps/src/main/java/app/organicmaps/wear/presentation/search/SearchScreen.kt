@@ -172,6 +172,11 @@ fun SearchScreen() {
                 result = selectedResult!!,
                 onModeSelected = { routerType ->
                     if (navState.watchLocalMode) {
+                        val startPoint = if (navState.lat != 0.0 && navState.lon != 0.0) {
+                            MapObject.createMapObject(MapObject.MY_POSITION, "", "", navState.lat, navState.lon)
+                        } else {
+                            null
+                        }
                         val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
                         val router = when (routerType) {
                             0 -> Router.Vehicle
@@ -180,10 +185,23 @@ fun SearchScreen() {
                             else -> Router.Transit
                         }
                         val controller = RoutingController.get()
-                        controller.prepare(null, destination, router)
+                        controller.prepare(startPoint, destination, router)
                         controller.checkAndBuildRoute()
-                        controller.start()
-                        NavigationStateHolder.update(navState.copy(isActive = true))
+                        NavigationStateHolder.update(navState.copy(
+                            isActive = true,
+                            isNavigating = false,
+                            routeBuildProgress = 0,
+                            isRouteBuilding = true,
+                            isRouteReady = false,
+                            routePoints = emptyList(),
+                            distToTurn = "",
+                            nextStreet = "",
+                            distToTarget = "",
+                            eta = 0,
+                            completionPercent = 0.0,
+                            turnLat = 0.0,
+                            turnLon = 0.0
+                        ))
                     } else {
                         WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
                     }
