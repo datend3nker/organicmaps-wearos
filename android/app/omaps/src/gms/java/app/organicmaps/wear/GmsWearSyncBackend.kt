@@ -43,14 +43,15 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, PATH_SEARCH_SELECT, buffer.array())
     }
 
-    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, routerType: Int) {
-        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4) + Int.SIZE_BYTES)
+    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, routerType: Int, poiCategoriesMask: Int) {
+        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4) + Int.SIZE_BYTES + Int.SIZE_BYTES)
         buffer.putLong(requestId)
         buffer.putDouble(minLat)
         buffer.putDouble(minLon)
         buffer.putDouble(maxLat)
         buffer.putDouble(maxLon)
         buffer.putInt(routerType)
+        buffer.putInt(poiCategoriesMask)
         sendMessage(context, PATH_MAP_TILE_REQUEST, buffer.array())
     }
 
@@ -67,6 +68,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
         val downloadMode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY"
         val backend = prefs.getString("pref_wear_os_backend", "GMS")
+        val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
         
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/preferences/watch")
         val map = putDataMapReq.dataMap
@@ -77,6 +79,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         map.putBoolean("autoDownloadRouteMaps", autoDownload)
         map.putString("mapDownloadMode", downloadMode)
         map.putString("backend", backend ?: "GMS")
+        map.putInt("poiCategoriesMask", poiMask)
         map.putLong("timestamp", System.currentTimeMillis())
         
         val putDataReq = putDataMapReq.asPutDataRequest()

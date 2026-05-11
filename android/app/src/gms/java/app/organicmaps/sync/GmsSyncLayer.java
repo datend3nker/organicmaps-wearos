@@ -41,6 +41,7 @@ public class GmsSyncLayer implements ISyncLayer {
         boolean watchLocalMode = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), false);
         String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
         String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
+        int poiMask = prefs.getInt("poiCategoriesMask", 0x3F);
 
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_PREFERENCES);
         DataMap map = putDataMapReq.getDataMap();
@@ -49,6 +50,7 @@ public class GmsSyncLayer implements ISyncLayer {
         map.putBoolean("standaloneMode", standaloneMode);
         map.putString("mapDownloadMode", mapDownloadMode);
         map.putString("backend", backend);
+        map.putInt("poiCategoriesMask", poiMask);
         map.putLong("timestamp", System.currentTimeMillis());
         
         com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();

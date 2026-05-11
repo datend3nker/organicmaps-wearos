@@ -36,13 +36,10 @@ class WearApplication : Application() {
         System.loadLibrary("organicmaps")
         ConnectionState.INSTANCE.initialize(this)
         
-        val dummyLocationFactory = object : LocationProviderFactory {
+        val nativeLocationFactory = object : LocationProviderFactory {
             override fun isGoogleLocationAvailable(context: Context): Boolean = false
             override fun getProvider(context: Context, listener: BaseLocationProvider.Listener): BaseLocationProvider {
-                return object : BaseLocationProvider(listener) {
-                    override fun start(interval: Long) {}
-                    override fun stop() {}
-                }
+                return app.organicmaps.sdk.location.AndroidNativeProvider(context, listener)
             }
         }
         
@@ -53,7 +50,7 @@ class WearApplication : Application() {
             1, 
             BuildConfig.VERSION_NAME, 
             BuildConfig.APPLICATION_ID + ".provider",
-            dummyLocationFactory
+            nativeLocationFactory
         )
 
         copyCountriesFileToWritableStorage()
@@ -138,6 +135,12 @@ class WearApplication : Application() {
         val routingController = RoutingController.get()
         routingController.initialize(organicMaps.locationHelper)
         routingController.attach(object : RoutingController.Container {
+            override fun showRoutePlan(show: Boolean, completionListener: Runnable?) {
+                if (show) {
+                    completionListener?.run()
+                }
+            }
+
             override fun onPlanningStarted() {
                 val currentState = NavigationStateHolder.state.value
                 NavigationStateHolder.update(currentState.copy(
@@ -199,6 +202,15 @@ class WearApplication : Application() {
                     routeBuildProgress = progress.coerceIn(0, 100),
                     isRouteBuilding = progress in 0 until 100,
                     isRouteReady = progress >= 100
+                ))
+            }
+
+            override fun onCommonBuildError(lastResultCode: Int, lastMissingMaps: Array<out String>) {
+                val currentState = NavigationStateHolder.state.value
+                NavigationStateHolder.update(currentState.copy(
+                    isRouteBuilding = false,
+                    isRouteReady = false,
+                    routeBuildProgress = 0
                 ))
             }
 

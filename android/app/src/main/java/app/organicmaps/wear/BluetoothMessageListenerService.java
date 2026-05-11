@@ -22,7 +22,7 @@ import app.organicmaps.sync.ISyncLayer;
 public class BluetoothMessageListenerService extends Service implements ISyncLayer.MessageListener {
     private static final String TAG = "BluetoothMsgListener";
     private static final int SEARCH_SELECT_MIN_SIZE = 8 * 2 + 4;
-    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4;
+    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4 + 4;
 
     private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
     private static final String PATH_SEARCH_QUERY = "/search/query";
@@ -87,12 +87,15 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                 buffer.get(d);
                 downloadModeStr = new String(d, StandardCharsets.UTF_8);
             }
+
+            int poiMask = buffer.remaining() >= 4 ? buffer.getInt() : 0;
             
             final boolean finalMapEnabled = mapEnabled;
             final boolean finalWatchLocalMode = watchLocalMode;
             final boolean finalStandaloneMode = standaloneMode;
             final String finalBackend = backendStr;
             final String finalDownloadMode = downloadModeStr;
+            final int finalPoiMask = poiMask;
             mMainHandler.post(() -> {
                 android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
                 prefs.edit()
@@ -101,6 +104,7 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                     .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), finalStandaloneMode)
                     .putString(getString(app.organicmaps.R.string.pref_wear_os_backend), finalBackend)
                     .putString(getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), finalDownloadMode)
+                    .putInt("poiCategoriesMask", finalPoiMask)
                     .apply();
                 WearSyncService.initSyncLayer(this);
             });
@@ -156,10 +160,11 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                 double maxLat = buffer.getDouble();
                 double maxLon = buffer.getDouble();
                 int routerType = buffer.getInt();
+                int poiCategoriesMask = buffer.remaining() >= 4 ? buffer.getInt() : 0;
 
                 mMainHandler.post(() -> {
                     if (mMapTileRequestHandler == null) mMapTileRequestHandler = new WearMapTileRequestHandler(this);
-                    mMapTileRequestHandler.handle(sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType);
+                    mMapTileRequestHandler.handle(sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType, poiCategoriesMask);
                 });
             }
             case PATH_PING -> {

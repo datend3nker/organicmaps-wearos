@@ -134,6 +134,12 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
         String backend = PreferenceManager.getDefaultSharedPreferences(requireContext()).getString(getString(R.string.pref_wear_os_backend), "GMS");
         pref.setSummary(backend.equals("GMS") ? "Google Play Services" : "Bluetooth (OSS)");
     }
+    
+    Preference mapDownloadModePref = findPreference(getString(R.string.pref_wear_os_map_download_mode));
+    if (mapDownloadModePref instanceof ListPreference) {
+      ListPreference listPreference = (ListPreference) mapDownloadModePref;
+      listPreference.setSummary(listPreference.getEntry());
+    }
   }
 
   @Override
@@ -368,6 +374,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     final Preference mapDownloadModePref = findPreference(getString(R.string.pref_wear_os_map_download_mode));
     if (mapDownloadModePref != null) {
         mapDownloadModePref.setOnPreferenceChangeListener(wearPrefsListener);
+        updateWearOsPrefsSummary();
     }
 
     final Preference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));

@@ -54,10 +54,17 @@ class Omaps : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setTheme(android.R.style.Theme_DeviceDefault)
 
+        val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 101)
-            }
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        
+        val missingPermissions = permissions.filter { 
+            ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED 
+        }
+        
+        if (missingPermissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), 101)
         }
         
         // Initialize state from prefs
@@ -65,7 +72,7 @@ class Omaps : ComponentActivity() {
         val isMapEnabled = prefs.getBoolean("mapEnabled", false)
         val isOfflineMapsEnabled = prefs.getBoolean("watchLocalMode", false)
         val routerType = prefs.getInt("routerType", 0)
-        val poiMask = prefs.getInt("poiCategoriesMask", 0)
+        val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
         
         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
             mapEnabled = isMapEnabled,
@@ -209,11 +216,11 @@ fun WearApp() {
                                 WearCommandService.startNavigation(context)
                             }
                         },
-                        enabled = routeReady,
+                        enabled = routeReady && !navState.isRouteBuilding,
                         modifier = Modifier.padding(bottom = 24.dp)
                     ) {
                         Text(
-                            if (navState.isRouteBuilding && !routeReady) {
+                            if (navState.isRouteBuilding) {
                                 "Calculating ${navState.routeBuildProgress}%"
                             } else {
                                 "Start Navigation"

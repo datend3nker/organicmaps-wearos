@@ -61,11 +61,12 @@ public class BluetoothSyncLayer implements ISyncLayer {
         boolean watchLocalMode = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), false);
         String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
         String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
+        int poiMask = prefs.getInt("poiCategoriesMask", 0x3F);
 
         byte[] modeBytes = mapDownloadMode.getBytes(StandardCharsets.UTF_8);
         byte[] backendBytes = backend.getBytes(StandardCharsets.UTF_8);
 
-        ByteBuffer buffer = ByteBuffer.allocate(2 + 1 + 4 + modeBytes.length + 4 + backendBytes.length);
+        ByteBuffer buffer = ByteBuffer.allocate(2 + 1 + 4 + modeBytes.length + 4 + backendBytes.length + 4);
         buffer.put((byte) (mapEnabled ? 1 : 0));
         buffer.put((byte) (watchLocalMode ? 1 : 0));
         buffer.put((byte) (standaloneMode ? 1 : 0));
@@ -73,6 +74,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
         buffer.put(modeBytes);
         buffer.putInt(backendBytes.length);
         buffer.put(backendBytes);
+        buffer.putInt(poiMask);
         sendRawMessage(context, MSG_TYPE_PREFERENCES, buffer.array());
     }
 

@@ -199,6 +199,8 @@ class BluetoothWearDataListenerService : Service() {
                     String(bytes, StandardCharsets.UTF_8)
                 } else "GMS"
 
+                val poiMask = if (buffer.remaining() >= 4) buffer.int else 0x3F
+
                 val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
                 val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
                 val finalOfflineState = isForcedOffline || watchLocalMode
@@ -209,6 +211,7 @@ class BluetoothWearDataListenerService : Service() {
                     .putBoolean("disconnectFromPhone", standaloneMode)
                     .putString("mapDownloadMode", mapDownloadMode)
                     .putString("pref_wear_os_backend", backend)
+                    .putInt("poiCategoriesMask", poiMask)
                     .apply()
 
                 WearCommandService.initBackend(this)
@@ -219,7 +222,8 @@ class BluetoothWearDataListenerService : Service() {
                 NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                     mapEnabled = mapEnabled,
                     watchLocalMode = finalOfflineState,
-                    standaloneMode = standaloneMode
+                    standaloneMode = standaloneMode,
+                    poiCategoriesMask = poiMask
                 ))
             }
             5 -> { // MSG_TYPE_MAP_DOWNLOAD

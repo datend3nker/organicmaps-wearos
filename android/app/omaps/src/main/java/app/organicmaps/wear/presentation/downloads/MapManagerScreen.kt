@@ -32,6 +32,8 @@ import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ChevronRight
 
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -77,13 +79,17 @@ fun MapManagerScreen() {
                     
                     // Improved sorting: downloading first, then done/partly, then category/name
                     countries = result.filter { it.id != "World" && it.id != "WorldCoasts" }.sortedWith { a, b ->
-                        val aDownloading = a.status == CountryItem.STATUS_PROGRESS || a.status == CountryItem.STATUS_ENQUEUED || a.status == CountryItem.STATUS_APPLYING
-                        val bDownloading = b.status == CountryItem.STATUS_PROGRESS || b.status == CountryItem.STATUS_ENQUEUED || b.status == CountryItem.STATUS_APPLYING
-                        if (aDownloading != bDownloading) return@sortedWith if (aDownloading) -1 else 1
-                        
                         val aDone = a.status == CountryItem.STATUS_DONE || a.status == CountryItem.STATUS_PARTLY || a.present
                         val bDone = b.status == CountryItem.STATUS_DONE || b.status == CountryItem.STATUS_PARTLY || b.present
+                        
+                        // Downloaded/Partly downloaded first
                         if (aDone != bDone) return@sortedWith if (aDone) -1 else 1
+                        
+                        val aDownloading = a.status == CountryItem.STATUS_PROGRESS || a.status == CountryItem.STATUS_ENQUEUED || a.status == CountryItem.STATUS_APPLYING
+                        val bDownloading = b.status == CountryItem.STATUS_PROGRESS || b.status == CountryItem.STATUS_ENQUEUED || b.status == CountryItem.STATUS_APPLYING
+                        
+                        // Then currently downloading
+                        if (aDownloading != bDownloading) return@sortedWith if (aDownloading) -1 else 1
                         
                         if (a.category != b.category) return@sortedWith a.category.compareTo(b.category)
                         
@@ -208,10 +214,7 @@ fun MapManagerScreen() {
 @Composable
 fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit) {
     val isDownloading = item.status == CountryItem.STATUS_PROGRESS || item.status == CountryItem.STATUS_ENQUEUED || item.status == CountryItem.STATUS_APPLYING
-    val isInstalled = item.status == CountryItem.STATUS_DONE
-    
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
+    val isInstalled = item.status == CountryItem.STATUS_DONE || item.status == CountryItem.STATUS_PARTLY || item.present
     
     val statusText = when (item.status) {
         CountryItem.STATUS_DONE -> "Installed"
@@ -222,54 +225,46 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
         else -> if (item.isExpandable) "${item.totalChildCount} regions" else "Status: ${item.status}"
     }
 
-    val chipColor = if (isPressed && isInstalled) {
-        Color.Red.copy(alpha = 0.5f)
-    } else {
-        MaterialTheme.colors.surface
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(chipColor)
-                .combinedClickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = {
-                    if (item.isExpandable) {
-                        onPathStackChanged(pathStack + item.id)
-                    } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED) {
-                        MapManager.startDownload(item.id)
-                    }
-                },
-                onLongClick = {
-                    if (isInstalled) {
-                        MapManager.nativeDelete(item.id)
-                    }
-                }
-            )
-            .padding(horizontal = 14.dp, vertical = 8.dp)
-    ) {
-        Column {
-            Text(item.name, maxLines = 1, style = MaterialTheme.typography.button)
-            Text(statusText, maxLines = 1, style = MaterialTheme.typography.caption2, color = if (isInstalled) Color.Green else Color.LightGray)
-            if (isDownloading && item.progress > 0) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(2.dp)
-                        .padding(top = 4.dp)
-                        .background(Color.Gray.copy(alpha = 0.3f))
-                ) {
+    Chip(
+        onClick = {
+            if (item.isExpandable) {
+                onPathStackChanged(pathStack + item.id)
+            } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED) {
+                MapManager.startDownload(item.id)
+            }
+        },
+        label = { Text(item.name, maxLines = 1) },
+        secondaryLabel = { 
+            Column {
+                Text(statusText, color = if (isInstalled) Color.Green else Color.LightGray)
+                if (isDownloading && item.progress > 0) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth(item.progress / 100f)
-                            .fillMaxHeight()
-                            .background(Color(0xFF00E5FF))
-                    )
+                            .fillMaxWidth()
+                            .height(2.dp)
+                            .padding(top = 2.dp)
+                            .background(Color.Gray.copy(alpha = 0.3f))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(item.progress / 100f)
+                                .fillMaxHeight()
+                                .background(Color(0xFF00E5FF))
+                        )
+                    }
                 }
             }
+        },
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        colors = ChipDefaults.secondaryChipColors(),
+        icon = {
+            if (item.isExpandable) {
+                Icon(Icons.Default.ChevronRight, contentDescription = null)
+            } else if (isInstalled) {
+                // Using Button as a wrapper for Delete icon to make it clickable independently is tricky in Chip icon.
+                // We'll use the chip's icon slot for the status or action.
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(24.dp).clickable { MapManager.nativeDelete(item.id) })
+            }
         }
-    }
+    )
 }

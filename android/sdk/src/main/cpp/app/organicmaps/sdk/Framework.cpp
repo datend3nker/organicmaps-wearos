@@ -1101,6 +1101,7 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
 
   if (rect.IsValid())
   {
+    int featuresCount = 0;
     frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
         auto geomType = ft.GetGeomType();
 
@@ -1113,7 +1114,7 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
 
             // Filter for car mode (routerType 0)
             if (routerType == 0) {
-                if (hw == HighwayClass::Pedestrian || hw == HighwayClass::ServiceMinor) {
+                if (hw == HighwayClass::Pedestrian) {
                     return;
                 }
             }
@@ -1122,20 +1123,44 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
             else if (hw == HighwayClass::Primary) type = 5;
             else if (hw == HighwayClass::Secondary) type = 6;
             else if (hw == HighwayClass::Tertiary) type = 7;
-            else type = 1;
+            else if (hw == HighwayClass::LivingStreet) type = 1;
+            else if (hw == HighwayClass::Service) type = 8;
+            else if (hw == HighwayClass::ServiceMinor) type = 8;
+            else type = 1; // Default to residential/minor road
         } else if (geomType == feature::GeomType::Area) {
             if (IsBuildingChecker::Instance()(types)) type = 2;
-            else type = 3; // Area/Water
+            else {
+                // Simplified water/greenery check
+                bool isWater = false;
+                bool isGreen = false;
+                auto const & c = classif();
+                static uint32_t const water = c.GetTypeByPath({"natural", "water"});
+                static uint32_t const forest = c.GetTypeByPath({"landuse", "forest"});
+                static uint32_t const park = c.GetTypeByPath({"leisure", "park"});
+                static uint32_t const grass = c.GetTypeByPath({"landuse", "grass"});
+                static uint32_t const meadow = c.GetTypeByPath({"landuse", "meadow"});
+
+                for (uint32_t t : types) {
+                    uint32_t t2 = t;
+                    ftype::TruncValue(t2, 2);
+                    if (t2 == water) isWater = true;
+                    else if (t2 == forest || t2 == park || t2 == grass || t2 == meadow) isGreen = true;
+                }
+
+                if (isWater) type = 3;
+                else if (isGreen) type = 9;
+                else return; // Skip other areas to avoid covering roads with blue
+            }
         } else if (geomType == feature::GeomType::Point) {
             // POI Categories
             if (poiCategoriesMask == 0) return;
 
             if ((poiCategoriesMask & 1) && IsEatChecker::Instance()(types)) type = 100;
-            else if ((poiCategoriesMask & 2) && IsOperatorOthersPoiChecker::Instance()(types)) type = 101; // Includes fuel
+            else if ((poiCategoriesMask & 2) && IsOperatorOthersPoiChecker::Instance()(types)) type = 101;
             else if ((poiCategoriesMask & 4) && IsHotelChecker::Instance()(types)) type = 102;
             else if ((poiCategoriesMask & 8) && IsATMChecker::Instance()(types)) type = 103;
-            else if ((poiCategoriesMask & 16) && OneLevelPOIChecker()(types)) type = 105; // General POIs (Shops, Pharmacy, etc.)
-            else if ((poiCategoriesMask & 32) && IsPoiChecker::Instance()(types)) type = 106; // Everything else that OM considers a POI
+            else if ((poiCategoriesMask & 16) && (OneLevelPOIChecker()(types) || IsAmenityChecker::Instance()(types))) type = 105;
+            else if ((poiCategoriesMask & 32) && IsPoiChecker::Instance()(types)) type = 106;
 
             if (type == 0) return;
         }
@@ -1146,14 +1171,15 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
         if (geomType == feature::GeomType::Point) {
             points.push_back(ft.GetCenter());
         } else {
-            // Use a higher scale for point extraction to avoid over-simplification
+            // Use requested scale for point extraction
             ft.ForEachPoint([&](m2::PointD const & p) {
               points.push_back(p);
-            }, 19);
+            }, scale);
         }
 
         if (points.empty() || (geomType != feature::GeomType::Point && points.size() < 2)) return;
 
+        featuresCount++;
         buffer.push_back(type);
         
         uint32_t count = points.size();
@@ -1170,6 +1196,10 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
           buffer.insert(buffer.end(), pLat, pLat + sizeof(lat));
         }
     }, rect, scale);
+
+    if (featuresCount > 0) {
+        LOG(LINFO, ("Wear map extraction: scale =", scale, "features =", featuresCount, "buffer =", buffer.size()));
+    }
   }
 
   jbyteArray result = env->NewByteArray(buffer.size());

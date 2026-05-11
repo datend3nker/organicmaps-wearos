@@ -20,7 +20,7 @@ import app.organicmaps.sync.ISyncLayer;
 public class WearMessageListenerService extends WearableListenerService implements ISyncLayer.MessageListener {
     private static final String TAG = "WearMessageListener";
     private static final int SEARCH_SELECT_MIN_SIZE = Double.BYTES * 2 + Integer.BYTES;
-    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4;
+    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4 + 4;
 
     private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
     private static final String PATH_SEARCH_QUERY = "/search/query";
@@ -59,6 +59,40 @@ public class WearMessageListenerService extends WearableListenerService implemen
         super.onMessageReceived(messageEvent);
         WearSyncService.getSyncLayer().notifyMessageReceived(
             messageEvent.getPath(), messageEvent.getData(), messageEvent.getSourceNodeId());
+    }
+
+    @Override
+    public void onDataChanged(@NonNull com.google.android.gms.wearable.DataEventBuffer dataEventBuffer) {
+        super.onDataChanged(dataEventBuffer);
+        for (com.google.android.gms.wearable.DataEvent event : dataEventBuffer) {
+            if (event.getType() == com.google.android.gms.wearable.DataEvent.TYPE_CHANGED && event.getDataItem().getUri().getPath().equals("/preferences/watch")) {
+                com.google.android.gms.wearable.DataMap dataMap = com.google.android.gms.wearable.DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
+                long timestamp = dataMap.getLong("timestamp", 0);
+                boolean mapEnabled = dataMap.getBoolean("mapEnabled", false);
+                boolean watchLocalMode = dataMap.getBoolean("watchLocalMode", false);
+                boolean standaloneMode = dataMap.getBoolean("standaloneMode", false);
+                String backend = dataMap.getString("backend", "GMS");
+                String mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY");
+                int poiMask = dataMap.getInt("poiCategoriesMask", 0x3F);
+                
+                mMainHandler.post(() -> {
+                    android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
+                    long lastApplied = prefs.getLong("pref_wear_os_last_sync_timestamp", 0);
+                    if (timestamp < lastApplied) return;
+
+                    prefs.edit()
+                        .putLong("pref_wear_os_last_sync_timestamp", timestamp)
+                        .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_map_enabled), mapEnabled)
+                        .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), watchLocalMode)
+                        .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), standaloneMode)
+                        .putString(getString(app.organicmaps.R.string.pref_wear_os_backend), backend)
+                        .putString(getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), mapDownloadMode)
+                        .putInt("poiCategoriesMask", poiMask)
+                        .apply();
+                    WearSyncService.initSyncLayer(this);
+                });
+            }
+        }
     }
 
     @Override
@@ -112,9 +146,10 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 double maxLat = buffer.getDouble();
                 double maxLon = buffer.getDouble();
                 int routerType = buffer.getInt();
+                int poiCategoriesMask = buffer.remaining() >= 4 ? buffer.getInt() : 0;
 
                 mMainHandler.post(() -> getMapTileRequestHandler().handle(
-                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType));
+                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType, poiCategoriesMask));
             }
             case PATH_PING -> {
                 Log.d(TAG, "Ping received from " + sourceNodeId);

@@ -235,6 +235,7 @@ class WearDataListenerService : WearableListenerService() {
                         val standaloneMode = dataMap.getBoolean("standaloneMode", false)
                         val mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY")
                         val backend = dataMap.getString("backend", "GMS")
+                        val poiMask = dataMap.getInt("poiCategoriesMask", 0x3F)
                         
                         // Standalone mode is a manual link cut or forced from phone
                         val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
@@ -248,6 +249,7 @@ class WearDataListenerService : WearableListenerService() {
                             .putBoolean("disconnectFromPhone", standaloneMode)
                             .putString("mapDownloadMode", mapDownloadMode)
                             .putString("pref_wear_os_backend", backend)
+                            .putInt("poiCategoriesMask", poiMask)
                             .apply()
 
                         // Sync backend implementation
@@ -261,7 +263,8 @@ class WearDataListenerService : WearableListenerService() {
                         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                             mapEnabled = finalMapEnabled,
                             watchLocalMode = finalOfflineState, // Apply forced state if set
-                            standaloneMode = standaloneMode
+                            standaloneMode = standaloneMode,
+                            poiCategoriesMask = poiMask
                         ))
                         Log.d(TAG, "Preferences updated: mapEnabled=$finalMapEnabled, phoneWatchLocalMode=$watchLocalMode, finalUsedState=$finalOfflineState, standalone=$standaloneMode, backend=$backend")
                     }

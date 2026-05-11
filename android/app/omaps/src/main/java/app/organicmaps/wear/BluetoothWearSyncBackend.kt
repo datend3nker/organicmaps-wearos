@@ -52,14 +52,15 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         sendMessage(context, PATH_SEARCH_SELECT, buffer.array())
     }
 
-    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, routerType: Int) {
-        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4) + Int.SIZE_BYTES)
+    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, routerType: Int, poiCategoriesMask: Int) {
+        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4) + Int.SIZE_BYTES + Int.SIZE_BYTES)
         buffer.putLong(requestId)
         buffer.putDouble(minLat)
         buffer.putDouble(minLon)
         buffer.putDouble(maxLat)
         buffer.putDouble(maxLon)
         buffer.putInt(routerType)
+        buffer.putInt(poiCategoriesMask)
         sendMessage(context, PATH_MAP_TILE_REQUEST, buffer.array())
     }
 
@@ -76,10 +77,11 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
         val downloadMode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY"
         val backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS"
+        val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
         
         val backendBytes = backend.toByteArray(StandardCharsets.UTF_8)
         val downloadModeBytes = downloadMode.toByteArray(StandardCharsets.UTF_8)
-        val buffer = ByteBuffer.allocate(1 + 1 + 1 + 1 + 1 + 4 + backendBytes.size + 4 + downloadModeBytes.size)
+        val buffer = ByteBuffer.allocate(1 + 1 + 1 + 1 + 1 + 4 + backendBytes.size + 4 + downloadModeBytes.size + 4)
         buffer.put((if (mapEnabled) 1 else 0).toByte())
         buffer.put((if (forceOffline) 1 else 0).toByte())
         buffer.put((if (watchLocalMode) 1 else 0).toByte())
@@ -89,6 +91,7 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         buffer.put(backendBytes)
         buffer.putInt(downloadModeBytes.size)
         buffer.put(downloadModeBytes)
+        buffer.putInt(poiMask)
         
         sendMessage(context, "/preferences/watch", buffer.array())
     }

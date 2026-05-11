@@ -52,6 +52,9 @@ public final class HeadlessRouteInteractor {
     }
 
     private void performPlanning(double lat, double lon, int routerType, @NonNull String name) {
+        RoutingController controller = RoutingController.get();
+        controller.cancel(); // Clear any previous route
+        
         MapObject endPoint = MapObject.createMapObject(MapObject.POI, name, "", lat, lon);
         MapObject startPoint = resolveStartPoint();
         if (startPoint == null) {
@@ -60,7 +63,6 @@ public final class HeadlessRouteInteractor {
         }
 
         Router router = resolveRouter(routerType);
-        RoutingController controller = RoutingController.get();
         controller.prepare(startPoint, endPoint, router);
         controller.checkAndBuildRoute();
 

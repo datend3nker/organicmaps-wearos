@@ -41,14 +41,35 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, PATH_SEARCH_SELECT, buffer.array())
     }
 
-    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double) {
-        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4))
+    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, routerType: Int, poiCategoriesMask: Int) {
+        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4) + Int.SIZE_BYTES + Int.SIZE_BYTES)
         buffer.putLong(requestId)
         buffer.putDouble(minLat)
         buffer.putDouble(minLon)
         buffer.putDouble(maxLat)
         buffer.putDouble(maxLon)
+        buffer.putInt(routerType)
+        buffer.putInt(poiCategoriesMask)
         sendMessage(context, PATH_MAP_TILE_REQUEST, buffer.array())
+    }
+
+    override fun requestPreferences(context: Context) {
+        sendMessage(context, "/preferences/request", byteArrayOf())
+    }
+
+    override fun startNavigation(context: Context) {
+        sendMessage(context, "/navigation/start/request", byteArrayOf())
+    }
+
+    override fun checkConnection(context: Context, callback: (Boolean) -> Unit) {
+        val nodeClient = Wearable.getNodeClient(context)
+        nodeClient.connectedNodes.addOnCompleteListener { task ->
+            if (task.isSuccessful && task.result != null) {
+                callback(task.result.isNotEmpty())
+            } else {
+                callback(false)
+            }
+        }
     }
 
     override fun sendPing(context: Context) {

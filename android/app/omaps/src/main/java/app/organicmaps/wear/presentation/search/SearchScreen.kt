@@ -41,6 +41,8 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.SearchResultItem
 import app.organicmaps.wear.WearCommandService
+import app.organicmaps.wear.WearApplication
+import android.util.Log
 import kotlinx.coroutines.launch
 import app.organicmaps.sdk.search.SearchEngine
 import app.organicmaps.sdk.search.SearchListener
@@ -67,28 +69,31 @@ fun SearchScreen() {
     DisposableEffect(navState.watchLocalMode) {
         val listener = object : SearchListener {
             override fun onResultsUpdate(results: Array<out SearchResult>, timestamp: Long) {
-                if (navState.watchLocalMode) {
-                    val converted = results.map {
-                        SearchResultItem(
-                            name = it.getTitle(context) ?: "",
-                            description = if (it.description != null) it.description.localizedFeatureType ?: "" else "",
-                            lat = it.lat,
-                            lon = it.lon,
-                            type = it.type,
-                        )
-                    }
-                    NavigationStateHolder.update(
-                        NavigationStateHolder.state.value.copy(
+                Log.d("SearchScreen", "Received ${results.size} standalone results")
+                NavigationStateHolder.update { current ->
+                    if (current.watchLocalMode) {
+                        val converted = results.map {
+                            SearchResultItem(
+                                name = it.getTitle(context) ?: "",
+                                description = if (it.description != null) it.description.localizedFeatureType ?: "" else "",
+                                lat = it.lat,
+                                lon = it.lon,
+                                type = it.type,
+                            )
+                        }
+                        current.copy(
                             searchResults = converted,
                             isSearching = true
                         )
-                    )
+                    } else current
                 }
             }
 
             override fun onResultsEnd(timestamp: Long) {
-                if (navState.watchLocalMode) {
-                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isSearching = false))
+                NavigationStateHolder.update { current ->
+                    if (current.watchLocalMode) {
+                        current.copy(isSearching = false)
+                    } else current
                 }
             }
         }
@@ -108,20 +113,31 @@ fun SearchScreen() {
     }
 
     val performSearch: (String) -> Unit = { query ->
-        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-            isSearching = true,
-            searchResults = emptyList()
-        ))
-        if (navState.watchLocalMode) {
-            SearchEngine.INSTANCE.cancel()
-            Framework.nativeRestoreDownloadQueue()
-            val hasLocation = (navState.lat != 0.0 && navState.lon != 0.0)
-            if (hasLocation) {
-                Framework.nativeSetSearchViewport(navState.lat, navState.lon, 14)
+        coroutineScope.launch {
+            NavigationStateHolder.update { it.copy(
+                isSearching = true,
+                searchResults = emptyList()
+            ) }
+            val state = NavigationStateHolder.state.value
+            if (state.watchLocalMode) {
+                try {
+                    (context.applicationContext as WearApplication).waitForInitializationSuspend()
+                    SearchEngine.INSTANCE.cancel()
+                    Framework.nativeRestoreDownloadQueue()
+                    
+                    val currentLat = if (state.lat != 0.0) state.lat else 48.2082
+                    val currentLon = if (state.lon != 0.0) state.lon else 16.3738
+                    val hasLocation = (state.lat != 0.0 && state.lon != 0.0)
+                    
+                    Framework.nativeSetSearchViewport(currentLat, currentLon, 14)
+                    SearchEngine.INSTANCE.search(context, query, false, System.currentTimeMillis(), hasLocation, currentLat, currentLon)
+                } catch (e: Exception) {
+                    Log.e("SearchScreen", "Search failed: ${e.message}")
+                    NavigationStateHolder.update { it.copy(isSearching = false) }
+                }
+            } else {
+                WearCommandService.search(context, query)
             }
-            SearchEngine.INSTANCE.search(context, query, false, System.nanoTime(), hasLocation, navState.lat, navState.lon)
-        } else {
-            WearCommandService.search(context, query)
         }
     }
 
@@ -171,42 +187,50 @@ fun SearchScreen() {
             ModeSelectionScreen(
                 result = selectedResult!!,
                 onModeSelected = { routerType ->
-                    if (navState.watchLocalMode) {
-                        val startPoint = if (navState.lat != 0.0 && navState.lon != 0.0) {
-                            MapObject.createMapObject(MapObject.MY_POSITION, "", "", navState.lat, navState.lon)
+                    coroutineScope.launch {
+                        val state = NavigationStateHolder.state.value
+                        if (state.watchLocalMode) {
+                            try {
+                                (context.applicationContext as WearApplication).waitForInitializationSuspend()
+                                val startPoint = if (state.lat != 0.0 && state.lon != 0.0) {
+                                    MapObject.createMapObject(MapObject.MY_POSITION, "", "", state.lat, state.lon)
+                                } else {
+                                    null
+                                }
+                                val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
+                                val router = when (routerType) {
+                                    0 -> Router.Vehicle
+                                    1 -> Router.Pedestrian
+                                    2 -> Router.Bicycle
+                                    else -> Router.Transit
+                                }
+                                val controller = RoutingController.get()
+                                controller.prepare(startPoint, destination, router)
+                                controller.checkAndBuildRoute()
+                                NavigationStateHolder.update { it.copy(
+                                    isActive = true,
+                                    isNavigating = false,
+                                    routeBuildProgress = 0,
+                                    isRouteBuilding = true,
+                                    isRouteReady = false,
+                                    routePoints = emptyList(),
+                                    distToTurn = "",
+                                    nextStreet = "",
+                                    distToTarget = "",
+                                    eta = 0,
+                                    completionPercent = 0.0,
+                                    turnLat = 0.0,
+                                    turnLon = 0.0
+                                ) }
+                            } catch (e: Exception) {
+                                Log.e("SearchScreen", "Route planning failed: ${e.message}")
+                            }
                         } else {
-                            null
+                            WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
                         }
-                        val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
-                        val router = when (routerType) {
-                            0 -> Router.Vehicle
-                            1 -> Router.Pedestrian
-                            2 -> Router.Bicycle
-                            else -> Router.Transit
-                        }
-                        val controller = RoutingController.get()
-                        controller.prepare(startPoint, destination, router)
-                        controller.checkAndBuildRoute()
-                        NavigationStateHolder.update(navState.copy(
-                            isActive = true,
-                            isNavigating = false,
-                            routeBuildProgress = 0,
-                            isRouteBuilding = true,
-                            isRouteReady = false,
-                            routePoints = emptyList(),
-                            distToTurn = "",
-                            nextStreet = "",
-                            distToTarget = "",
-                            eta = 0,
-                            completionPercent = 0.0,
-                            turnLat = 0.0,
-                            turnLon = 0.0
-                        ))
-                    } else {
-                        WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
+                        selectedResult = null
+                        searchQuery = TextFieldValue("")
                     }
-                    selectedResult = null
-                    searchQuery = TextFieldValue("")
                 },
                 onCancel = { 
                     selectedResult = null 

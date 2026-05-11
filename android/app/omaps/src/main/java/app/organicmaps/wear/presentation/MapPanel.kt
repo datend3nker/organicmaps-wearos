@@ -66,7 +66,9 @@ fun MapPanel() {
     val currentTileX = lonToTileX(effectiveLon, zoom)
     val currentTileY = latToTileY(effectiveLat, zoom)
     var mapFeatures by remember { mutableStateOf<ByteArray?>(null) }
+    var mapFeaturesAnchor by remember { mutableStateOf<Triple<Double, Double, Double>?>(null) }
     var pendingRequestId by remember { mutableStateOf(0L) }
+    val requestAnchors = remember { mutableMapOf<Long, Triple<Double, Double, Double>>() }
 
     // Logic: In companion mode and navigating, interaction is LOCKED
     val canInteract = navState.standaloneMode || !navState.isActive
@@ -153,10 +155,18 @@ fun MapPanel() {
 
     val useOfflineMaps = navState.watchLocalMode || !navState.isPhoneConnected || navState.standaloneMode
 
-    LaunchedEffect(currentTileX, currentTileY, useOfflineMaps, requestViewSpan, navState.poiCategoriesMask) {
-        val cachedFeatures = MapTileStateHolder.getCachedFeatures(effectiveLat, effectiveLon)
-        if (cachedFeatures != null && !navState.isExploreMode) {
-            mapFeatures = cachedFeatures
+    // Hide POIs while navigating/planning as target is already set
+    val effectivePoiMask = if (navState.isActive) 0 else navState.poiCategoriesMask
+
+    // Quantized coordinates for requests to improve responsiveness without flood
+    val requestLat = (effectiveLat * 500).roundToInt() / 500.0
+    val requestLon = (effectiveLon * 500).roundToInt() / 500.0
+
+    LaunchedEffect(requestLat, requestLon, useOfflineMaps, requestViewSpan, effectivePoiMask) {
+        val cached = MapTileStateHolder.getCachedTile(effectiveLat, effectiveLon)
+        if (cached != null && !navState.isExploreMode) {
+            mapFeatures = cached.features
+            mapFeaturesAnchor = cached.anchor
             return@LaunchedEffect
         }
 
@@ -166,24 +176,29 @@ fun MapPanel() {
                 effectiveLon - requestViewSpan,
                 effectiveLat + requestViewSpan,
                 effectiveLon + requestViewSpan,
-                19,
+                16, // Use 16 for local features too
                 navState.routerType,
-                navState.poiCategoriesMask
+                effectivePoiMask
             )
             if (localFeatures.isNotEmpty()) {
                 mapFeatures = localFeatures
-                if (!navState.isExploreMode) MapTileStateHolder.updateCache(effectiveLat, effectiveLon, localFeatures)
+                val anchor = Triple(effectiveLat, effectiveLon, requestViewSpan.toDouble())
+                mapFeaturesAnchor = anchor
+                if (!navState.isExploreMode) MapTileStateHolder.updateCache(effectiveLat, effectiveLon, localFeatures, anchor)
                 return@LaunchedEffect
             }
 
             if (useOfflineMaps && !navState.isPhoneConnected) {
                 mapFeatures = null
+                mapFeaturesAnchor = null
             }
         }
         
         if (!useOfflineMaps || (useOfflineMaps && mapFeatures == null && navState.isPhoneConnected)) {
             val requestId = System.nanoTime()
             pendingRequestId = requestId
+            val anchor = Triple(effectiveLat, effectiveLon, requestViewSpan.toDouble())
+            requestAnchors[requestId] = anchor
             WearCommandService.requestMapTile(
                 context,
                 requestId,
@@ -191,7 +206,8 @@ fun MapPanel() {
                 effectiveLon - requestViewSpan,
                 effectiveLat + requestViewSpan,
                 effectiveLon + requestViewSpan,
-                navState.routerType
+                navState.routerType,
+                effectivePoiMask
             )
         }
     }
@@ -199,15 +215,24 @@ fun MapPanel() {
     LaunchedEffect(streamedTile, pendingRequestId) {
         val tile = streamedTile ?: return@LaunchedEffect
         if (tile.requestId != pendingRequestId) return@LaunchedEffect
+        val anchor = requestAnchors[tile.requestId]
         mapFeatures = tile.features
-        MapTileStateHolder.updateCache(effectiveLat, effectiveLon, tile.features)
+        if (anchor != null) {
+            mapFeaturesAnchor = anchor
+            MapTileStateHolder.updateCache(effectiveLat, effectiveLon, tile.features, anchor)
+            requestAnchors.remove(tile.requestId)
+        } else {
+            val defaultAnchor = Triple(effectiveLat, effectiveLon, requestViewSpan.toDouble())
+            mapFeaturesAnchor = defaultAnchor
+            MapTileStateHolder.updateCache(effectiveLat, effectiveLon, tile.features, defaultAnchor)
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .clipToBounds()
-            .background(Color(0xFFF1EEE8))
+            .background(Color(0xFFF1EEE8)) // Light beige background
             .focusRequester(focusRequester)
             .onRotaryScrollEvent {
                 if (navState.isExploreMode && canInteract) {
@@ -235,6 +260,7 @@ fun MapPanel() {
         LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
         val currentTile = mapFeatures
+        val currentAnchor = mapFeaturesAnchor
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val offsetValPx = verticalOffsetFraction * size.height
@@ -245,26 +271,35 @@ fun MapPanel() {
                 rotate(mapRotationAnimatable.value, pivot = Offset(userScreenX, userScreenY))
                 translate(top = offsetValPx)
             }) {
-                currentTile?.let { features ->
-                    drawTile(features, effectiveLat, effectiveLon, viewSpan.toDouble())
+                if (currentTile != null && currentAnchor != null) {
+                    drawTile(currentTile, currentAnchor.first, currentAnchor.second, currentAnchor.third)
                 }
 
                 if (navState.routePoints.isNotEmpty()) {
                     val routePath = Path()
-                    val screenPoints = navState.routePoints.mapIndexed { i, point ->
-                        val (lat, lon) = point
+                    val screenPoints = navState.routePoints.map { (lat, lon) ->
                         val x = (((lon - (effectiveLon - viewSpan)) / (2 * viewSpan)) * size.width).toFloat()
                         val y = (size.height - (((lat - (effectiveLat - viewSpan)) / (2 * viewSpan)) * size.height)).toFloat()
-                        val pointOffset = Offset(x, y)
-                        if (i == 0) routePath.moveTo(x, y)
-                        else routePath.lineTo(x, y)
-                        pointOffset
+                        Offset(x, y)
                     }
                     
+                    screenPoints.forEachIndexed { i, pt ->
+                        if (i == 0) routePath.moveTo(pt.x, pt.y)
+                        else routePath.lineTo(pt.x, pt.y)
+                    }
+                    
+                    // Route shadow/casing
+                    drawPath(
+                        path = routePath, 
+                        color = Color(0x33000000),
+                        style = Stroke(width = 11.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    
+                    // Main route line
                     drawPath(
                         path = routePath, 
                         color = Color(0xFF3D5AFE),
-                        style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                     
                     // Highlight the current turn area on the route line
@@ -299,7 +334,7 @@ fun MapPanel() {
                                 )
                                 val p1 = screenPoints[(bestTurnIdx - 1).coerceAtLeast(0)]
                                 val p2 = screenPoints[(bestTurnIdx + 1).coerceAtMost(screenPoints.size - 1)]
-                                val angle = atan2(p2.y - p1.y, p2.x - p1.x)
+                                val angle = atan2((p2.y - p1.y).toDouble(), (p2.x - p1.x).toDouble()).toFloat()
                                 drawRouteTurnMarker(
                                     center = turnPoint,
                                     angle = angle,
@@ -424,18 +459,27 @@ fun MapPanel() {
 
             if (userScreenX in 0f..size.width && userScreenY in 0f..size.height) {
                 val markerColor = Color(0xFF4CAF50)
-                drawCircle(markerColor, radius = 7.dp.toPx(), center = Offset(userScreenX, userScreenY))
+                
+                // Outer glow/shadow
+                drawCircle(Color.Black.copy(alpha = 0.2f), radius = 9.dp.toPx(), center = Offset(userScreenX, userScreenY))
+                // White border
+                drawCircle(Color.White, radius = 7.5.dp.toPx(), center = Offset(userScreenX, userScreenY))
+                // Main circle
+                drawCircle(markerColor, radius = 6.dp.toPx(), center = Offset(userScreenX, userScreenY))
                 
                 withTransform({
                     translate(userScreenX, userScreenY)
                     rotate(if (navState.isExploreMode) 0f else 360f - mapRotationAnimatable.value)
                 }) {
                     val arrowPath = Path().apply {
-                        moveTo(0f, -11.dp.toPx()) // Tip points UP
-                        lineTo(-5.dp.toPx(), 3.dp.toPx()) // Left base
-                        lineTo(5.dp.toPx(), 3.dp.toPx()) // Right base
+                        moveTo(0f, -13.dp.toPx()) // Tip points UP
+                        lineTo(-6.5.dp.toPx(), 2.5.dp.toPx()) // Left base
+                        lineTo(6.5.dp.toPx(), 2.5.dp.toPx()) // Right base
                         close()
                     }
+                    // Arrow border
+                    drawPath(arrowPath, Color.White, style = Stroke(width = 2.dp.toPx(), join = StrokeJoin.Round))
+                    // Arrow fill
                     drawPath(arrowPath, markerColor)
                 }
             }
@@ -472,58 +516,70 @@ private fun DrawScope.drawTile(features: ByteArray, centerLat: Double, centerLon
                 val y = (size.height - (((lat - (centerLat - viewSpan)) / (2 * viewSpan)) * size.height)).toFloat()
                 if (i == 0) mapPath.moveTo(x, y)
                 else mapPath.lineTo(x, y)
+                if (i == count - 1 && type in listOf(2, 3, 9)) mapPath.close()
             }
         }
     }
 
-    val drawOrder = listOf(3, 2, 1, 7, 6, 5, 4)
+    val drawOrder = listOf(9, 3, 2, 8, 1, 7, 6, 5, 4)
     val sortedTypes = pathsByType.keys.sortedBy { type -> drawOrder.indexOf(type).let { if (it == -1) 99 else it } }
 
     for (type in sortedTypes) {
         val mapPath = pathsByType[type] ?: continue
         when (type) {
             1 -> { // Residential
-                drawPath(mapPath, Color(0xFF4E4E4E), style = Stroke(width = 7.0.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFF7F7F4), style = Stroke(width = 3.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFCAC8C0), style = Stroke(width = 6.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color.White, style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
-            2 -> drawPath(mapPath, Color(0xFFE0E0E0)) // Buildings
-            3 -> drawPath(mapPath, Color(0xFFA2D9FF)) // Water
+            2 -> drawPath(mapPath, Color(0xFFDEDBD0)) // Buildings
+            3 -> drawPath(mapPath, Color(0xFFB2E2F2)) // Water
             4 -> { // Motorway/Trunk
-                drawPath(mapPath, Color(0xFF4E342E), style = Stroke(width = 8.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFFFA726), style = Stroke(width = 5.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFE2A67C), style = Stroke(width = 8.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFFFB74D), style = Stroke(width = 5.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             5 -> { // Primary
-                drawPath(mapPath, Color(0xFF5D4037), style = Stroke(width = 7.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFE9C689), style = Stroke(width = 7.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
                 drawPath(mapPath, Color(0xFFFFD54F), style = Stroke(width = 4.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             6 -> { // Secondary
-                drawPath(mapPath, Color(0xFF37474F), style = Stroke(width = 6.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFF5F5F5), style = Stroke(width = 3.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFDEDBD0), style = Stroke(width = 6.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color.White, style = Stroke(width = 3.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             7 -> { // Tertiary
-                drawPath(mapPath, Color(0xFF546E7A), style = Stroke(width = 5.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFF5F5F5), style = Stroke(width = 3.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFE0E0E0), style = Stroke(width = 5.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color.White, style = Stroke(width = 3.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
+            8 -> { // Service/Minor
+                drawPath(mapPath, Color(0xFFE0E0E0), style = Stroke(width = 5.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFF5F5F5), style = Stroke(width = 2.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+            9 -> drawPath(mapPath, Color(0xFFD4E3A9)) // Greenery (More vibrant/natural green)
             else -> {
-                drawPath(mapPath, Color(0xFF9E9E9E), style = Stroke(width = 4.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(mapPath, Color(0xFFFDFDFD), style = Stroke(width = 3.0.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFDEDBD0), style = Stroke(width = 4.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(mapPath, Color(0xFFFAFAFA), style = Stroke(width = 3.0.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
         }
     }
     
-    // Draw POIs
+    // Draw POIs as stylized markers
     for ((type, points) in pointsByType) {
         val color = when (type) {
-            100 -> Color(0xFFE91E63) // Eat
-            101 -> Color(0xFF2196F3) // Transportation
-            102 -> Color(0xFFFF9800) // Hotel
-            103 -> Color(0xFF4CAF50) // ATM
-            105 -> Color(0xFFF44336) // Main POIs
-            else -> Color(0xFF9C27B0) // All Details
+            100 -> Color(0xFFFF9100) // Eat (Orange/Peach)
+            101 -> Color(0xFF2979FF) // Transportation (Bright Blue)
+            102 -> Color(0xFFFF6D00) // Hotel (Deep Orange)
+            103 -> Color(0xFF00C853) // ATM (Green)
+            105 -> Color(0xFF546E7A) // Main POIs (Blue-grey)
+            else -> Color(0xFF7B1FA2) // All Details (Purple)
         }
         for (p in points) {
-            drawCircle(Color.Black, radius = 5.dp.toPx(), center = p)
-            drawCircle(color, radius = 4.dp.toPx(), center = p)
+            // Marker shadow
+            drawCircle(Color.Black.copy(alpha = 0.15f), radius = 6.5.dp.toPx(), center = p.copy(y = p.y + 0.5.dp.toPx()))
+            // Marker white ring
+            drawCircle(Color.White, radius = 5.5.dp.toPx(), center = p)
+            // Marker colored border
+            drawCircle(color, radius = 5.5.dp.toPx(), center = p, style = Stroke(width = 1.2.dp.toPx()))
+            // Inner colored dot
+            drawCircle(color, radius = 2.2.dp.toPx(), center = p)
         }
     }
 }

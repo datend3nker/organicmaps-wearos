@@ -58,4 +58,8 @@ object NavigationStateHolder {
     fun update(newState: NavigationState) {
         _state.value = newState
     }
+
+    fun update(updater: (NavigationState) -> NavigationState) {
+        _state.value = updater(_state.value)
+    }
 }

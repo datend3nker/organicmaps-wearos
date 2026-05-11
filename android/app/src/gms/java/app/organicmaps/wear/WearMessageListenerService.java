@@ -25,7 +25,7 @@ import app.organicmaps.sync.ISyncLayer;
 public class WearMessageListenerService extends WearableListenerService implements ISyncLayer.MessageListener {
     private static final String TAG = "WearMessageListener";
     private static final int SEARCH_SELECT_MIN_SIZE = Double.BYTES * 2 + Integer.BYTES;
-    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4;
+    private static final int MAP_TILE_REQUEST_SIZE = 8 + 8 * 4 + 4 + 4;
 
     private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
     private static final String PATH_SEARCH_QUERY = "/search/query";
@@ -81,6 +81,7 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 boolean autoDownload = dataMap.getBoolean("autoDownloadRouteMaps", true);
                 String backend = dataMap.getString("backend", "GMS");
                 String mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY");
+                int poiMask = dataMap.getInt("poiCategoriesMask", 0x3F);
                 
                 mMainHandler.post(() -> {
                     android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
@@ -94,7 +95,7 @@ public class WearMessageListenerService extends WearableListenerService implemen
                         .putBoolean(getString(R.string.pref_wear_os_standalone_mode), standaloneMode)
                         .putString(getString(R.string.pref_wear_os_backend), backend)
                         .putString(getString(R.string.pref_wear_os_map_download_mode), mapDownloadMode)
-                        // Note: Auto-Download is typically watch-side only, but could be saved if desired.
+                        .putInt("poiCategoriesMask", poiMask)
                         .apply();
                     WearSyncService.initSyncLayer(this);
                 });
@@ -154,9 +155,10 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 double maxLat = buffer.getDouble();
                 double maxLon = buffer.getDouble();
                 int routerType = buffer.getInt();
+                int poiCategoriesMask = buffer.remaining() >= 4 ? buffer.getInt() : 0;
 
                 mMainHandler.post(() -> getMapTileRequestHandler().handle(
-                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType));
+                    sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType, poiCategoriesMask));
             }
             case PATH_PING -> {
                 Log.d(TAG, "Ping received from " + sourceNodeId);

@@ -103,14 +103,24 @@ class WearDataListenerService : WearableListenerService() {
             launchOmaps() // Show UI so user sees progress
         } else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
             val buffer = ByteBuffer.wrap(messageEvent.data)
-            if (buffer.remaining() < 8) { // 1 long (requestId)
+            if (buffer.remaining() < 9) { // 1 long (requestId) + 1 byte (compressed flag)
                 Log.w(TAG, "Received malformed map tile response")
                 return
             }
 
             val requestId = buffer.long
-            val features = ByteArray(buffer.remaining())
+            val compressed = buffer.get().toInt() == 1
+            var features = ByteArray(buffer.remaining())
             buffer.get(features)
+
+            if (compressed) {
+                try {
+                    features = GzipUtils.decompress(features)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Decompression failed", e)
+                    return
+                }
+            }
             MapTileStateHolder.update(requestId, features)
         }
     }
@@ -209,6 +219,7 @@ class WearDataListenerService : WearableListenerService() {
                         val standaloneMode = dataMap.getBoolean("standaloneMode", false)
                         val mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY")
                         val backend = dataMap.getString("backend", "GMS")
+                        val poiMask = dataMap.getInt("poiCategoriesMask", 0x3F)
                         
                         // Standalone mode is a manual link cut
                         val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
@@ -220,6 +231,7 @@ class WearDataListenerService : WearableListenerService() {
                             .putBoolean("disconnectFromPhone", standaloneMode)
                             .putString("mapDownloadMode", mapDownloadMode)
                             .putString("pref_wear_os_backend", backend)
+                            .putInt("poiCategoriesMask", poiMask)
                             .apply()
 
                         // Sync backend implementation
@@ -232,7 +244,8 @@ class WearDataListenerService : WearableListenerService() {
 
                         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
                             mapEnabled = mapEnabled,
-                            watchLocalMode = finalOfflineState // Apply forced state if set
+                            watchLocalMode = finalOfflineState, // Apply forced state if set
+                            poiCategoriesMask = poiMask
                         ))
                         Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, phoneOfflineMaps=$watchLocalMode, finalUsedState=$finalOfflineState, backend=$backend")
                     }
