@@ -49,6 +49,12 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         buffer.putDouble(result.lon)
         buffer.putInt(routerType)
         buffer.put(nameBytes)
+        
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+            destinationName = result.name,
+            routerType = routerType
+        ))
+
         sendMessage(context, PATH_SEARCH_SELECT, buffer.array())
     }
 
@@ -71,7 +77,6 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
     override fun syncPreferences(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         val mapEnabled = prefs.getBoolean("mapEnabled", false)
-        val forceOffline = prefs.getBoolean("forceWatchLocalMode", false)
         val watchLocalMode = prefs.getBoolean("watchLocalMode", false)
         val standaloneMode = prefs.getBoolean("disconnectFromPhone", false)
         val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
@@ -81,17 +86,20 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         
         val backendBytes = backend.toByteArray(StandardCharsets.UTF_8)
         val downloadModeBytes = downloadMode.toByteArray(StandardCharsets.UTF_8)
-        val buffer = ByteBuffer.allocate(1 + 1 + 1 + 1 + 1 + 4 + backendBytes.size + 4 + downloadModeBytes.size + 4)
+        
+        // BUFFER ALIGNMENT WITH PHONE (BluetoothSyncLayer.java: parsePreferences)
+        // Format: [1:mapEnabled][1:watchLocal][1:standalone][1:autoDownload][4:modeLen][mode][4:backendLen][backend][4:poiMask][8:timestamp]
+        val buffer = ByteBuffer.allocate(4 + 4 + downloadModeBytes.size + 4 + backendBytes.size + 4 + 8)
         buffer.put((if (mapEnabled) 1 else 0).toByte())
-        buffer.put((if (forceOffline) 1 else 0).toByte())
         buffer.put((if (watchLocalMode) 1 else 0).toByte())
         buffer.put((if (standaloneMode) 1 else 0).toByte())
         buffer.put((if (autoDownload) 1 else 0).toByte())
-        buffer.putInt(backendBytes.size)
-        buffer.put(backendBytes)
         buffer.putInt(downloadModeBytes.size)
         buffer.put(downloadModeBytes)
+        buffer.putInt(backendBytes.size)
+        buffer.put(backendBytes)
         buffer.putInt(poiMask)
+        buffer.putLong(System.currentTimeMillis())
         
         sendMessage(context, "/preferences/watch", buffer.array())
     }

@@ -1,0 +1,11 @@
+--- app/omaps/src/main/java/app/organicmaps/wear/presentation/navigation/SensorScreen.kt
++++ app/omaps/src/main/java/app/organicmaps/wear/presentation/navigation/SensorScreen.kt
+@@ -14,7 +14,7 @@
+     val deviceRotation by viewModel.heading.collectAsState()
+     NavigationScreen(
+         distanceToNextTurn = "100 m",
+-        turnIcon = app.organicmaps.sdk.R.drawable.ic_turn_straight,
++        turnIcon = Icons.Default.ArrowUpward,
+         remainingTime = "5 min",
+         onCancelClick = onCancelClick,
+         deviceRotation = deviceRotation,

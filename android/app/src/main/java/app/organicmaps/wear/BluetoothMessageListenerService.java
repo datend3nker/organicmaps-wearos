@@ -65,43 +65,70 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
         Log.d(TAG, "onMessageReceived: " + path);
         if (path.equals("/preferences/watch")) {
             ByteBuffer buffer = ByteBuffer.wrap(data);
-            boolean mapEnabled = buffer.get() == 1;
-            buffer.get(); // skip legacy forceOffline byte
-            boolean watchLocalMode = buffer.get() == 1;
-            boolean standaloneMode = buffer.get() == 1;
+            boolean mapEnabled = false;
+            boolean watchLocalMode = false;
+            boolean standaloneMode = false;
             boolean autoDownload = true;
-            if (buffer.remaining() > 0) autoDownload = buffer.get() == 1;
-            
-            int bLen = buffer.remaining() >= 4 ? buffer.getInt() : 0;
             String backendStr = "GMS";
-            if (bLen > 0 && buffer.remaining() >= bLen) {
-                byte[] b = new byte[bLen];
-                buffer.get(b);
-                backendStr = new String(b, StandardCharsets.UTF_8);
-            }
-            
             String downloadModeStr = "BLUETOOTH_ONLY";
-            int dLen = buffer.remaining() >= 4 ? buffer.getInt() : 0;
-            if (dLen > 0 && buffer.remaining() >= dLen) {
-                byte[] d = new byte[dLen];
-                buffer.get(d);
-                downloadModeStr = new String(d, StandardCharsets.UTF_8);
-            }
+            int poiMask = 0x3F;
+            long timestamp = 0;
 
-            int poiMask = buffer.remaining() >= 4 ? buffer.getInt() : 0;
+            if (buffer.remaining() >= 3) {
+                mapEnabled = buffer.get() == 1;
+                watchLocalMode = buffer.get() == 1;
+                standaloneMode = buffer.get() == 1;
+                
+                if (buffer.remaining() > 0) {
+                    autoDownload = buffer.get() == 1;
+                }
+
+                if (buffer.remaining() >= 4) {
+                    int modeLen = buffer.getInt();
+                    if (modeLen > 0 && buffer.remaining() >= modeLen) {
+                        byte[] modeBytes = new byte[modeLen];
+                        buffer.get(modeBytes);
+                        downloadModeStr = new String(modeBytes, StandardCharsets.UTF_8);
+                    }
+                }
+
+                if (buffer.remaining() >= 4) {
+                    int backendLen = buffer.getInt();
+                    if (backendLen > 0 && buffer.remaining() >= backendLen) {
+                        byte[] backendBytes = new byte[backendLen];
+                        buffer.get(backendBytes);
+                        backendStr = new String(backendBytes, StandardCharsets.UTF_8);
+                    }
+                }
+
+                if (buffer.remaining() >= 4) {
+                    poiMask = buffer.getInt();
+                }
+                
+                if (buffer.remaining() >= 8) {
+                    timestamp = buffer.getLong();
+                }
+            }
             
             final boolean finalMapEnabled = mapEnabled;
             final boolean finalWatchLocalMode = watchLocalMode;
             final boolean finalStandaloneMode = standaloneMode;
+            final boolean finalAutoDownload = autoDownload;
             final String finalBackend = backendStr;
             final String finalDownloadMode = downloadModeStr;
             final int finalPoiMask = poiMask;
+            final long finalTimestamp = timestamp;
             mMainHandler.post(() -> {
                 android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
+                long lastApplied = prefs.getLong("pref_wear_os_last_sync_timestamp", 0);
+                if (finalTimestamp > 0 && finalTimestamp < lastApplied) return;
+
                 prefs.edit()
+                    .putLong("pref_wear_os_last_sync_timestamp", finalTimestamp)
                     .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_map_enabled), finalMapEnabled)
                     .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), finalWatchLocalMode)
                     .putBoolean(getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), finalStandaloneMode)
+                    .putBoolean("autoDownloadRouteMaps", finalAutoDownload)
                     .putString(getString(app.organicmaps.R.string.pref_wear_os_backend), finalBackend)
                     .putString(getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), finalDownloadMode)
                     .putInt("poiCategoriesMask", finalPoiMask)

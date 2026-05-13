@@ -1,0 +1,70 @@
+--- android/app/omaps/src/main/java/app/organicmaps/wear/presentation/Omaps.kt
++++ android/app/omaps/src/main/java/app/organicmaps/wear/presentation/Omaps.kt
+@@ -118,6 +118,48 @@
+     }
+ }
+ 
++@Composable
++fun OrganicMapsPager(pagerState: androidx.wear.compose.foundation.pager.PagerState) {
++    val navState by NavigationStateHolder.state.collectAsState()
++    val mainViewModel: MainViewModel = viewModel()
++    val isNavigating by mainViewModel.isNavigating.collectAsState()
++    val isMapEnabled = navState.mapEnabled
++
++    HorizontalPager(
++        state = pagerState,
++        modifier = Modifier.fillMaxSize(),
++        userScrollEnabled = !navState.isExploreMode
++    ) { page ->
++        when (page) {
++            0 -> Box(modifier = Modifier.fillMaxSize()) {
++                MapPanel(
++                    modifier = Modifier
++                        .fillMaxSize()
++                        .alpha(if (isNavigating && isMapEnabled) 1f else 0f)
++                )
++                app.organicmaps.wear.presentation.search.SearchScreen(
++                    modifier = Modifier
++                        .fillMaxSize()
++                        .alpha(if (isNavigating && isMapEnabled) 0f else 1f)
++                )
++            }
++            1 -> if (isNavigating) NavigationPanel(navState) else app.organicmaps.wear.presentation.downloads.MapManagerScreen()
++            2 -> if (isNavigating) StatsScreen(navState) else app.organicmaps.wear.presentation.settings.SettingsScreen()
++        }
++    }
++}
++
+ @Composable
+ fun WearApp(mainViewModel: MainViewModel = viewModel()) {
+     val context = LocalContext.current
+@@ -137,28 +179,7 @@
+ 
+     OrganicMapsTheme {
+         Box(modifier = Modifier.fillMaxSize()) {
+-            HorizontalPager(
+-                state = pagerState,
+-                modifier = Modifier.fillMaxSize(),
+-                userScrollEnabled = !navState.isExploreMode
+-            ) { page ->
+-                when (page) {
+-                    0 -> Box(modifier = Modifier.fillMaxSize()) {
+-                        MapPanel(
+-                            modifier = Modifier
+-                                .fillMaxSize()
+-                                .alpha(if (isNavigating && isMapEnabled) 1f else 0f)
+-                        )
+-                        SearchScreen(
+-                            modifier = Modifier
+-                                .fillMaxSize()
+-                                .alpha(if (isNavigating && isMapEnabled) 0f else 1f)
+-                        )
+-                    }
+-                    1 -> if (isNavigating) NavigationPanel(navState) else app.organicmaps.wear.presentation.downloads.MapManagerScreen()
+-                    2 -> if (isNavigating) StatsScreen(navState) else app.organicmaps.wear.presentation.settings.SettingsScreen()
+-                }
+-            }
++            OrganicMapsPager(pagerState)
+             
+             // Status Indicators
+             Box(

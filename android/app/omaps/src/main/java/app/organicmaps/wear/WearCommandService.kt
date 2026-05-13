@@ -18,11 +18,12 @@ object WearCommandService {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         val selectedBackend = prefs.getString("pref_wear_os_backend", "GMS")
         
+        // Properly dispose of previous backend if it exists
+        backend = null 
+        
         backend = if (selectedBackend == "BLUETOOTH" || BuildConfig.FLAVOR == "oss") {
             BluetoothWearSyncBackend()
         } else {
-            // This is a bit tricky since GmsWearSyncBackend is only in GMS/FDroid flavors
-            // We can use reflection or another way to instantiate it if it exists.
             try {
                 Class.forName("app.organicmaps.wear.GmsWearSyncBackend")
                     .getDeclaredConstructor().newInstance() as IWearSyncBackend
@@ -30,6 +31,9 @@ object WearCommandService {
                 BluetoothWearSyncBackend()
             }
         }
+        
+        // Immediate connection attempt and pref sync
+        syncPreferences(context)
     }
 
     fun stopNavigation(context: Context) = getBackend(context).stopNavigation(context)

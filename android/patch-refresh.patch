@@ -1,0 +1,15 @@
+--- app/src/main/java/app/organicmaps/settings/SettingsPrefsFragment.java
++++ app/src/main/java/app/organicmaps/settings/SettingsPrefsFragment.java
+@@ -156,6 +156,8 @@
+     {
+       updateWearOsPrefsSummary();
+       
++      isUpdatingFromSync = true;
+       // Force refresh the toggle states manually
+       SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(requireContext());
+       
+@@ -166,6 +168,7 @@
+       TwoStatePreference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
+       if (standaloneModePref != null) standaloneModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_standalone_mode), false));
++      isUpdatingFromSync = false;
+     }

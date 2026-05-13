@@ -40,6 +40,12 @@ class GmsWearSyncBackend : IWearSyncBackend {
         buffer.putDouble(result.lon)
         buffer.putInt(routerType)
         buffer.put(nameBytes)
+
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+            destinationName = result.name,
+            routerType = routerType
+        ))
+
         sendMessage(context, PATH_SEARCH_SELECT, buffer.array())
     }
 
@@ -62,7 +68,6 @@ class GmsWearSyncBackend : IWearSyncBackend {
     override fun syncPreferences(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         val mapEnabled = prefs.getBoolean("mapEnabled", false)
-        val forceOffline = prefs.getBoolean("forceWatchLocalMode", false) // legacy
         val watchLocalMode = prefs.getBoolean("watchLocalMode", false)
         val standaloneMode = prefs.getBoolean("disconnectFromPhone", false)
         val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
@@ -70,10 +75,11 @@ class GmsWearSyncBackend : IWearSyncBackend {
         val backend = prefs.getString("pref_wear_os_backend", "GMS")
         val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
         
+        android.util.Log.d("GmsWearSync", "Syncing preferences to phone: mapEnabled=$mapEnabled, watchLocal=$watchLocalMode")
+
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/preferences/watch")
         val map = putDataMapReq.dataMap
         map.putBoolean("mapEnabled", mapEnabled)
-        map.putBoolean("forceWatchLocalMode", forceOffline)
         map.putBoolean("watchLocalMode", watchLocalMode)
         map.putBoolean("standaloneMode", standaloneMode)
         map.putBoolean("autoDownloadRouteMaps", autoDownload)
@@ -83,6 +89,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         map.putLong("timestamp", System.currentTimeMillis())
         
         val putDataReq = putDataMapReq.asPutDataRequest()
+        putDataReq.setUrgent() // Critical for immediate sync
         Wearable.getDataClient(context).putDataItem(putDataReq)
     }
 

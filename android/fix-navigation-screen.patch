@@ -1,0 +1,39 @@
+--- app/omaps/src/main/java/app/organicmaps/wear/presentation/navigation/NavigationScreen.kt
++++ app/omaps/src/main/java/app/organicmaps/wear/presentation/navigation/NavigationScreen.kt
+@@ -14,8 +14,7 @@
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.rotate
+-import androidx.annotation.DrawableRes
+-import androidx.compose.ui.res.painterResource
++import androidx.compose.ui.graphics.vector.ImageVector
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.text.style.TextAlign
+ import androidx.compose.ui.tooling.preview.Preview
+@@ -37,7 +36,7 @@
+ @Composable
+ fun NavigationScreen(
+     distanceToNextTurn: String,
+-    @DrawableRes turnIcon: Int,
++    turnIcon: ImageVector,
+     remainingTime: String,
+     onCancelClick: () -> Unit,
+     deviceRotation: Float = 0f,
+@@ -66,7 +65,7 @@
+             // Large turn icon with optional exit number
+             Box(contentAlignment = Alignment.Center) {
+                 Icon(
+-                    painter = painterResource(id = turnIcon),
++                    imageVector = turnIcon,
+                     contentDescription = "Turn icon",
+                     modifier = Modifier
+                         .size(64.dp)
+@@ -127,7 +126,7 @@
+ fun NavigationScreenPreview() {
+     NavigationScreen(
+         distanceToNextTurn = "150 m",
+-        turnIcon = app.organicmaps.sdk.R.drawable.ic_turn_right,
++        turnIcon = Icons.Default.ArrowUpward,
+         remainingTime = "Avenue de l'Opéra",
+         onCancelClick = { },
+         deviceRotation = 45f

@@ -1,0 +1,34 @@
+--- android/app/omaps/src/main/java/app/organicmaps/wear/presentation/Omaps.kt
++++ android/app/omaps/src/main/java/app/organicmaps/wear/presentation/Omaps.kt
+@@ -121,9 +121,8 @@
+ @Composable
+ fun WearApp(mainViewModel: MainViewModel = viewModel()) {
+     val context = LocalContext.current
+-    val navState by NavigationStateHolder.state.collectAsState()
+-    val isNavigating by mainViewModel.isNavigating.collectAsState()
+-    val isMapEnabled = navState.mapEnabled
++    // Read specific flows and states only where needed, not at the top level
++    val isExploreMode by NavigationStateHolder.state.map { it.isExploreMode }.collectAsState(initial = false)
++    val openMapManager by NavigationStateHolder.state.map { it.openMapManager }.collectAsState(initial = false)
+     
+     // SINGLE PAGER FOR ENTIRE APP STABILITY
+     val pagerState = rememberPagerState(pageCount = { 3 })
+ 
+-    androidx.compose.runtime.LaunchedEffect(navState.openMapManager) {
+-        if (navState.openMapManager) {
++    androidx.compose.runtime.LaunchedEffect(openMapManager) {
++        if (openMapManager) {
+             pagerState.animateScrollToPage(1)
+-            NavigationStateHolder.update(navState.copy(openMapManager = false))
++            NavigationStateHolder.update { it.copy(openMapManager = false) }
+         }
+     }
+ 
+     OrganicMapsTheme {
+         Box(modifier = Modifier.fillMaxSize()) {
+             HorizontalPager(
+                 state = pagerState,
+                 modifier = Modifier.fillMaxSize(),
+-                userScrollEnabled = !navState.isExploreMode
++                userScrollEnabled = !isExploreMode
+             ) { page ->

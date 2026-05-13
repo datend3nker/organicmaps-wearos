@@ -1,0 +1,47 @@
+--- android/app/omaps/src/main/java/app/organicmaps/wear/presentation/MapPanel.kt
++++ android/app/omaps/src/main/java/app/organicmaps/wear/presentation/MapPanel.kt
+@@ -148,8 +148,15 @@
+         }
+     }
+ 
++    var isUsingGpsBearing by remember { mutableStateOf(false) }
++
+     // SAFE STABILIZED ROTATION with Speed-based Hysteresis
+     LaunchedEffect(navState.bearing, navState.speedMps, compassHeading, navState.isActive, navState.isExploreMode) {
++        if (navState.speedMps > 1.5f) {
++            isUsingGpsBearing = true
++        } else if (navState.speedMps < 0.5f || navState.bearing < 0f) {
++            isUsingGpsBearing = false
++        }
+         val targetDeg = when {
+             navState.isExploreMode -> 0f
+             // Only use GPS bearing if we have a valid speed (> 1.5 m/s) and valid bearing (>= 0)
+-            navState.isActive && navState.speedMps > 1.5 && navState.bearing >= 0f -> -navState.bearing
++            navState.isActive && isUsingGpsBearing && navState.bearing > 0.1f -> -navState.bearing
+             // Fallback to compass if slow or stationary
+             else -> -compassHeading
+         }
+@@ -183,10 +190,14 @@
+     // Quantized coordinates for local data fetching to prevent 3s reloads on GPS jitter
+-    // We use a factor of 40 (~300m) for extreme stability during movement
+-    val localRequestLat = (currentLat * 40).roundToInt() / 40.0
+-    val localRequestLon = (currentLon * 40).roundToInt() / 40.0
+-
+-    // Quantized viewSpan to prevent reloads on minor zoom animations
+-    val quantizedViewSpan = (requestViewSpan * 15).roundToInt() / 15.0
++    var localRequestLat by remember { mutableDoubleStateOf(currentLat) }
++    var localRequestLon by remember { mutableDoubleStateOf(currentLon) }
++    var quantizedViewSpan by remember { mutableDoubleStateOf(requestViewSpan.toDouble()) }
++
++    if (abs(currentLat - localRequestLat) > requestViewSpan * 0.5) {
++        localRequestLat = currentLat
++    }
++    if (abs(currentLon - localRequestLon) > requestViewSpan * 0.5) {
++        localRequestLon = currentLon
++    }
++    if (abs(requestViewSpan.toDouble() - quantizedViewSpan) / quantizedViewSpan > 0.3) {
++        quantizedViewSpan = requestViewSpan.toDouble()
++    }
+ 
+     val scope = rememberCoroutineScope()
+     LaunchedEffect(localRequestLat, localRequestLon, useOfflineMaps, quantizedViewSpan, effectivePoiMask) {

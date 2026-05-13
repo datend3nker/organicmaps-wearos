@@ -1,0 +1,41 @@
+--- app/omaps/src/main/java/app/organicmaps/wear/presentation/Omaps.kt
++++ app/omaps/src/main/java/app/organicmaps/wear/presentation/Omaps.kt
+@@ -142,21 +142,23 @@
+                 modifier = Modifier.fillMaxSize(),
+                 userScrollEnabled = !navState.isExploreMode
+             ) { page ->
+-                when (page) {
+-                    0 -> Box(modifier = Modifier.fillMaxSize()) {
+-                        MapPanel(
+-                            modifier = Modifier
+-                                .fillMaxSize()
+-                                .alpha(if (isNavigating && isMapEnabled) 1f else 0f)
+-                        )
+-                        SearchScreen(
+-                            modifier = Modifier
+-                                .fillMaxSize()
+-                                .alpha(if (isNavigating && isMapEnabled) 0f else 1f)
+-                        )
+-                    }
+-                    1 -> if (isNavigating) NavigationPanel(navState) else app.organicmaps.wear.presentation.downloads.MapManagerScreen()
+-                    2 -> if (isNavigating) StatsScreen(navState) else app.organicmaps.wear.presentation.settings.SettingsScreen()
++                androidx.compose.runtime.key(page) {
++                    when (page) {
++                        0 -> Box(modifier = Modifier.fillMaxSize()) {
++                            MapPanel(
++                                modifier = Modifier
++                                    .fillMaxSize()
++                                    .alpha(if (isNavigating && isMapEnabled) 1f else 0f)
++                            )
++                            SearchScreen(
++                                modifier = Modifier
++                                    .fillMaxSize()
++                                    .alpha(if (isNavigating && isMapEnabled) 0f else 1f)
++                            )
++                        }
++                        1 -> if (isNavigating) NavigationPanel(navState) else app.organicmaps.wear.presentation.downloads.MapManagerScreen()
++                        2 -> if (isNavigating) StatsScreen(navState) else app.organicmaps.wear.presentation.settings.SettingsScreen()
++                    }
+                 }
+             }
+             

@@ -1,0 +1,44 @@
+--- app/src/main/java/app/organicmaps/settings/SettingsPrefsFragment.java
++++ app/src/main/java/app/organicmaps/settings/SettingsPrefsFragment.java
+@@ -43,7 +43,9 @@
+ {
+   private final SharedPreferences.OnSharedPreferenceChangeListener mSharedPreferenceChangeListener = (sharedPreferences, key) -> {
+     if (key != null && key.startsWith("pref_wear_os_"))
+-      onResume(); // Simple way to refresh all UI
++      new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
++          refreshWearOsPrefs();
++      });
+   };
+ 
+   private final android.content.BroadcastReceiver mSettingsChangedReceiver = new android.content.BroadcastReceiver() {
+@@ -387,6 +389,8 @@
+     }
+   }
+ 
++  private boolean isUpdatingFromSync = false;
++
+   private void initWearOsPrefsCallbacks()
+   {
+     androidx.preference.Preference.OnPreferenceChangeListener wearPrefsListener = (preference, newValue) -> {
+       // Sync to watch when map streaming setting changes
+       // Run it slightly later so SharedPreferences gives the new saved value
+-      new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
++      if (!isUpdatingFromSync) {
++        new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
++      }
+       return true;
+     };
+ 
+@@ -155,6 +159,7 @@
+     
+     // Force refresh the toggle states manually
++    isUpdatingFromSync = true;
+     SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(requireContext());
+     
+     TwoStatePreference mapEnabledPref = findPreference(getString(R.string.pref_wear_os_map_enabled));
+@@ -165,6 +170,7 @@
+     TwoStatePreference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
+     if (standaloneModePref != null) standaloneModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_standalone_mode), false));
++    isUpdatingFromSync = false;
+   }
+ 

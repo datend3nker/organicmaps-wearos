@@ -73,17 +73,13 @@ class Omaps : ComponentActivity() {
         val isOfflineMapsEnabled = prefs.getBoolean("watchLocalMode", false)
         val routerType = prefs.getInt("routerType", 0)
         val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
-        val lastLat = prefs.getFloat("last_known_lat", 0.0f).toDouble()
-        val lastLon = prefs.getFloat("last_known_lon", 0.0f).toDouble()
         
         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
             mapEnabled = isMapEnabled,
             watchLocalMode = isOfflineMapsEnabled,
             routerType = routerType,
-            poiCategoriesMask = poiMask,
-            lat = lastLat,
-            lon = lastLon
-        ), force = true)
+            poiCategoriesMask = poiMask
+        ))
         
         setContent {
             WearApp()
@@ -252,7 +248,7 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
         remainingTime = navState.nextStreet,
         onCancelClick = { 
             WearCommandService.stopNavigation(context)
-            NavigationStateHolder.update(navState.copy(isActive = false), force = true)
+            NavigationStateHolder.update(navState.copy(isActive = false))
         },
         deviceRotation = deviceRotation,
         exitNum = navState.exitNum

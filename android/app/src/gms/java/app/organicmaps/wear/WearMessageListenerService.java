@@ -86,8 +86,19 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 mMainHandler.post(() -> {
                     android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
                     long lastApplied = prefs.getLong("pref_wear_os_last_sync_timestamp", 0);
-                    if (timestamp < lastApplied) return;
+                    Log.d(TAG, "Watch pref update received. Timestamp: " + timestamp + ", LastApplied: " + lastApplied);
+                    if (timestamp > 0 && timestamp < lastApplied) return;
 
+                    boolean changed = prefs.getBoolean(getString(R.string.pref_wear_os_map_enabled), false) != mapEnabled ||
+                            prefs.getBoolean(getString(R.string.pref_wear_os_watch_local_mode), false) != watchLocalMode ||
+                            prefs.getBoolean(getString(R.string.pref_wear_os_standalone_mode), false) != standaloneMode ||
+                            !prefs.getString(getString(R.string.pref_wear_os_backend), "GMS").equals(backend) ||
+                            !prefs.getString(getString(R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY").equals(mapDownloadMode) ||
+                            prefs.getInt("poiCategoriesMask", 0x3F) != poiMask;
+
+                    if (!changed && timestamp > 0 && timestamp == lastApplied) return;
+
+                    Log.d(TAG, "Applying watch preferences. Changed=" + changed);
                     prefs.edit()
                         .putLong("pref_wear_os_last_sync_timestamp", timestamp)
                         .putBoolean(getString(R.string.pref_wear_os_map_enabled), mapEnabled)
@@ -98,6 +109,12 @@ public class WearMessageListenerService extends WearableListenerService implemen
                         .putInt("poiCategoriesMask", poiMask)
                         .apply();
                     WearSyncService.initSyncLayer(this);
+                    
+                    if (changed) {
+                        // Notify UI to refresh
+                        Intent intent = new Intent("app.organicmaps.wear.SETTINGS_CHANGED");
+                        sendBroadcast(intent);
+                    }
                 });
             }
         }
@@ -107,19 +124,22 @@ public class WearMessageListenerService extends WearableListenerService implemen
     public void onMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId) {
         Log.d(TAG, "onMessageReceived: " + path);
         switch (path) {
-            case PATH_STOP_NAVIGATION -> mMainHandler.post(() -> {
-                Log.d(TAG, "Stopping navigation per watch request");
-                RoutingController.get().cancel();
-                app.organicmaps.routing.NavigationService.stopService(this);
-            });
-            case PATH_SEARCH_QUERY -> {
+            case PATH_STOP_NAVIGATION:
+                mMainHandler.post(() -> {
+                    Log.d(TAG, "Stopping navigation per watch request");
+                    RoutingController.get().cancel();
+                    app.organicmaps.routing.NavigationService.stopService(this);
+                });
+                break;
+            case PATH_SEARCH_QUERY: {
                 String query = new String(data, StandardCharsets.UTF_8);
                 mMainHandler.post(() -> {
                     Log.d(TAG, "Starting headless search for: " + query);
                     HeadlessSearchInteractor.getInstance(this).startSearch(query);
                 });
+                break;
             }
-            case PATH_SEARCH_SELECT -> {
+            case PATH_SEARCH_SELECT: {
                 ByteBuffer buffer = ByteBuffer.wrap(data);
                 if (buffer.remaining() < SEARCH_SELECT_MIN_SIZE) {
                     Log.w(TAG, "Malformed search select payload.");
@@ -137,12 +157,15 @@ public class WearMessageListenerService extends WearableListenerService implemen
                     Log.d(TAG, "Watch selected: " + name + " (" + lat + ", " + lon + ") Mode: " + routerType);
                     HeadlessRouteInteractor.getInstance(this).planRoute(lat, lon, routerType, name);
                 });
+                break;
             }
-            case PATH_SEARCH_HISTORY_REQUEST -> mMainHandler.post(() -> {
-                Log.d(TAG, "Sending search history to watch");
-                WearSyncService.sendSearchHistory(getApplicationContext());
-            });
-            case PATH_MAP_TILE_REQUEST -> {
+            case PATH_SEARCH_HISTORY_REQUEST:
+                mMainHandler.post(() -> {
+                    Log.d(TAG, "Sending search history to watch");
+                    WearSyncService.sendSearchHistory(getApplicationContext());
+                });
+                break;
+            case PATH_MAP_TILE_REQUEST: {
                 ByteBuffer buffer = ByteBuffer.wrap(data);
                 if (buffer.remaining() < MAP_TILE_REQUEST_SIZE) {
                     Log.w(TAG, "Malformed map tile request payload.");
@@ -159,19 +182,43 @@ public class WearMessageListenerService extends WearableListenerService implemen
 
                 mMainHandler.post(() -> getMapTileRequestHandler().handle(
                     sourceNodeId, requestId, minLat, minLon, maxLat, maxLon, routerType, poiCategoriesMask));
+                break;
             }
-            case PATH_PING -> {
+            case PATH_PING:
                 Log.d(TAG, "Ping received from " + sourceNodeId);
                 WearSyncService.getSyncLayer().sendPong(getApplicationContext(), sourceNodeId);
-            }
-            case PATH_PREFERENCES_REQUEST -> {
+                break;
+            case PATH_PREFERENCES_REQUEST:
                 Log.d(TAG, "Watch requested settings sync");
                 WearSyncService.getSyncLayer().syncPreferences(getApplicationContext());
-            }
-            case PATH_START_NAVIGATION_REQUEST -> mMainHandler.post(() -> {
-                Log.d(TAG, "Watch requested to start navigation");
-                RoutingController.get().start();
-            });
+                break;
+            case PATH_START_NAVIGATION_REQUEST:
+                mMainHandler.post(() -> {
+                    Log.d(TAG, "Watch requested to start navigation");
+                    RoutingController.get().start();
+                });
+                break;
+            case "/preferences/watch":
+                Log.d(TAG, "Watch sent preferences update");
+                mMainHandler.post(() -> {
+                    android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
+                    
+                    // We don't have a direct "parse" that returns if it changed, 
+                    // but we can check before/after or just broadcast only if it's likely a user change.
+                    // For now, let's just use the same logic as data changed.
+                    
+                    String oldBackend = prefs.getString(getString(R.string.pref_wear_os_backend), "GMS");
+                    
+                    WearSyncService.getSyncLayer().parsePreferences(this, data, prefs);
+                    WearSyncService.initSyncLayer(this);
+                    
+                    String newBackend = prefs.getString(getString(R.string.pref_wear_os_backend), "GMS");
+                    
+                    // Notify UI to refresh
+                    Intent intent = new Intent("app.organicmaps.wear.SETTINGS_CHANGED");
+                    sendBroadcast(intent);
+                });
+                break;
         }
     }
 }

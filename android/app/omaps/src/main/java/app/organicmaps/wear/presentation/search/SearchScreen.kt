@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -53,13 +54,16 @@ import app.organicmaps.sdk.Router
 
 import app.organicmaps.sdk.Framework
 
+import androidx.lifecycle.viewmodel.compose.viewModel
+import app.organicmaps.wear.presentation.MainViewModel
+
 @Composable
-fun SearchScreen() {
+fun SearchScreen(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewModel()) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
     
-    var searchQuery by remember { mutableStateOf(TextFieldValue("")) }
+    var searchQuery by mainViewModel.searchQuery
     var selectedResult by remember { mutableStateOf<SearchResultItem?>(null) }
     val focusRequester = remember { FocusRequester() }
     val navState by NavigationStateHolder.state.collectAsState()
@@ -161,6 +165,7 @@ fun SearchScreen() {
     }
 
     Scaffold(
+        modifier = modifier,
         timeText = {
             TimeText(
                 startLinearContent = {
@@ -191,12 +196,9 @@ fun SearchScreen() {
                         val state = NavigationStateHolder.state.value
                         if (state.watchLocalMode) {
                             try {
-                                (context.applicationContext as WearApplication).waitForInitializationSuspend()
-                                val startPoint = if (state.lat != 0.0 && state.lon != 0.0) {
-                                    MapObject.createMapObject(MapObject.MY_POSITION, "", "", state.lat, state.lon)
-                                } else {
-                                    null
-                                }
+                                val wearApp = context.applicationContext as WearApplication
+                                wearApp.waitForInitializationSuspend()
+                                val startPoint = wearApp.organicMaps.locationHelper.myPosition
                                 val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
                                 val router = when (routerType) {
                                     0 -> Router.Vehicle

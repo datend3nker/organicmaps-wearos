@@ -7,6 +7,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.lifecycle.AndroidViewModel
+import androidx.compose.animation.core.Animatable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -16,6 +17,10 @@ class SensorViewModel(application: Application) : AndroidViewModel(application),
 
     private val _heading = MutableStateFlow(0f)
     val heading = _heading.asStateFlow()
+
+    // PERSISTENT ANIMATABLE
+    // By keeping this in the ViewModel, the map won't snap to North even if MapPanel is recomposed.
+    val mapRotationAnimatable = Animatable(0f)
 
     init {
         sensorManager.registerListener(this, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)

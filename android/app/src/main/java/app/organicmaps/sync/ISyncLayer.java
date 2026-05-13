@@ -24,6 +24,8 @@ public interface ISyncLayer {
     void sendPong(@NonNull Context context, @NonNull String nodeId);
     void sendMapProgress(@NonNull Context context, @NonNull String countryId, int progress);
     
+    default void parsePreferences(@NonNull Context context, @NonNull byte[] data, @NonNull android.content.SharedPreferences prefs) {}
+
     interface MessageListener {
         void onMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId);
     }

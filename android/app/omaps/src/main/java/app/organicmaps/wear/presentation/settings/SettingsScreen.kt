@@ -11,6 +11,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import app.organicmaps.wear.NavigationStateHolder
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 @Composable
 fun SettingsScreen() {
@@ -26,27 +28,44 @@ fun SettingsScreen() {
 @Composable
 fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val navState by NavigationStateHolder.state.collectAsState()
     val prefs = remember { context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE) }
     
-    var autoDownload by remember { mutableStateOf(prefs.getBoolean("autoDownloadRouteMaps", true)) }
-    var mapDownloadMode by remember { mutableStateOf(prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY") }
-    var backend by remember { mutableStateOf(prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS") }
-    var mapEnabled by remember { mutableStateOf(navState.mapEnabled) }
-    var watchLocalMode by remember { mutableStateOf(navState.watchLocalMode) }
-    var standaloneMode by remember { mutableStateOf(navState.standaloneMode) }
-
-    // Update local state when navState changes (from phone sync)
-    LaunchedEffect(navState.mapEnabled, navState.watchLocalMode, navState.standaloneMode) {
-        mapEnabled = navState.mapEnabled
-        watchLocalMode = navState.watchLocalMode
-        standaloneMode = navState.standaloneMode
-    }
+    // Use derived state from navState to ensure UI is reactively in sync
+    val mapEnabled = navState.mapEnabled
+    val watchLocalMode = navState.watchLocalMode
+    val standaloneMode = navState.standaloneMode
+    val autoDownload = navState.autoDownloadRouteMaps
+    val mapDownloadMode = navState.mapDownloadMode
+    val backend = navState.backend
 
     // Request fresh settings when screen is opened
     LaunchedEffect(Unit) {
         app.organicmaps.wear.WearCommandService.requestPreferences(context)
         app.organicmaps.wear.WearCommandService.sendPing(context)
+    }
+    
+    // Listen for remote updates to briefly disable local syncing
+    DisposableEffect(context) {
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                // Remote updates are now handled via NavigationState.lastSettingsInteractionTime 
+                // and the BluetoothWearDataListenerService.
+            }
+        }
+        val filter = android.content.IntentFilter("app.organicmaps.wear.SETTINGS_CHANGED")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(receiver, filter)
+        }
+        
+        onDispose {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (_: Exception) {}
+        }
     }
 
     ScalingLazyColumn(
@@ -76,11 +95,15 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
         item {
             ToggleChip(
                 checked = mapEnabled,
-                onCheckedChange = { 
-                    mapEnabled = it
-                    prefs.edit().putBoolean("mapEnabled", it).apply()
-                    NavigationStateHolder.update(navState.copy(mapEnabled = it))
-                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("mapEnabled", newVal).apply()
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        current.copy(
+                            mapEnabled = newVal,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
                 },
                 label = { Text("Map UI") },
                 secondaryLabel = { Text(if (mapEnabled) "Map is visible" else "Map is hidden") },
@@ -95,12 +118,16 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
         item {
             ToggleChip(
                 checked = watchLocalMode,
-                onCheckedChange = { 
-                    watchLocalMode = it
-                    prefs.edit().putBoolean("watchLocalMode", it).apply()
-                    if (!it) prefs.edit().putBoolean("forceWatchLocalMode", false).apply()
-                    NavigationStateHolder.update(navState.copy(watchLocalMode = it))
-                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("watchLocalMode", newVal).apply()
+                        if (!newVal) prefs.edit().putBoolean("forceWatchLocalMode", false).apply()
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        current.copy(
+                            watchLocalMode = newVal,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
                 },
                 label = { Text("Local Maps") },
                 secondaryLabel = { Text(if (watchLocalMode) "Using watch storage" else "Streaming from phone") },
@@ -115,16 +142,17 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
         item {
             ToggleChip(
                 checked = standaloneMode,
-                onCheckedChange = { 
-                    standaloneMode = it
-                    prefs.edit().putBoolean("disconnectFromPhone", it).apply()
-                    val newState = navState.copy(
-                        standaloneMode = it,
-                        mapEnabled = if (it) true else navState.mapEnabled,
-                        watchLocalMode = if (it) true else navState.watchLocalMode
-                    )
-                    NavigationStateHolder.update(newState)
-                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("disconnectFromPhone", newVal).apply()
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        current.copy(
+                            standaloneMode = newVal,
+                            mapEnabled = if (newVal) true else current.mapEnabled,
+                            watchLocalMode = if (newVal) true else current.watchLocalMode,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
                 },
                 label = { Text("Standalone") },
                 secondaryLabel = { Text(if (standaloneMode) "Independent mode" else "Connected to phone") },
@@ -138,10 +166,15 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
         item {
             ToggleChip(
                 checked = autoDownload,
-                onCheckedChange = { 
-                    autoDownload = it
-                    prefs.edit().putBoolean("autoDownloadRouteMaps", it).apply()
-                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("autoDownloadRouteMaps", newVal).apply()
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        current.copy(
+                            autoDownloadRouteMaps = newVal,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
                 },
                 label = { Text("Auto-Download") },
                 secondaryLabel = { Text("Fetch maps for routes") },
@@ -160,12 +193,18 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
                 Text("Download Policy", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
                 Chip(
                     onClick = {
-                        val nextIdx = (modes.indexOf(mapDownloadMode) + 1) % modes.size
-                        mapDownloadMode = modes[nextIdx]
-                        prefs.edit().putString("mapDownloadMode", mapDownloadMode).apply()
-                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        NavigationStateHolder.update { current ->
+                            val nextIdx = (modes.indexOf(current.mapDownloadMode) + 1).let { if (it < 0) 0 else it % modes.size }
+                            val nextMode = modes[nextIdx]
+                            prefs.edit().putString("mapDownloadMode", nextMode).apply()
+                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                            current.copy(
+                                mapDownloadMode = nextMode,
+                                lastSettingsInteractionTime = System.currentTimeMillis()
+                            )
+                        }
                     },
-                    label = { Text(modeLabels[modes.indexOf(mapDownloadMode)]) },
+                    label = { Text(modeLabels[modes.indexOf(mapDownloadMode).let { if (it < 0) 2 else it }]) },
                     secondaryLabel = { Text("Tap to change") },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ChipDefaults.secondaryChipColors()
@@ -186,17 +225,26 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
                     checked = backend == "GMS",
                     onCheckedChange = {
                         val newBackend = if (it) "GMS" else "BLUETOOTH"
-                        backend = newBackend
                         prefs.edit().putString("pref_wear_os_backend", newBackend).apply()
+                        NavigationStateHolder.update(navState.copy(backend = newBackend))
                         
-                        val intent = Intent(context, app.organicmaps.wear.BluetoothWearDataListenerService::class.java)
-                        if (newBackend == "BLUETOOTH") {
-                            context.startService(intent)
-                        } else if (app.organicmaps.wear.BuildConfig.FLAVOR != "oss") {
-                            context.stopService(intent)
-                        }
-                        app.organicmaps.wear.WearCommandService.initBackend(context)
+                        // 1. Sync preferences with OLD backend so phone knows to switch
                         app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        
+                        scope.launch {
+                            delay(200)
+                            // 2. Re-initialize watch's internal backend
+                            app.organicmaps.wear.WearCommandService.initBackend(context)
+                            // 3. Sync again with NEW backend
+                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                            
+                            val intent = Intent(context, app.organicmaps.wear.BluetoothWearDataListenerService::class.java)
+                            if (newBackend == "BLUETOOTH") {
+                                context.startService(intent)
+                            } else if (app.organicmaps.wear.BuildConfig.FLAVOR != "oss") {
+                                context.stopService(intent)
+                            }
+                        }
                     },
                     label = { Text("Google Services") },
                     secondaryLabel = { Text(if (backend == "GMS") "Recommended" else "Using Bluetooth") },

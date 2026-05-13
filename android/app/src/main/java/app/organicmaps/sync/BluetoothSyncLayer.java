@@ -61,20 +61,24 @@ public class BluetoothSyncLayer implements ISyncLayer {
         boolean watchLocalMode = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), false);
         String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
         String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
+        boolean autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true);
         int poiMask = prefs.getInt("poiCategoriesMask", 0x3F);
 
         byte[] modeBytes = mapDownloadMode.getBytes(StandardCharsets.UTF_8);
         byte[] backendBytes = backend.getBytes(StandardCharsets.UTF_8);
 
-        ByteBuffer buffer = ByteBuffer.allocate(2 + 1 + 4 + modeBytes.length + 4 + backendBytes.length + 4);
+        // BUFFER Format: [1:mapEnabled][1:watchLocal][1:standalone][1:autoDownload][4:modeLen][mode][4:backendLen][backend][4:poiMask][8:timestamp]
+        ByteBuffer buffer = ByteBuffer.allocate(4 + 4 + modeBytes.length + 4 + backendBytes.length + 4 + 8);
         buffer.put((byte) (mapEnabled ? 1 : 0));
         buffer.put((byte) (watchLocalMode ? 1 : 0));
         buffer.put((byte) (standaloneMode ? 1 : 0));
+        buffer.put((byte) (autoDownload ? 1 : 0));
         buffer.putInt(modeBytes.length);
         buffer.put(modeBytes);
         buffer.putInt(backendBytes.length);
         buffer.put(backendBytes);
         buffer.putInt(poiMask);
+        buffer.putLong(System.currentTimeMillis());
         sendRawMessage(context, MSG_TYPE_PREFERENCES, buffer.array());
     }
 
@@ -83,8 +87,9 @@ public class BluetoothSyncLayer implements ISyncLayer {
         byte[] streetBytes = info.nextStreet != null ? info.nextStreet.getBytes(StandardCharsets.UTF_8) : new byte[0];
         byte[] distBytes = info.distToTurn != null ? info.distToTurn.toString(context).getBytes(StandardCharsets.UTF_8) : new byte[0];
         
-        ByteBuffer buffer = ByteBuffer.allocate(1 + 1 + 1 + 1 + 4 + 8 + 8 + 8 + 8 + 4 + 4 + streetBytes.length + distBytes.length);
-        buffer.put((byte) (app.organicmaps.sdk.routing.RoutingController.get().isNavigating() ? 1 : 0)); // Active
+        // BUFFER Format: [1:active][1:carDir][1:pedDir][1:exit][4:progress][8:lat][8:lon][8:turnLat][8:turnLon][4:bearing][4:speed][4:limit][4:streetLen][4:distLen][street][dist]
+        ByteBuffer buffer = ByteBuffer.allocate(1 + 1 + 1 + 1 + 4 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + streetBytes.length + distBytes.length);
+        buffer.put((byte) (app.organicmaps.sdk.routing.RoutingController.get().isNavigating() ? 1 : 0)); 
         buffer.put((byte) info.carDirection.ordinal());
         buffer.put((byte) info.pedestrianDirection.ordinal());
         buffer.put((byte) info.exitNum);
@@ -93,6 +98,11 @@ public class BluetoothSyncLayer implements ISyncLayer {
         buffer.putDouble(location != null ? location.getLongitude() : 0.0);
         buffer.putDouble(info.turnLat);
         buffer.putDouble(info.turnLon);
+        
+        buffer.putFloat(location != null && location.hasBearing() ? location.getBearing() : -1.0f);
+        buffer.putFloat(location != null ? (float) location.getSpeed() : -1.0f);
+        buffer.putFloat((float) info.speedLimitMps);
+
         buffer.putInt(streetBytes.length);
         buffer.putInt(distBytes.length);
         buffer.put(streetBytes);
@@ -231,6 +241,59 @@ public class BluetoothSyncLayer implements ISyncLayer {
         
         // MSG_TYPE 7 for progress
         sendRawMessage(context, (byte) 7, buffer.array());
+    }
+
+    @Override
+    public void parsePreferences(@NonNull Context context, @NonNull byte[] data, @NonNull android.content.SharedPreferences prefs) {
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        if (buffer.remaining() < 3) return;
+        
+        boolean mapEnabled = buffer.get() == 1;
+        boolean watchLocalMode = buffer.get() == 1;
+        boolean standaloneMode = buffer.get() == 1;
+
+        String mapDownloadMode = "BLUETOOTH_ONLY";
+        if (buffer.remaining() >= 4) {
+            int len = buffer.getInt();
+            if (len > 0 && buffer.remaining() >= len) {
+                byte[] b = new byte[len];
+                buffer.get(b);
+                mapDownloadMode = new String(b, StandardCharsets.UTF_8);
+            }
+        }
+
+        String backend = "GMS";
+        if (buffer.remaining() >= 4) {
+            int len = buffer.getInt();
+            if (len > 0 && buffer.remaining() >= len) {
+                byte[] b = new byte[len];
+                buffer.get(b);
+                backend = new String(b, StandardCharsets.UTF_8);
+            }
+        }
+        
+        int poiMask = 0x3F;
+        if (buffer.remaining() >= 4) {
+            poiMask = buffer.getInt();
+        }
+
+        long timestamp = 0;
+        if (buffer.remaining() >= 8) {
+            timestamp = buffer.getLong();
+        }
+
+        long lastApplied = prefs.getLong("pref_wear_os_last_sync_timestamp", 0);
+        if (timestamp > 0 && timestamp < lastApplied) return;
+
+        prefs.edit()
+            .putLong("pref_wear_os_last_sync_timestamp", timestamp)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), mapEnabled)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), watchLocalMode)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), standaloneMode)
+            .putString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), backend)
+            .putString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), mapDownloadMode)
+            .putInt("poiCategoriesMask", poiMask)
+            .apply();
     }
 
     @Override

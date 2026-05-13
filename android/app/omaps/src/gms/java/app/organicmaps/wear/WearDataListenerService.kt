@@ -73,9 +73,9 @@ class WearDataListenerService : WearableListenerService() {
     override fun onMessageReceived(messageEvent: MessageEvent) {
         Log.d(TAG, "onMessageReceived: ${messageEvent.path}")
         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-            isPhoneConnected = true,
-            lastMessageTimestamp = System.currentTimeMillis()
+            isPhoneConnected = true
         ))
+        NavigationStateHolder.updateTimestamp(System.currentTimeMillis())
         if (messageEvent.path == PATH_PONG) {
             (applicationContext as WearApplication).onPongReceived()
             return
@@ -136,9 +136,9 @@ class WearDataListenerService : WearableListenerService() {
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-            isPhoneConnected = true,
-            lastMessageTimestamp = System.currentTimeMillis()
+            isPhoneConnected = true
         ))
+        NavigationStateHolder.updateTimestamp(System.currentTimeMillis())
         for (event in dataEvents) {
             val uri = event.dataItem.uri
             if (event.type == DataEvent.TYPE_CHANGED) {
@@ -237,6 +237,10 @@ class WearDataListenerService : WearableListenerService() {
                         val backend = dataMap.getString("backend", "GMS")
                         val poiMask = dataMap.getInt("poiCategoriesMask", 0x3F)
                         
+                        // Only apply if timestamp is newer
+                        val oldTimestamp = prefs.getLong("last_sync_timestamp", 0)
+                        if (timestamp <= oldTimestamp) return
+
                         // Standalone mode is a manual link cut or forced from phone
                         val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
                         val finalOfflineState = standaloneMode || isForcedOffline || watchLocalMode

@@ -17,6 +17,7 @@ import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
+import kotlin.math.hypot
 
 class WearApplication : Application() {
     lateinit var organicMaps: OrganicMaps
@@ -55,13 +56,17 @@ class WearApplication : Application() {
 
         copyCountriesFileToWritableStorage()
         
+        organicMaps.locationHelper.onEnteredIntoFirstRun()
+
         try {
             val asyncContinue = organicMaps.init { 
                 isFullyInitialized = true 
+                organicMaps.locationHelper.onExitFromFirstRun()
                 setupLocalNavigationListener()
             }
             if (!asyncContinue) {
                 isFullyInitialized = true
+                organicMaps.locationHelper.onExitFromFirstRun()
                 setupLocalNavigationListener()
             }
         } catch (e: Throwable) {
@@ -206,6 +211,7 @@ class WearApplication : Application() {
             }
 
             override fun onCommonBuildError(lastResultCode: Int, lastMissingMaps: Array<out String>) {
+                Log.e("WearApplication", "Route build error: code=$lastResultCode, missingMaps=${lastMissingMaps.contentToString()}")
                 val currentState = NavigationStateHolder.state.value
                 NavigationStateHolder.update(currentState.copy(
                     isRouteBuilding = false,
@@ -225,7 +231,53 @@ class WearApplication : Application() {
         })
         
         organicMaps.locationHelper.addListener(object : app.organicmaps.sdk.location.LocationListener {
+            private var lastValidLat = 0.0
+            private var lastValidLon = 0.0
+            private var lastFixTime = 0L
+
             override fun onLocationUpdated(location: android.location.Location) {
+                // SANITY CHECK: Ignore "teleports" (Wild jumps > 1km in < 10s)
+                // This is physically impossible and usually happens in emulators or urban canyons.
+                if (lastFixTime != 0L) {
+                    val dist = hypot(location.latitude - lastValidLat, location.longitude - lastValidLon) * 111000.0
+                    val timeDelta = (System.currentTimeMillis() - lastFixTime) / 1000.0
+                    
+                    // If we jump more than 1km and we are moving slowly, it's likely a provider fallback glitch.
+                    if (dist > 1000.0 && timeDelta < 10.0 && location.speed < 1.0) {
+                        Log.w("WearApp", "Filtering teleport glitch: ${dist.toInt()}m jump via ${location.provider}")
+                        return
+                    }
+                }
+
+                // ACCURACY FILTER: Ignore very poor fixes if we already have a good one
+                if (location.hasAccuracy() && location.accuracy > 100.0 && lastFixTime != 0L && (System.currentTimeMillis() - lastFixTime < 5000)) {
+                    return
+                }
+
+                lastValidLat = location.latitude
+                lastValidLon = location.longitude
+                lastFixTime = System.currentTimeMillis()
+
+                // POWER SAVING: Ignore local GPS if we are in companion mode and phone is providing location
+                val navState = NavigationStateHolder.state.value
+                if (!navState.standaloneMode && navState.isPhoneConnected && navState.isActive) {
+                    // Phone is currently streaming navigation/location data, skip local update to avoid jitter/battery drain
+                    return
+                }
+
+                // Log for debugging standalone routing
+                val routing = RoutingController.get()
+                if (routing.isPlanning && routing.getStartPoint() == null) {
+                    val myPos = organicMaps.locationHelper.myPosition
+                    if (myPos != null) {
+                        Log.d("WearApplication", "Setting missing start point to My Position")
+                        routing.setStartPoint(myPos)
+                    }
+                } else if (routing.isPlanning && routing.isErrorEncountered) {
+                    Log.d("WearApplication", "Routing is in error state, trying to rebuild with new position")
+                    routing.checkAndBuildRoute()
+                }
+
                 val currentState = NavigationStateHolder.state.value
                 NavigationStateHolder.update(currentState.copy(
                     lat = location.latitude,
@@ -233,6 +285,13 @@ class WearApplication : Application() {
                     speedMps = location.speed.toDouble(),
                     bearing = location.bearing
                 ))
+                
+                // Persist last known location and bearing
+                getSharedPreferences("wear_prefs", MODE_PRIVATE).edit()
+                    .putFloat("last_known_lat", location.latitude.toFloat())
+                    .putFloat("last_known_lon", location.longitude.toFloat())
+                    .putFloat("last_known_bearing", location.bearing)
+                    .apply()
             }
             override fun onLocationResolutionRequired(pendingIntent: android.app.PendingIntent) {}
             override fun onLocationDisabled() {}
@@ -246,9 +305,30 @@ class WearApplication : Application() {
 
         MainScope().launch(Dispatchers.Main) {
             while (true) {
-                if (NavigationStateHolder.state.value.watchLocalMode && (routingController.isNavigating || routingController.isBuilt())) {
+                val state = NavigationStateHolder.state.value
+                val isAmbient = state.isAmbient
+                
+                // POWER SAVING: Dynamically start/stop local GPS provider based on mode
+                if (state.standaloneMode || !state.isPhoneConnected) {
+                    if (!organicMaps.locationHelper.isActive) {
+                        Log.d("WearApp", "Enabling Watch GPS (Standalone/Disconnected)")
+                        try { 
+                            if (app.organicmaps.sdk.util.LocationUtils.checkFineLocationPermission(this@WearApplication)) {
+                                organicMaps.locationHelper.start() 
+                            }
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                } else if (state.isActive) {
+                    if (organicMaps.locationHelper.isActive) {
+                        Log.d("WearApp", "Disabling Watch GPS (Companion Mode Active)")
+                        organicMaps.locationHelper.stop()
+                    }
+                }
+
+                if (state.watchLocalMode && (routingController.isNavigating || routingController.isBuilt())) {
                     val info = Framework.nativeGetRouteFollowingInfo()
-                    val routeJunctions = Framework.nativeGetRouteJunctionPoints(50.0)
+                    // Fetch fewer route points in ambient mode
+                    val routeJunctions = Framework.nativeGetRouteJunctionPoints(if (isAmbient) 100.0 else 50.0)
                     val routePoints = routeJunctions?.map { it.mLat to it.mLon } ?: emptyList()
                     if (info != null) {
                         val currentState = NavigationStateHolder.state.value
@@ -269,7 +349,7 @@ class WearApplication : Application() {
                         ))
                     }
                 }
-                kotlinx.coroutines.delay(1000)
+                kotlinx.coroutines.delay(if (isAmbient) 10000L else 1000L) // 10s updates in ambient mode
             }
         }
     }
@@ -297,14 +377,35 @@ class WearApplication : Application() {
     private fun copyCountriesFileToWritableStorage() {
         try {
             val storagePath = StoragePathManager.findMapsStorage(this)
-            val targetFile = File(storagePath, "countries.txt")
-            assets.open("countries.txt").use { input ->
-                FileOutputStream(targetFile, false).use { output ->
-                    input.copyTo(output)
+            val filesToCopy = listOf(
+                "countries.txt",
+                "classificator.txt",
+                "types.txt",
+                "categories.txt",
+                "packed_polygons.bin",
+                "drules_proto.bin",
+                "drules_proto_dark.bin"
+            )
+            for (fileName in filesToCopy) {
+                val targetFile = File(storagePath, fileName)
+                if (targetFile.exists() && targetFile.length() > 0) {
+                    // Skip if already exists and not empty
+                    // In a real app we might want to check versions, but for now this is a good optimization
+                    continue
+                }
+                try {
+                    assets.open(fileName).use { input ->
+                        FileOutputStream(targetFile, false).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    Log.d("WearApplication", "Copied $fileName to $storagePath")
+                } catch (e: Exception) {
+                    Log.w("WearApplication", "Failed to copy $fileName: ${e.message}")
                 }
             }
         } catch (e: Throwable) {
-            Log.w("WearApplication", "Couldn't pre-copy countries.txt to writable storage", e)
+            Log.w("WearApplication", "Couldn't pre-copy resources to writable storage", e)
         }
     }
 }

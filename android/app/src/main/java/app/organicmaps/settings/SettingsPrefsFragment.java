@@ -2,6 +2,7 @@ package app.organicmaps.settings;
 
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Bundle;
 import android.view.View;
 import androidx.annotation.NonNull;
@@ -42,7 +43,16 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 {
   private final SharedPreferences.OnSharedPreferenceChangeListener mSharedPreferenceChangeListener = (sharedPreferences, key) -> {
     if (key != null && key.startsWith("pref_wear_os_"))
-      onResume(); // Simple way to refresh all UI
+      new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+          refreshWearOsPrefs();
+      });
+  };
+
+  private final android.content.BroadcastReceiver mSettingsChangedReceiver = new android.content.BroadcastReceiver() {
+    @Override
+    public void onReceive(android.content.Context context, android.content.Intent intent) {
+      refreshWearOsPrefs();
+    }
   };
 
   @Override
@@ -142,6 +152,25 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     }
   }
 
+  private void refreshWearOsPrefs()
+  {
+    updateWearOsPrefsSummary();
+    
+    isUpdatingFromSync = true;
+    // Force refresh the toggle states manually
+    SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(requireContext());
+    
+    TwoStatePreference mapEnabledPref = findPreference(getString(R.string.pref_wear_os_map_enabled));
+    if (mapEnabledPref != null) mapEnabledPref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_map_enabled), false));
+
+    TwoStatePreference watchLocalModePref = findPreference(getString(R.string.pref_wear_os_watch_local_mode));
+    if (watchLocalModePref != null) watchLocalModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_watch_local_mode), false));
+
+    TwoStatePreference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
+    if (standaloneModePref != null) standaloneModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_standalone_mode), false));
+    isUpdatingFromSync = false;
+  }
+
   @Override
   public void onResume()
   {
@@ -151,7 +180,17 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     updateVoiceInstructionsPrefsSummary();
     updateRoutingSettingsPrefsSummary();
     updateMapLanguageCodeSummary();
-    updateWearOsPrefsSummary();
+    refreshWearOsPrefs();
+
+    IntentFilter filter = new IntentFilter("app.organicmaps.wear.SETTINGS_CHANGED");
+    androidx.core.content.ContextCompat.registerReceiver(requireContext(), mSettingsChangedReceiver, filter, 
+        androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+  }
+
+  @Override
+  public void onPause() {
+    super.onPause();
+    requireContext().unregisterReceiver(mSettingsChangedReceiver);
   }
 
   @Override
@@ -351,6 +390,8 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
         android.util.Log.e("SettingsPrefsFragment", "Wear OS sync failed: ", e);
     }
   }
+
+  private boolean isUpdatingFromSync = false;
 
   private void initWearOsPrefsCallbacks()
   {
