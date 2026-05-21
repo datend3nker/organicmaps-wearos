@@ -1,74 +1,78 @@
 package app.organicmaps.wear.presentation.navigation
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Scaffold
-import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.TimeText
+import androidx.wear.compose.material.*
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import app.organicmaps.wear.NavigationState
 import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
 fun StatsScreen(navState: NavigationState) {
+    val listState = rememberScalingLazyListState()
     Scaffold(
-        timeText = { TimeText() }
+        timeText = { TimeText() },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 24.dp),
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(top = 32.dp, bottom = 32.dp, start = 16.dp, end = 16.dp)
         ) {
-            Text(
-                text = "Stats",
-                style = MaterialTheme.typography.caption1,
-                color = MaterialTheme.colors.secondary
-            )
+            item {
+                Text(
+                    text = "Stats",
+                    style = MaterialTheme.typography.caption1,
+                    color = MaterialTheme.colors.secondary
+                )
+            }
 
             // Speed
-            val speedKmH = if (navState.speedMps >= 0) (navState.speedMps * 3.6).roundToInt() else 0
-            Text(
-                text = "$speedKmH km/h",
-                style = MaterialTheme.typography.title1.copy(fontSize = 28.sp),
-                color = if (navState.speedLimitMps > 0 && navState.speedMps > navState.speedLimitMps) 
-                            MaterialTheme.colors.error 
-                        else 
-                            MaterialTheme.colors.primary
-            )
+            item {
+                val speedKmH = if (navState.speedMps >= 0) (navState.speedMps * 3.6).roundToInt() else 0
+                Text(
+                    text = "$speedKmH km/h",
+                    style = MaterialTheme.typography.title1.copy(fontSize = 28.sp),
+                    color = if (navState.speedLimitMps > 0 && navState.speedMps > navState.speedLimitMps) 
+                                MaterialTheme.colors.error 
+                            else 
+                                MaterialTheme.colors.primary
+                )
+            }
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Distance", style = MaterialTheme.typography.caption2)
-                    Text(navState.distToTarget, fontWeight = FontWeight.Bold)
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("ETA", style = MaterialTheme.typography.caption2)
-                    Text(formatEta(navState.eta), fontWeight = FontWeight.Bold)
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Distance", style = MaterialTheme.typography.caption2)
+                        Text(navState.distToTarget, fontWeight = FontWeight.Bold)
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("ETA", style = MaterialTheme.typography.caption2)
+                        Text(formatEta(navState.eta), fontWeight = FontWeight.Bold)
+                    }
                 }
             }
             
             if (navState.speedLimitMps > 0) {
-                Text(
-                    text = "Limit: ${(navState.speedLimitMps * 3.6).roundToInt()}",
-                    style = MaterialTheme.typography.caption2,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+                item {
+                    Text(
+                        text = "Limit: ${(navState.speedLimitMps * 3.6).roundToInt()}",
+                        style = MaterialTheme.typography.caption2,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
         }
     }

@@ -13,4 +13,5 @@ interface IWearSyncBackend {
     fun requestPreferences(context: Context)
     fun checkConnection(context: Context, callback: (Boolean) -> Unit)
     fun startNavigation(context: Context)
+    fun showOnPhone(context: Context, result: SearchResultItem)
 }

@@ -314,6 +314,8 @@ public class Framework
 
   public static native boolean nativeIsDownloadedMapAtScreenCenter();
 
+  public static native boolean nativeIsDownloadedMapAtLocation(double lat, double lon);
+
   public static native String nativeGetActiveObjectFormattedCuisine();
 
   public static native String nativeGetActiveObjectFormattedRouteRefs();

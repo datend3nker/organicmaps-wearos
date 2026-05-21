@@ -78,7 +78,9 @@ fun MapManagerScreen() {
                     }
                     
                     // Improved sorting: downloading first, then done/partly, then category/name
-                    countries = result.filter { it.id != "World" && it.id != "WorldCoasts" }.sortedWith { a, b ->
+                    countries = result.filter { 
+                        (it.id != "World" && it.id != "WorldCoasts") || !it.present
+                    }.sortedWith { a, b ->
                         val aDone = a.status == CountryItem.STATUS_DONE || a.status == CountryItem.STATUS_PARTLY || a.present
                         val bDone = b.status == CountryItem.STATUS_DONE || b.status == CountryItem.STATUS_PARTLY || b.present
                         
@@ -91,8 +93,13 @@ fun MapManagerScreen() {
                         // Then currently downloading
                         if (aDownloading != bDownloading) return@sortedWith if (aDownloading) -1 else 1
                         
+                        // Near Me is category 0, should naturally come before 1 (Downloaded) and 2 (Available)
                         if (a.category != b.category) return@sortedWith a.category.compareTo(b.category)
                         
+                        // Prioritize World map if it's in the list (means it's not present)
+                        if (a.id == "World") return@sortedWith -1
+                        if (b.id == "World") return@sortedWith 1
+
                         a.name.compareTo(b.name)
                     }
                     loading = false
@@ -149,7 +156,10 @@ fun MapManagerScreen() {
                     Icon(
                         Icons.Default.Close, 
                         contentDescription = "Clear", 
-                        modifier = Modifier.size(16.dp).clickable { searchQuery = "" },
+                        modifier = Modifier.size(16.dp).clickable { 
+                            searchQuery = "" 
+                            pathStack = emptyList() // Reset to root when clearing search
+                        },
                         tint = Color.Gray
                     )
                 }

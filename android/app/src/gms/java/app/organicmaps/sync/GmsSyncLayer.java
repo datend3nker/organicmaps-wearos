@@ -8,6 +8,8 @@ import androidx.annotation.Nullable;
 import app.organicmaps.sdk.routing.RoutingInfo;
 import app.organicmaps.sdk.search.SearchRecents;
 import app.organicmaps.sdk.search.SearchResult;
+import app.organicmaps.sdk.routing.RoutingOptions;
+import app.organicmaps.sdk.settings.RoadType;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.wearable.DataItem;
 import com.google.android.gms.wearable.DataMap;
@@ -41,16 +43,40 @@ public class GmsSyncLayer implements ISyncLayer {
         boolean watchLocalMode = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), false);
         String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY");
         String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
+        boolean autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true);
         int poiMask = prefs.getInt("poiCategoriesMask", 0x3F);
+
+        // Map-specific settings
+        boolean is3dEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_3d), true);
+        boolean is3dBuildingsEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_3d_buildings), true);
+        boolean isAutoZoomEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_auto_zoom), true);
+        int mUnits = Integer.parseInt(prefs.getString(context.getString(app.organicmaps.R.string.pref_munits), "0"));
+        String mapStyle = prefs.getString(context.getString(app.organicmaps.R.string.pref_map_style), "default");
+
+        // Routing options
+        boolean avoidTolls = RoutingOptions.hasOption(RoadType.Toll);
+        boolean avoidMotorways = RoutingOptions.hasOption(RoadType.Motorway);
+        boolean avoidFerries = RoutingOptions.hasOption(RoadType.Ferry);
+        boolean avoidUnpaved = RoutingOptions.hasOption(RoadType.Dirty);
 
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create(PATH_PREFERENCES);
         DataMap map = putDataMapReq.getDataMap();
         map.putBoolean("mapEnabled", mapEnabled);
         map.putBoolean("watchLocalMode", watchLocalMode);
         map.putBoolean("standaloneMode", standaloneMode);
+        map.putBoolean("autoDownloadRouteMaps", autoDownload);
         map.putString("mapDownloadMode", mapDownloadMode);
         map.putString("backend", backend);
         map.putInt("poiCategoriesMask", poiMask);
+        map.putBoolean("is3dEnabled", is3dEnabled);
+        map.putBoolean("is3dBuildingsEnabled", is3dBuildingsEnabled);
+        map.putBoolean("isAutoZoomEnabled", isAutoZoomEnabled);
+        map.putInt("measurementUnits", mUnits);
+        map.putString("mapStyle", mapStyle);
+        map.putBoolean("avoidTolls", avoidTolls);
+        map.putBoolean("avoidMotorways", avoidMotorways);
+        map.putBoolean("avoidFerries", avoidFerries);
+        map.putBoolean("avoidUnpaved", avoidUnpaved);
         map.putLong("timestamp", System.currentTimeMillis());
         
         com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();

@@ -17,16 +17,26 @@ import kotlinx.coroutines.delay
 @Composable
 fun SettingsScreen() {
     var showPoiSettings by remember { mutableStateOf(false) }
+    var showRoutingOptions by remember { mutableStateOf(false) }
+    var showLayerSettings by remember { mutableStateOf(false) }
 
     if (showPoiSettings) {
         PoiSettingsScreen(onBack = { showPoiSettings = false })
+    } else if (showRoutingOptions) {
+        RoutingOptionsScreen(onBack = { showRoutingOptions = false })
+    } else if (showLayerSettings) {
+        LayerSettingsScreen(onBack = { showLayerSettings = false })
     } else {
-        MainSettingsList(onOpenPoiSettings = { showPoiSettings = true })
+        MainSettingsList(
+            onOpenPoiSettings = { showPoiSettings = true },
+            onOpenRoutingOptions = { showRoutingOptions = true },
+            onOpenLayerSettings = { showLayerSettings = true }
+        )
     }
 }
 
 @Composable
-fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
+fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> Unit, onOpenLayerSettings: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val navState by NavigationStateHolder.state.collectAsState()
@@ -39,6 +49,12 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
     val autoDownload = navState.autoDownloadRouteMaps
     val mapDownloadMode = navState.mapDownloadMode
     val backend = navState.backend
+    
+    val is3dEnabled = navState.is3dEnabled
+    val is3dBuildingsEnabled = navState.is3dBuildingsEnabled
+    val isAutoZoomEnabled = navState.isAutoZoomEnabled
+    val measurementUnits = navState.measurementUnits
+    val mapStyle = navState.mapStyle
 
     // Request fresh settings when screen is opened
     LaunchedEffect(Unit) {
@@ -55,9 +71,11 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
             }
         }
         val filter = android.content.IntentFilter("app.organicmaps.wear.SETTINGS_CHANGED")
+
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
             context.registerReceiver(receiver, filter)
         }
         
@@ -90,6 +108,141 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 colors = ChipDefaults.secondaryChipColors()
             )
+        }
+
+        item {
+            Chip(
+                onClick = onOpenLayerSettings,
+                label = { Text("Map Layers") },
+                secondaryLabel = { Text("Subway, Biking, Hiking") },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                colors = ChipDefaults.secondaryChipColors()
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = is3dEnabled,
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("pref_3d", newVal).apply()
+                        try {
+                            app.organicmaps.sdk.Framework.nativeSet3dMode(newVal, current.is3dBuildingsEnabled)
+                        } catch (_: Throwable) {}
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        current.copy(
+                            is3dEnabled = newVal,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
+                },
+                label = { Text("3D View") },
+                toggleControl = {
+                    Switch(checked = is3dEnabled, enabled = true)
+                },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = is3dBuildingsEnabled,
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("pref_3d_buildings", newVal).apply()
+                        try {
+                            app.organicmaps.sdk.Framework.nativeSet3dMode(current.is3dEnabled, newVal)
+                        } catch (_: Throwable) {}
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        current.copy(
+                            is3dBuildingsEnabled = newVal,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
+                },
+                label = { Text("3D Buildings") },
+                toggleControl = {
+                    Switch(checked = is3dBuildingsEnabled, enabled = is3dEnabled)
+                },
+                enabled = is3dEnabled,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = isAutoZoomEnabled,
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("pref_auto_zoom", newVal).apply()
+                        try {
+                            app.organicmaps.sdk.Framework.nativeSetAutoZoomEnabled(newVal)
+                        } catch (_: Throwable) {}
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        current.copy(
+                            isAutoZoomEnabled = newVal,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
+                },
+                label = { Text("Auto Zoom") },
+                toggleControl = {
+                    Switch(checked = isAutoZoomEnabled, enabled = true)
+                },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
+
+        item {
+            val unitLabels = listOf("Metric (km)", "Imperial (mi)")
+            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                Text("Units", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
+                Chip(
+                    onClick = {
+                        NavigationStateHolder.update { current ->
+                            val nextUnits = (current.measurementUnits + 1) % 2
+                            prefs.edit().putInt("pref_munits", nextUnits).apply()
+                            // Framework units setup is usually done via UnitLocale.setUnits which calls native code
+                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                            current.copy(
+                                measurementUnits = nextUnits,
+                                lastSettingsInteractionTime = System.currentTimeMillis()
+                            )
+                        }
+                    },
+                    label = { Text(unitLabels[measurementUnits.coerceIn(0, 1)]) },
+                    secondaryLabel = { Text("Tap to change") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ChipDefaults.secondaryChipColors()
+                )
+            }
+        }
+
+        item {
+            val styleLabels = listOf("Day", "Night", "Auto", "Nav Auto")
+            val styleValues = listOf("default", "night", "auto", "nav_auto")
+            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                Text("Map Style", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
+                Chip(
+                    onClick = {
+                        NavigationStateHolder.update { current ->
+                            val currentIdx = styleValues.indexOf(current.mapStyle).coerceAtLeast(0)
+                            val nextIdx = (currentIdx + 1) % styleValues.size
+                            val nextStyle = styleValues[nextIdx]
+                            prefs.edit().putString("pref_map_style", nextStyle).apply()
+                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                            current.copy(
+                                mapStyle = nextStyle,
+                                lastSettingsInteractionTime = System.currentTimeMillis()
+                            )
+                        }
+                    },
+                    label = { Text(styleLabels[styleValues.indexOf(mapStyle).coerceAtLeast(0)]) },
+                    secondaryLabel = { Text("Tap to change") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ChipDefaults.secondaryChipColors()
+                )
+            }
         }
 
         item {
@@ -186,15 +339,16 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
         }
 
         item {
-            val modes = listOf("BLUETOOTH_ONLY", "WIFI_ONLY", "AUTO")
-            val modeLabels = listOf("Bluetooth", "Wi-Fi", "Auto")
+            val modes = listOf("BLUETOOTH_ONLY", "AUTO", "WIFI_ONLY")
+            val modeLabels = listOf("Always Bluetooth", "Auto (Wi-Fi/BT)", "Wi-Fi Only")
             
             Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                Text("Download Policy", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
+                Text("Map Sync Mode", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
                 Chip(
                     onClick = {
                         NavigationStateHolder.update { current ->
-                            val nextIdx = (modes.indexOf(current.mapDownloadMode) + 1).let { if (it < 0) 0 else it % modes.size }
+                            val currentIdx = modes.indexOf(current.mapDownloadMode).coerceAtLeast(0)
+                            val nextIdx = (currentIdx + 1) % modes.size
                             val nextMode = modes[nextIdx]
                             prefs.edit().putString("mapDownloadMode", nextMode).apply()
                             app.organicmaps.wear.WearCommandService.syncPreferences(context)
@@ -204,7 +358,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit) {
                             )
                         }
                     },
-                    label = { Text(modeLabels[modes.indexOf(mapDownloadMode).let { if (it < 0) 2 else it }]) },
+                    label = { Text(modeLabels[modes.indexOf(mapDownloadMode).coerceAtLeast(0)]) },
                     secondaryLabel = { Text("Tap to change") },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ChipDefaults.secondaryChipColors()

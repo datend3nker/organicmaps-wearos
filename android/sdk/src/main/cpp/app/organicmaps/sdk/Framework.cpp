@@ -48,6 +48,8 @@
 #include "platform/locale.hpp"
 #include "platform/localization.hpp"
 #include "platform/location.hpp"
+
+#include "indexer/feature_visibility.hpp"
 #include "platform/measurement_utils.hpp"
 #include "platform/network_policy.hpp"
 #include "platform/platform.hpp"
@@ -1088,8 +1090,6 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativePokeSearchInViewport(JNI
   frm()->GetSearchAPI().PokeSearchInViewport();
 }
 
-#include "indexer/ftypes_matcher.hpp"
-
 JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMapFeatures(
     JNIEnv * env, jclass, jdouble minLat, jdouble minLon, jdouble maxLat, jdouble maxLon, jint scale, jint routerType, jint poiCategoriesMask)
 {
@@ -1102,9 +1102,15 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
   if (rect.IsValid())
   {
     int featuresCount = 0;
-    frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
-        auto geomType = ft.GetGeomType();
+    const int maxFeatures = 500; // Increased limit for better city detail
 
+    frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
+        if (featuresCount >= maxFeatures) return;
+
+        // Relaxed visibility check to ensure more features are extracted for the watch
+        if (feature::GetMinDrawableScaleClassifOnly(feature::TypesHolder(ft)) > (scale + 1)) return;
+
+        auto geomType = ft.GetGeomType();
         feature::TypesHolder types(ft);
         uint8_t type = 0;
 
@@ -1113,24 +1119,18 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
             HighwayClass hw = GetHighwayClass(types);
 
             // Filter for car mode (routerType 0)
-            if (routerType == 0) {
-                if (hw == HighwayClass::Pedestrian) {
-                    return;
-                }
-            }
+            if (routerType == 0 && hw == HighwayClass::Pedestrian) return;
 
             if (hw == HighwayClass::Trunk) type = 4;
             else if (hw == HighwayClass::Primary) type = 5;
             else if (hw == HighwayClass::Secondary) type = 6;
             else if (hw == HighwayClass::Tertiary) type = 7;
             else if (hw == HighwayClass::LivingStreet) type = 1;
-            else if (hw == HighwayClass::Service) type = 8;
-            else if (hw == HighwayClass::ServiceMinor) type = 8;
+            else if (hw == HighwayClass::Service || hw == HighwayClass::ServiceMinor) type = 8;
             else type = 1; // Default to residential/minor road
         } else if (geomType == feature::GeomType::Area) {
             if (IsBuildingChecker::Instance()(types)) type = 2;
             else {
-                // Simplified water/greenery check
                 bool isWater = false;
                 bool isGreen = false;
                 auto const & c = classif();
@@ -1149,18 +1149,31 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
 
                 if (isWater) type = 3;
                 else if (isGreen) type = 9;
-                else return; // Skip other areas to avoid covering roads with blue
+                else return;
             }
         } else if (geomType == feature::GeomType::Point) {
-            // POI Categories
             if (poiCategoriesMask == 0) return;
 
-            if ((poiCategoriesMask & 1) && IsEatChecker::Instance()(types)) type = 100;
-            else if ((poiCategoriesMask & 2) && IsOperatorOthersPoiChecker::Instance()(types)) type = 101;
-            else if ((poiCategoriesMask & 4) && IsHotelChecker::Instance()(types)) type = 102;
-            else if ((poiCategoriesMask & 8) && IsATMChecker::Instance()(types)) type = 103;
-            else if ((poiCategoriesMask & 16) && (OneLevelPOIChecker()(types) || IsAmenityChecker::Instance()(types))) type = 105;
-            else if ((poiCategoriesMask & 32) && IsPoiChecker::Instance()(types)) type = 106;
+            // EXPANDED POI MAPPING (Matching watch list)
+            if ((poiCategoriesMask & (1 << 0)) && IsEatChecker::Instance()(types)) type = 100;
+            else if ((poiCategoriesMask & (1 << 1)) && IsHotelChecker::Instance()(types)) type = 102;
+            else if ((poiCategoriesMask & (1 << 2)) && IsATMChecker::Instance()(types)) type = 103;
+            else if ((poiCategoriesMask & (1 << 3)) && IsParkingChecker::Instance()(types)) type = 107;
+            else if ((poiCategoriesMask & (1 << 4)) && IsPeakChecker::Instance()(types)) type = 108;
+            else if ((poiCategoriesMask & (1 << 5)) && IsCampPitchChecker::Instance()(types)) type = 109;
+            else if ((poiCategoriesMask & (1 << 6)) && IsWifiChecker::Instance()(types)) type = 110;
+            else if ((poiCategoriesMask & (1 << 7)) && IsRailwayStationChecker::Instance()(types)) type = 111;
+            else if ((poiCategoriesMask & (1 << 8)) && IsSubwayStationChecker::Instance()(types)) type = 112;
+            else if ((poiCategoriesMask & (1 << 9)) && IsAirportChecker::Instance()(types)) type = 113;
+            else if ((poiCategoriesMask & (1 << 10)) && IsPostPoiChecker::Instance()(types)) type = 114;
+            else if ((poiCategoriesMask & (1 << 11)) && IsToiletsChecker::Instance()(types)) type = 115;
+            else if ((poiCategoriesMask & (1 << 12)) && IsAmenityChecker::Instance()(types)) type = 105;
+            else if ((poiCategoriesMask & (1 << 13)) && AttractionsChecker::Instance()(types)) type = 116;
+            else if ((poiCategoriesMask & (1 << 14)) && IsPostPoiChecker::Instance()(types)) type = 114; // Health fallback
+            else if ((poiCategoriesMask & (1 << 15)) && OneLevelPOIChecker()(types)) type = 117; // Shopping
+            else if ((poiCategoriesMask & (1 << 16)) && TwoLevelPOIChecker()(types)) type = 118; // Entertainment fallback
+            else if ((poiCategoriesMask & (1 << 17)) && IsAmenityChecker::Instance()(types)) type = 119; // Water fallback
+            else if ((poiCategoriesMask & (1 << 18)) && IsPoiChecker::Instance()(types)) type = 106;
 
             if (type == 0) return;
         }
@@ -1171,7 +1184,6 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
         if (geomType == feature::GeomType::Point) {
             points.push_back(ft.GetCenter());
         } else {
-            // Use requested scale for point extraction
             ft.ForEachPoint([&](m2::PointD const & p) {
               points.push_back(p);
             }, scale);
@@ -1180,8 +1192,14 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
         if (points.empty() || (geomType != feature::GeomType::Point && points.size() < 2)) return;
 
         featuresCount++;
-        buffer.push_back(type);
+        buffer.push_back(static_cast<uint8_t>(type));
         
+        std::string name(ft.GetName(0));
+        uint16_t nameLen = static_cast<uint16_t>(name.size());
+        uint8_t * pNameLen = reinterpret_cast<uint8_t *>(&nameLen);
+        buffer.insert(buffer.end(), pNameLen, pNameLen + sizeof(nameLen));
+        if (nameLen > 0) buffer.insert(buffer.end(), name.begin(), name.end());
+
         uint32_t count = points.size();
         uint8_t * pCount = reinterpret_cast<uint8_t *>(&count);
         buffer.insert(buffer.end(), pCount, pCount + sizeof(count));
@@ -1189,23 +1207,16 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
         for (auto const & p : points) {
           double lat = mercator::YToLat(p.y);
           double lon = mercator::XToLon(p.x);
-
           uint8_t * pLon = reinterpret_cast<uint8_t *>(&lon);
           uint8_t * pLat = reinterpret_cast<uint8_t *>(&lat);
           buffer.insert(buffer.end(), pLon, pLon + sizeof(lon));
           buffer.insert(buffer.end(), pLat, pLat + sizeof(lat));
         }
     }, rect, scale);
-
-    if (featuresCount > 0) {
-        LOG(LINFO, ("Wear map extraction: scale =", scale, "features =", featuresCount, "buffer =", buffer.size()));
-    }
   }
 
   jbyteArray result = env->NewByteArray(buffer.size());
-  if (!buffer.empty()) {
-      env->SetByteArrayRegion(result, 0, buffer.size(), reinterpret_cast<const jbyte*>(buffer.data()));
-  }
+  if (!buffer.empty()) env->SetByteArrayRegion(result, 0, buffer.size(), reinterpret_cast<const jbyte*>(buffer.data()));
   return result;
 }
 
@@ -1728,6 +1739,12 @@ JNIEXPORT jboolean Java_app_organicmaps_sdk_Framework_nativeIsDownloadedMapAtScr
 {
   ::Framework * fr = frm();
   return storage::IsPointCoveredByDownloadedMaps(fr->GetViewportCenter(), fr->GetStorage(), fr->GetCountryInfoGetter());
+}
+
+JNIEXPORT jboolean Java_app_organicmaps_sdk_Framework_nativeIsDownloadedMapAtLocation(JNIEnv * env, jclass, jdouble lat, jdouble lon)
+{
+  ::Framework * fr = frm();
+  return storage::IsPointCoveredByDownloadedMaps(mercator::FromLatLon(lat, lon), fr->GetStorage(), fr->GetCountryInfoGetter());
 }
 
 JNIEXPORT jstring Java_app_organicmaps_sdk_Framework_nativeGetActiveObjectFormattedCuisine(JNIEnv * env, jclass)

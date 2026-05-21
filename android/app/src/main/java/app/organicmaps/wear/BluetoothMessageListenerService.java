@@ -72,6 +72,11 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
             String backendStr = "GMS";
             String downloadModeStr = "BLUETOOTH_ONLY";
             int poiMask = 0x3F;
+            boolean is3dEnabled = true;
+            boolean is3dBuildingsEnabled = true;
+            boolean isAutoZoomEnabled = true;
+            int measurementUnits = 0;
+            String mapStyle = "default";
             long timestamp = 0;
 
             if (buffer.remaining() >= 3) {
@@ -104,6 +109,25 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                 if (buffer.remaining() >= 4) {
                     poiMask = buffer.getInt();
                 }
+
+                if (buffer.remaining() >= 3) {
+                    is3dEnabled = buffer.get() == 1;
+                    is3dBuildingsEnabled = buffer.get() == 1;
+                    isAutoZoomEnabled = buffer.get() == 1;
+                }
+
+                if (buffer.remaining() >= 4) {
+                    measurementUnits = buffer.getInt();
+                }
+
+                if (buffer.remaining() >= 4) {
+                    int styleLen = buffer.getInt();
+                    if (styleLen > 0 && buffer.remaining() >= styleLen) {
+                        byte[] styleBytes = new byte[styleLen];
+                        buffer.get(styleBytes);
+                        mapStyle = new String(styleBytes, StandardCharsets.UTF_8);
+                    }
+                }
                 
                 if (buffer.remaining() >= 8) {
                     timestamp = buffer.getLong();
@@ -117,6 +141,11 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
             final String finalBackend = backendStr;
             final String finalDownloadMode = downloadModeStr;
             final int finalPoiMask = poiMask;
+            final boolean finalIs3d = is3dEnabled;
+            final boolean finalIs3dBld = is3dBuildingsEnabled;
+            final boolean finalIsAutoZoom = isAutoZoomEnabled;
+            final int finalUnits = measurementUnits;
+            final String finalStyle = mapStyle;
             final long finalTimestamp = timestamp;
             mMainHandler.post(() -> {
                 android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
@@ -132,8 +161,17 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
                     .putString(getString(app.organicmaps.R.string.pref_wear_os_backend), finalBackend)
                     .putString(getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), finalDownloadMode)
                     .putInt("poiCategoriesMask", finalPoiMask)
+                    .putBoolean(getString(app.organicmaps.R.string.pref_3d), finalIs3d)
+                    .putBoolean(getString(app.organicmaps.R.string.pref_3d_buildings), finalIs3dBld)
+                    .putBoolean(getString(app.organicmaps.R.string.pref_auto_zoom), finalIsAutoZoom)
+                    .putString(getString(app.organicmaps.R.string.pref_munits), String.valueOf(finalUnits))
+                    .putString(getString(app.organicmaps.R.string.pref_map_style), finalStyle)
                     .apply();
                 WearSyncService.initSyncLayer(this);
+                
+                // Notify UI to refresh
+                Intent intent = new Intent("app.organicmaps.wear.SETTINGS_CHANGED");
+                sendBroadcast(intent);
             });
             return;
         }

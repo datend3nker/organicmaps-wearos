@@ -13,7 +13,11 @@ This module contains the Wear OS application for Organic Maps. It provides a ric
     - **Interaction Lock**: A toggle to switch between swiping for tabs and panning the map, ensuring safe navigation.
     - **Re-center**: Quickly snap back to your current position with a dedicated "My Location" button.
 - **Smart Filtering**: In Car/Vehicle mode, the map automatically hides pedestrian-only paths.
-- **POI Support**: Renders Points of Interest (Food, Fuel, ATMs, etc.) with high-contrast colored markers.
+- **POI Support**: Renders Points of Interest (Food, Fuel, ATMs, etc.) with high-contrast colored markers and official Organic Maps icons.
+- **Improved Labels**: Road names follow the path of the road for better legibility and a cleaner look.
+- **Dynamic POI Interaction**: 
+    - **Companion Mode**: Tapping a POI opens it instantly on the connected phone.
+    - **Standalone Mode**: Tapping a POI opens a detailed "Place Page" with info and navigation options.
 - **Auto-Zoom**: Intelligent map scaling that adapts to your current speed and proximity to turns.
 
 ### 2. Navigation Experience

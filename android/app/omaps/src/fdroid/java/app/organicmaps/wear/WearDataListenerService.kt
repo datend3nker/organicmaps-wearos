@@ -214,21 +214,53 @@ class WearDataListenerService : WearableListenerService() {
                     }
                     "/preferences" -> {
                         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                        val timestamp = dataMap.getLong("timestamp", 0)
+                        val currentState = NavigationStateHolder.state.value
+
+                        // TIMESTAMP-BASED WINNING LOGIC
+                        if (timestamp > 0 && timestamp < currentState.lastSettingsInteractionTime) {
+                            Log.d(TAG, "Ignoring stale remote preferences. Remote: $timestamp, LocalInteraction: ${currentState.lastSettingsInteractionTime}")
+                            return
+                        }
+
                         val mapEnabled = dataMap.getBoolean("mapEnabled", false)
                         val watchLocalMode = dataMap.getBoolean("watchLocalMode", false)
                         val standaloneMode = dataMap.getBoolean("standaloneMode", false)
+                        val autoDownload = dataMap.getBoolean("autoDownloadRouteMaps", true)
                         val mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY")
                         val backend = dataMap.getString("backend", "GMS")
                         val poiMask = dataMap.getInt("poiCategoriesMask", 0x3F)
                         
-                        // Standalone mode is a manual link cut
+                        // Check if actually changed to avoid unnecessary updates
+                        val oldMapEnabled = prefs.getBoolean("mapEnabled", false)
+                        val oldWatchLocalMode = prefs.getBoolean("watchLocalMode", false)
+                        val oldStandaloneMode = prefs.getBoolean("disconnectFromPhone", false)
+                        val oldAutoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
+                        val oldDownloadMode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY")
+                        val oldBackend = prefs.getString("pref_wear_os_backend", "GMS")
+                        val oldPoiMask = prefs.getInt("poiCategoriesMask", 0x3F)
+
+                        if (oldMapEnabled == mapEnabled && 
+                            oldWatchLocalMode == watchLocalMode && 
+                            oldStandaloneMode == standaloneMode &&
+                            oldAutoDownload == autoDownload &&
+                            oldDownloadMode == mapDownloadMode &&
+                            oldBackend == backend &&
+                            oldPoiMask == poiMask &&
+                            timestamp <= prefs.getLong("last_sync_timestamp", 0)) {
+                            return
+                        }
+
                         val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
                         val finalOfflineState = isForcedOffline || watchLocalMode
+                        val finalMapEnabled = standaloneMode || mapEnabled
                         
                         prefs.edit()
+                            .putLong("last_sync_timestamp", timestamp)
                             .putBoolean("mapEnabled", mapEnabled)
                             .putBoolean("watchLocalMode", watchLocalMode)
                             .putBoolean("disconnectFromPhone", standaloneMode)
+                            .putBoolean("autoDownloadRouteMaps", autoDownload)
                             .putString("mapDownloadMode", mapDownloadMode)
                             .putString("pref_wear_os_backend", backend)
                             .putInt("poiCategoriesMask", poiMask)
@@ -242,12 +274,17 @@ class WearDataListenerService : WearableListenerService() {
                             stopService(Intent(this, BluetoothWearDataListenerService::class.java))
                         }
 
-                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-                            mapEnabled = mapEnabled,
-                            watchLocalMode = finalOfflineState, // Apply forced state if set
-                            poiCategoriesMask = poiMask
+                        NavigationStateHolder.update(currentState.copy(
+                            mapEnabled = finalMapEnabled,
+                            watchLocalMode = finalOfflineState,
+                            standaloneMode = standaloneMode,
+                            autoDownloadRouteMaps = autoDownload,
+                            mapDownloadMode = mapDownloadMode,
+                            backend = backend,
+                            poiCategoriesMask = poiMask,
+                            lastSettingsInteractionTime = timestamp
                         ))
-                        Log.d(TAG, "Preferences updated: mapEnabled=$mapEnabled, phoneOfflineMaps=$watchLocalMode, finalUsedState=$finalOfflineState, backend=$backend")
+                        Log.d(TAG, "Preferences updated: mapEnabled=$finalMapEnabled, watchLocal=$watchLocalMode, autoDownload=$autoDownload, standalone=$standaloneMode, backend=$backend")
                     }
                     "/map/download/progress" -> {
                         val countryId = dataMap.getString("countryId") ?: return

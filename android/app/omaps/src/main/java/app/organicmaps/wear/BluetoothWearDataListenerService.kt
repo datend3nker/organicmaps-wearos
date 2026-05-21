@@ -136,7 +136,7 @@ class BluetoothWearDataListenerService : Service() {
                 val dist = String(data, buffer.position(), distLen, StandardCharsets.UTF_8)
                 
                 val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
+                val newState = currentState.copy(
                     isActive = true,
                     isNavigating = true,
                     carDirection = carDir,
@@ -153,7 +153,25 @@ class BluetoothWearDataListenerService : Service() {
                     nextStreet = street,
                     distToTurn = dist,
                     isPhoneConnected = true
-                ))
+                )
+                NavigationStateHolder.update(newState)
+
+                // Pass location to native core only if NOT in standalone mode
+                // This prevents location jitter where watch and phone fight for control
+                if (!newState.standaloneMode) {
+                    try {
+                        System.loadLibrary("organicmaps")
+                        app.organicmaps.sdk.location.LocationState.nativeLocationUpdated(
+                            System.currentTimeMillis(),
+                            lat, lon,
+                            5.0f, // hAcc
+                            0.0, // alt
+                            speed.toFloat(),
+                            bearing
+                        )
+                    } catch (_: Throwable) {}
+                }
+
                 if (!currentState.isActive) launchOmaps()
             }
             2 -> { // MSG_TYPE_SEARCH_RESULTS
@@ -212,6 +230,32 @@ class BluetoothWearDataListenerService : Service() {
                 } else "GMS"
 
                 val poiMask = if (buffer.remaining() >= 4) buffer.int else 0x3F
+                
+                var is3dEnabled = true
+                var is3dBuildingsEnabled = true
+                var isAutoZoomEnabled = true
+                var measurementUnits = 0
+                var mapStyle = "default"
+                
+                if (buffer.remaining() >= 3) {
+                    is3dEnabled = buffer.get() == 1.toByte()
+                    is3dBuildingsEnabled = buffer.get() == 1.toByte()
+                    isAutoZoomEnabled = buffer.get() == 1.toByte()
+                }
+                
+                if (buffer.remaining() >= 4) {
+                    measurementUnits = buffer.getInt()
+                }
+                
+                if (buffer.remaining() >= 4) {
+                    val styleLen = buffer.getInt()
+                    if (styleLen > 0 && buffer.remaining() >= styleLen) {
+                        val styleBytes = ByteArray(styleLen)
+                        buffer.get(styleBytes)
+                        mapStyle = String(styleBytes, StandardCharsets.UTF_8)
+                    }
+                }
+
                 val timestamp = if (buffer.remaining() >= 8) buffer.long else 0L
 
                 val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
@@ -230,6 +274,11 @@ class BluetoothWearDataListenerService : Service() {
                 val oldDownloadMode = prefs.getString("mapDownloadMode", "AUTO")
                 val oldBackend = prefs.getString("pref_wear_os_backend", "GMS")
                 val oldPoiMask = prefs.getInt("poiCategoriesMask", 0x3F)
+                val oldIs3d = prefs.getBoolean("pref_3d", true)
+                val oldIs3dBld = prefs.getBoolean("pref_3d_buildings", true)
+                val oldAutoZoom = prefs.getBoolean("pref_auto_zoom", true)
+                val oldUnits = prefs.getInt("pref_munits", 0)
+                val oldStyle = prefs.getString("pref_map_style", "default")
                 
                 if (oldMapEnabled == mapEnabled && 
                     oldWatchLocalMode == watchLocalMode && 
@@ -237,11 +286,17 @@ class BluetoothWearDataListenerService : Service() {
                     oldAutoDownload == autoDownload &&
                     oldDownloadMode == mapDownloadMode &&
                     oldBackend == backend &&
-                    oldPoiMask == poiMask) {
+                    oldPoiMask == poiMask &&
+                    oldIs3d == is3dEnabled &&
+                    oldIs3dBld == is3dBuildingsEnabled &&
+                    oldAutoZoom == isAutoZoomEnabled &&
+                    oldUnits == measurementUnits &&
+                    oldStyle == mapStyle) {
                     // Probably no change, skip to avoid loops
                 } else {
                     val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
                     val finalOfflineState = isForcedOffline || watchLocalMode
+                    val finalMapEnabled = standaloneMode || mapEnabled
 
                     prefs.edit()
                         .putBoolean("mapEnabled", mapEnabled)
@@ -251,6 +306,11 @@ class BluetoothWearDataListenerService : Service() {
                         .putString("mapDownloadMode", mapDownloadMode)
                         .putString("pref_wear_os_backend", backend)
                         .putInt("poiCategoriesMask", poiMask)
+                        .putBoolean("pref_3d", is3dEnabled)
+                        .putBoolean("pref_3d_buildings", is3dBuildingsEnabled)
+                        .putBoolean("pref_auto_zoom", isAutoZoomEnabled)
+                        .putInt("pref_munits", measurementUnits)
+                        .putString("pref_map_style", mapStyle)
                         .apply()
                         
                     // Notify UI that this update came from remote
@@ -263,14 +323,26 @@ class BluetoothWearDataListenerService : Service() {
                         stopService(Intent(this, BluetoothWearDataListenerService::class.java))
                     }
 
+                    // Apply native settings immediately
+                    try {
+                        System.loadLibrary("organicmaps")
+                        app.organicmaps.sdk.Framework.nativeSet3dMode(is3dEnabled, is3dBuildingsEnabled)
+                        app.organicmaps.sdk.Framework.nativeSetAutoZoomEnabled(isAutoZoomEnabled)
+                    } catch (_: Throwable) {}
+
                     NavigationStateHolder.update(currentState.copy(
-                        mapEnabled = mapEnabled,
+                        mapEnabled = finalMapEnabled,
                         watchLocalMode = finalOfflineState,
                         standaloneMode = standaloneMode,
                         poiCategoriesMask = poiMask,
                         mapDownloadMode = mapDownloadMode,
                         autoDownloadRouteMaps = autoDownload,
                         backend = backend,
+                        is3dEnabled = is3dEnabled,
+                        is3dBuildingsEnabled = is3dBuildingsEnabled,
+                        isAutoZoomEnabled = isAutoZoomEnabled,
+                        measurementUnits = measurementUnits,
+                        mapStyle = mapStyle,
                         lastSettingsInteractionTime = timestamp // Sync local interaction clock
                     ))
                 }
@@ -278,6 +350,15 @@ class BluetoothWearDataListenerService : Service() {
             5 -> { // MSG_TYPE_MAP_DOWNLOAD
                 val countryId = String(data, StandardCharsets.UTF_8)
                 val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                
+                // Respect map sync mode
+                val mapEnabled = prefs.getBoolean("mapEnabled", false)
+                val mapDownloadMode = prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC"
+                if (!mapEnabled || mapDownloadMode != "DIRECT_DOWNLOAD") {
+                    Log.d(TAG, "Ignoring map push/download request due to sync mode: $mapDownloadMode")
+                    return
+                }
+
                 prefs.edit().putBoolean("forceWatchLocalMode", true).apply()
                 
                 NavigationStateHolder.update(NavigationStateHolder.state.value.copy(openMapManager = true, watchLocalMode = true))
@@ -286,8 +367,23 @@ class BluetoothWearDataListenerService : Service() {
                     try {
                         val wearApp = applicationContext as app.organicmaps.wear.WearApplication
                         wearApp.waitForInitializationBlocking()
-                        app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
-                        app.organicmaps.sdk.downloader.MapManager.startDownload("World")
+                        
+                        // Check if already downloaded or in progress to prevent native registration crash
+                        val status = app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId)
+                        if (status != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE && 
+                            status != app.organicmaps.sdk.downloader.CountryItem.STATUS_PROGRESS && 
+                            status != app.organicmaps.sdk.downloader.CountryItem.STATUS_ENQUEUED &&
+                            status != app.organicmaps.sdk.downloader.CountryItem.STATUS_APPLYING) {
+                            app.organicmaps.sdk.downloader.MapManager.startDownload(countryId)
+                        }
+                        
+                        val worldStatus = app.organicmaps.sdk.downloader.MapManager.nativeGetStatus("World")
+                        if (worldStatus != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE && 
+                            worldStatus != app.organicmaps.sdk.downloader.CountryItem.STATUS_PROGRESS && 
+                            worldStatus != app.organicmaps.sdk.downloader.CountryItem.STATUS_ENQUEUED &&
+                            worldStatus != app.organicmaps.sdk.downloader.CountryItem.STATUS_APPLYING) {
+                            app.organicmaps.sdk.downloader.MapManager.startDownload("World")
+                        }
                     } catch (e: Throwable) {
                         e.printStackTrace()
                     }

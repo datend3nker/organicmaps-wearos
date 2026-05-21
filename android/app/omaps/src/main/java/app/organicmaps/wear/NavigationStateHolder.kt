@@ -46,8 +46,8 @@ data class NavigationState(
     val routePoints: List<Pair<Double, Double>> = emptyList(),
     val openMapManager: Boolean = false,
     val isPhoneConnected: Boolean = false,
-    val poiCategoriesMask: Int = 0x3F, // Default to all POIs
-    val mapDownloadMode: String = "BLUETOOTH_ONLY",
+    val poiCategoriesMask: Int = 0x7FFFFFFF, // Default to all POIs
+    val mapDownloadMode: String = "PHONE_SYNC", // PHONE_SYNC, DIRECT_DOWNLOAD
     val autoDownloadRouteMaps: Boolean = true,
     val backend: String = "GMS",
     val manualCenterLat: Double = 0.0,
@@ -60,7 +60,25 @@ data class NavigationState(
     val isRouteReady: Boolean = false,
     val destinationName: String = "",
     val isAmbient: Boolean = false,
-    val lastSettingsInteractionTime: Long = 0L
+    val lastSettingsInteractionTime: Long = 0L,
+    val lastRouteError: Int = 0,
+    val isRecalculating: Boolean = false,
+    // Core Map Settings
+    val is3dEnabled: Boolean = true,
+    val is3dBuildingsEnabled: Boolean = true,
+    val isAutoZoomEnabled: Boolean = true,
+    val measurementUnits: Int = 0, // 0: Metric, 1: Imperial
+    val mapStyle: String = "default", // default, night, auto, nav_auto
+    // Routing Options
+    val avoidTolls: Boolean = false,
+    val avoidMotorways: Boolean = false,
+    val avoidFerries: Boolean = false,
+    val avoidUnpaved: Boolean = false,
+    // Map Layers
+    val transitEnabled: Boolean = false,
+    val isolinesEnabled: Boolean = false,
+    val bikingEnabled: Boolean = false,
+    val hikingEnabled: Boolean = false
 )
 
 object NavigationStateHolder {

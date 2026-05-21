@@ -24,6 +24,7 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         private const val PATH_PING = "/ping"
         private const val PATH_PREFERENCES_REQUEST = "/preferences/request"
         private const val PATH_START_NAVIGATION_REQUEST = "/navigation/start/request"
+        private const val PATH_POI_SHOW = "/poi/show"
 
         private const val MSG_TYPE_COMMAND = 10.toByte()
     }
@@ -84,12 +85,23 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         val backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS"
         val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
         
+        val is3dEnabled = prefs.getBoolean("pref_3d", true)
+        val is3dBuildingsEnabled = prefs.getBoolean("pref_3d_buildings", true)
+        val isAutoZoomEnabled = prefs.getBoolean("pref_auto_zoom", true)
+        val mUnits = prefs.getInt("pref_munits", 0)
+        val mapStyle = prefs.getString("pref_map_style", "default") ?: "default"
+
+        val avoidTolls = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Toll)
+        val avoidMotorways = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Motorway)
+        val avoidFerries = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Ferry)
+        val avoidUnpaved = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Dirty)
+        
         val backendBytes = backend.toByteArray(StandardCharsets.UTF_8)
         val downloadModeBytes = downloadMode.toByteArray(StandardCharsets.UTF_8)
+        val styleBytes = mapStyle.toByteArray(StandardCharsets.UTF_8)
         
-        // BUFFER ALIGNMENT WITH PHONE (BluetoothSyncLayer.java: parsePreferences)
-        // Format: [1:mapEnabled][1:watchLocal][1:standalone][1:autoDownload][4:modeLen][mode][4:backendLen][backend][4:poiMask][8:timestamp]
-        val buffer = ByteBuffer.allocate(4 + 4 + downloadModeBytes.size + 4 + backendBytes.size + 4 + 8)
+        // BUFFER Format: [1:mapEnabled][1:watchLocal][1:standalone][1:autoDownload][4:modeLen][mode][4:backendLen][backend][4:poiMask][1:3d][1:3dBld][1:autoZoom][4:mUnits][4:styleLen][style][1:toll][1:mtw][1:ferry][1:dirty][8:timestamp]
+        val buffer = ByteBuffer.allocate(39 + downloadModeBytes.size + backendBytes.size + styleBytes.size)
         buffer.put((if (mapEnabled) 1 else 0).toByte())
         buffer.put((if (watchLocalMode) 1 else 0).toByte())
         buffer.put((if (standaloneMode) 1 else 0).toByte())
@@ -99,6 +111,19 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         buffer.putInt(backendBytes.size)
         buffer.put(backendBytes)
         buffer.putInt(poiMask)
+        
+        buffer.put((if (is3dEnabled) 1 else 0).toByte())
+        buffer.put((if (is3dBuildingsEnabled) 1 else 0).toByte())
+        buffer.put((if (isAutoZoomEnabled) 1 else 0).toByte())
+        buffer.putInt(mUnits)
+        buffer.putInt(styleBytes.size)
+        buffer.put(styleBytes)
+
+        buffer.put((if (avoidTolls) 1 else 0).toByte())
+        buffer.put((if (avoidMotorways) 1 else 0).toByte())
+        buffer.put((if (avoidFerries) 1 else 0).toByte())
+        buffer.put((if (avoidUnpaved) 1 else 0).toByte())
+
         buffer.putLong(System.currentTimeMillis())
         
         sendMessage(context, "/preferences/watch", buffer.array())
@@ -110,6 +135,15 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
 
     override fun startNavigation(context: Context) {
         sendMessage(context, PATH_START_NAVIGATION_REQUEST, byteArrayOf())
+    }
+
+    override fun showOnPhone(context: Context, result: SearchResultItem) {
+        val nameBytes = result.name.toByteArray(StandardCharsets.UTF_8)
+        val buffer = ByteBuffer.allocate(8 + 8 + nameBytes.size)
+        buffer.putDouble(result.lat)
+        buffer.putDouble(result.lon)
+        buffer.put(nameBytes)
+        sendMessage(context, PATH_POI_SHOW, buffer.array())
     }
 
     override fun checkConnection(context: Context, callback: (Boolean) -> Unit) {

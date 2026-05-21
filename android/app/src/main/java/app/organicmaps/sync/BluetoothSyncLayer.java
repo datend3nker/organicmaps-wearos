@@ -25,6 +25,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import app.organicmaps.sdk.routing.RoutingInfo;
+import app.organicmaps.sdk.routing.RoutingOptions;
+import app.organicmaps.sdk.settings.RoadType;
 import app.organicmaps.sdk.search.SearchRecents;
 import app.organicmaps.sdk.search.SearchResult;
 import app.organicmaps.util.GzipUtils;
@@ -64,11 +66,25 @@ public class BluetoothSyncLayer implements ISyncLayer {
         boolean autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true);
         int poiMask = prefs.getInt("poiCategoriesMask", 0x3F);
 
+        // Map-specific settings
+        boolean is3dEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_3d), true);
+        boolean is3dBuildingsEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_3d_buildings), true);
+        boolean isAutoZoomEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_auto_zoom), true);
+        int mUnits = Integer.parseInt(prefs.getString(context.getString(app.organicmaps.R.string.pref_munits), "0"));
+        String mapStyle = prefs.getString(context.getString(app.organicmaps.R.string.pref_map_style), "default");
+
+        // Routing options
+        boolean avoidTolls = RoutingOptions.hasOption(RoadType.Toll);
+        boolean avoidMotorways = RoutingOptions.hasOption(RoadType.Motorway);
+        boolean avoidFerries = RoutingOptions.hasOption(RoadType.Ferry);
+        boolean avoidUnpaved = RoutingOptions.hasOption(RoadType.Dirty);
+
         byte[] modeBytes = mapDownloadMode.getBytes(StandardCharsets.UTF_8);
         byte[] backendBytes = backend.getBytes(StandardCharsets.UTF_8);
+        byte[] styleBytes = mapStyle.getBytes(StandardCharsets.UTF_8);
 
-        // BUFFER Format: [1:mapEnabled][1:watchLocal][1:standalone][1:autoDownload][4:modeLen][mode][4:backendLen][backend][4:poiMask][8:timestamp]
-        ByteBuffer buffer = ByteBuffer.allocate(4 + 4 + modeBytes.length + 4 + backendBytes.length + 4 + 8);
+        // BUFFER Format: [1:mapEnabled][1:watchLocal][1:standalone][1:autoDownload][4:modeLen][mode][4:backendLen][backend][4:poiMask][1:3d][1:3dBld][1:autoZoom][4:mUnits][4:styleLen][style][1:toll][1:mtw][1:ferry][1:dirty][8:timestamp]
+        ByteBuffer buffer = ByteBuffer.allocate(39 + modeBytes.length + backendBytes.length + styleBytes.length);
         buffer.put((byte) (mapEnabled ? 1 : 0));
         buffer.put((byte) (watchLocalMode ? 1 : 0));
         buffer.put((byte) (standaloneMode ? 1 : 0));
@@ -78,6 +94,19 @@ public class BluetoothSyncLayer implements ISyncLayer {
         buffer.putInt(backendBytes.length);
         buffer.put(backendBytes);
         buffer.putInt(poiMask);
+        
+        buffer.put((byte) (is3dEnabled ? 1 : 0));
+        buffer.put((byte) (is3dBuildingsEnabled ? 1 : 0));
+        buffer.put((byte) (isAutoZoomEnabled ? 1 : 0));
+        buffer.putInt(mUnits);
+        buffer.putInt(styleBytes.length);
+        buffer.put(styleBytes);
+
+        buffer.put((byte) (avoidTolls ? 1 : 0));
+        buffer.put((byte) (avoidMotorways ? 1 : 0));
+        buffer.put((byte) (avoidFerries ? 1 : 0));
+        buffer.put((byte) (avoidUnpaved ? 1 : 0));
+
         buffer.putLong(System.currentTimeMillis());
         sendRawMessage(context, MSG_TYPE_PREFERENCES, buffer.array());
     }
@@ -246,11 +275,12 @@ public class BluetoothSyncLayer implements ISyncLayer {
     @Override
     public void parsePreferences(@NonNull Context context, @NonNull byte[] data, @NonNull android.content.SharedPreferences prefs) {
         ByteBuffer buffer = ByteBuffer.wrap(data);
-        if (buffer.remaining() < 3) return;
+        if (buffer.remaining() < 4) return;
         
         boolean mapEnabled = buffer.get() == 1;
         boolean watchLocalMode = buffer.get() == 1;
         boolean standaloneMode = buffer.get() == 1;
+        boolean autoDownloadRouteMaps = buffer.get() == 1;
 
         String mapDownloadMode = "BLUETOOTH_ONLY";
         if (buffer.remaining() >= 4) {
@@ -277,6 +307,41 @@ public class BluetoothSyncLayer implements ISyncLayer {
             poiMask = buffer.getInt();
         }
 
+        boolean is3dEnabled = true;
+        boolean is3dBuildingsEnabled = true;
+        boolean isAutoZoomEnabled = true;
+        if (buffer.remaining() >= 3) {
+            is3dEnabled = buffer.get() == 1;
+            is3dBuildingsEnabled = buffer.get() == 1;
+            isAutoZoomEnabled = buffer.get() == 1;
+        }
+
+        int measurementUnits = 0;
+        if (buffer.remaining() >= 4) {
+            measurementUnits = buffer.getInt();
+        }
+
+        String mapStyle = "default";
+        if (buffer.remaining() >= 4) {
+            int len = buffer.getInt();
+            if (len > 0 && buffer.remaining() >= len) {
+                byte[] b = new byte[len];
+                buffer.get(b);
+                mapStyle = new String(b, StandardCharsets.UTF_8);
+            }
+        }
+
+        boolean avoidTolls = false;
+        boolean avoidMotorways = false;
+        boolean avoidFerries = false;
+        boolean avoidUnpaved = false;
+        if (buffer.remaining() >= 4) {
+            avoidTolls = buffer.get() == 1;
+            avoidMotorways = buffer.get() == 1;
+            avoidFerries = buffer.get() == 1;
+            avoidUnpaved = buffer.get() == 1;
+        }
+
         long timestamp = 0;
         if (buffer.remaining() >= 8) {
             timestamp = buffer.getLong();
@@ -290,10 +355,25 @@ public class BluetoothSyncLayer implements ISyncLayer {
             .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), mapEnabled)
             .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), watchLocalMode)
             .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), standaloneMode)
+            .putBoolean("autoDownloadRouteMaps", autoDownloadRouteMaps)
             .putString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), backend)
             .putString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), mapDownloadMode)
             .putInt("poiCategoriesMask", poiMask)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_3d), is3dEnabled)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_3d_buildings), is3dBuildingsEnabled)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_auto_zoom), isAutoZoomEnabled)
+            .putString(context.getString(app.organicmaps.R.string.pref_munits), String.valueOf(measurementUnits))
+            .putString(context.getString(app.organicmaps.R.string.pref_map_style), mapStyle)
+            .putBoolean("avoid_tolls", avoidTolls)
+            .putBoolean("avoid_motorways", avoidMotorways)
+            .putBoolean("avoid_ferries", avoidFerries)
+            .putBoolean("avoid_dirty_roads", avoidUnpaved)
             .apply();
+        
+        if (avoidTolls) RoutingOptions.addOption(RoadType.Toll); else RoutingOptions.removeOption(RoadType.Toll);
+        if (avoidMotorways) RoutingOptions.addOption(RoadType.Motorway); else RoutingOptions.removeOption(RoadType.Motorway);
+        if (avoidFerries) RoutingOptions.addOption(RoadType.Ferry); else RoutingOptions.removeOption(RoadType.Ferry);
+        if (avoidUnpaved) RoutingOptions.addOption(RoadType.Dirty); else RoutingOptions.removeOption(RoadType.Dirty);
     }
 
     @Override
@@ -409,14 +489,17 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     private void handleIncomingCommand(byte[] payload) {
         ByteBuffer buffer = ByteBuffer.wrap(payload);
+        if (buffer.remaining() < 4) return;
         int pathLen = buffer.getInt();
-        byte[] pathBytes = new byte[pathLen];
-        buffer.get(pathBytes);
-        String path = new String(pathBytes, StandardCharsets.UTF_8);
-        byte[] data = new byte[buffer.remaining()];
-        buffer.get(data);
-        
-        notifyMessageReceived(path, data, "bluetooth_watch");
+        if (pathLen > 0 && buffer.remaining() >= pathLen) {
+            byte[] pathBytes = new byte[pathLen];
+            buffer.get(pathBytes);
+            String path = new String(pathBytes, StandardCharsets.UTF_8);
+            byte[] data = new byte[buffer.remaining()];
+            buffer.get(data);
+            
+            notifyMessageReceived(path, data, "bluetooth_watch");
+        }
     }
 
     private void startConnectionListener() {

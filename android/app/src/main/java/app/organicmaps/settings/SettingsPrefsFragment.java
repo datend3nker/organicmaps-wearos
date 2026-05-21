@@ -154,21 +154,47 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 
   private void refreshWearOsPrefs()
   {
+    if (!isAdded()) return;
     updateWearOsPrefsSummary();
     
     isUpdatingFromSync = true;
-    // Force refresh the toggle states manually
-    SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(requireContext());
-    
-    TwoStatePreference mapEnabledPref = findPreference(getString(R.string.pref_wear_os_map_enabled));
-    if (mapEnabledPref != null) mapEnabledPref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_map_enabled), false));
+    try {
+        // Force refresh the toggle states manually
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(requireContext());
+        
+        TwoStatePreference mapEnabledPref = findPreference(getString(R.string.pref_wear_os_map_enabled));
+        if (mapEnabledPref != null) mapEnabledPref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_map_enabled), false));
 
-    TwoStatePreference watchLocalModePref = findPreference(getString(R.string.pref_wear_os_watch_local_mode));
-    if (watchLocalModePref != null) watchLocalModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_watch_local_mode), false));
+        TwoStatePreference watchLocalModePref = findPreference(getString(R.string.pref_wear_os_watch_local_mode));
+        if (watchLocalModePref != null) watchLocalModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_watch_local_mode), false));
 
-    TwoStatePreference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
-    if (standaloneModePref != null) standaloneModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_standalone_mode), false));
-    isUpdatingFromSync = false;
+        TwoStatePreference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
+        if (standaloneModePref != null) standaloneModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_standalone_mode), false));
+
+        ListPreference backendPref = findPreference(getString(R.string.pref_wear_os_backend));
+        if (backendPref != null) backendPref.setValue(prefs.getString(getString(R.string.pref_wear_os_backend), "GMS"));
+
+        ListPreference downloadModePref = findPreference(getString(R.string.pref_wear_os_map_download_mode));
+        if (downloadModePref != null) downloadModePref.setValue(prefs.getString(getString(R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY"));
+
+        // Core Map Settings
+        TwoStatePreference perspectivePref = findPreference(getString(R.string.pref_3d));
+        if (perspectivePref != null) perspectivePref.setChecked(prefs.getBoolean(getString(R.string.pref_3d), true));
+
+        TwoStatePreference buildingsPref = findPreference(getString(R.string.pref_3d_buildings));
+        if (buildingsPref != null) buildingsPref.setChecked(prefs.getBoolean(getString(R.string.pref_3d_buildings), true));
+
+        TwoStatePreference autoZoomPref = findPreference(getString(R.string.pref_auto_zoom));
+        if (autoZoomPref != null) autoZoomPref.setChecked(prefs.getBoolean(getString(R.string.pref_auto_zoom), true));
+
+        ListPreference unitsPref = findPreference(getString(R.string.pref_munits));
+        if (unitsPref != null) unitsPref.setValue(prefs.getString(getString(R.string.pref_munits), "0"));
+
+        ListPreference stylePref = findPreference(getString(R.string.pref_map_style));
+        if (stylePref != null) stylePref.setValue(prefs.getString(getString(R.string.pref_map_style), "default"));
+    } finally {
+        isUpdatingFromSync = false;
+    }
   }
 
   @Override
@@ -228,6 +254,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 
     ((TwoStatePreference) pref).setChecked(Config.isLargeFontsSize());
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       final boolean oldVal = Config.isLargeFontsSize();
       final boolean newVal = (Boolean) newValue;
       if (oldVal != newVal)
@@ -243,6 +270,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 
     ((TwoStatePreference) pref).setChecked(Config.isTransliteration());
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       final boolean oldVal = Config.isTransliteration();
       final boolean newVal = (Boolean) newValue;
       if (oldVal != newVal)
@@ -320,7 +348,9 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     boolean autozoomEnabled = Framework.nativeGetAutoZoomEnabled();
     pref.setChecked(autozoomEnabled);
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       Framework.nativeSetAutoZoomEnabled((boolean) newValue);
+      syncWearOsPreferences();
       return true;
     });
   }
@@ -396,6 +426,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
   private void initWearOsPrefsCallbacks()
   {
     androidx.preference.Preference.OnPreferenceChangeListener wearPrefsListener = (preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       // Sync to watch when map streaming setting changes
       // Run it slightly later so SharedPreferences gives the new saved value
       new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
@@ -421,6 +452,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     final Preference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
     if (standaloneModePref != null) {
         standaloneModePref.setOnPreferenceChangeListener((preference, newValue) -> {
+            if (isUpdatingFromSync) return true;
             new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
             return true;
         });
@@ -432,6 +464,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
             backendPref.setVisible(false);
         } else {
             backendPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                if (isUpdatingFromSync) return true;
                 // Update implementation
                 app.organicmaps.wear.WearSyncService.initSyncLayer(requireContext());
                 
@@ -465,9 +498,11 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     disableOrEnable3DBuildingsForPowerMode(powerManagementValue);
 
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       Framework.Params3dMode current = new Framework.Params3dMode();
       Framework.nativeGet3dMode(current);
       Framework.nativeSet3dMode(current.enabled, (Boolean) newValue);
+      syncWearOsPreferences();
       return true;
     });
   }
@@ -506,9 +541,11 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     pref.setChecked(_3d.enabled);
 
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       Framework.Params3dMode current = new Framework.Params3dMode();
       Framework.nativeGet3dMode(current);
       Framework.nativeSet3dMode((Boolean) newValue, current.buildings);
+      syncWearOsPreferences();
       return true;
     });
   }
@@ -519,12 +556,14 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 
     pref.setChecked(Config.isAutodownloadEnabled());
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       final boolean value = (boolean) newValue;
       Config.setAutodownloadEnabled(value);
 
       if (value)
         OnmapDownloader.setAutodownloadLocked(false);
 
+      syncWearOsPreferences();
       return true;
     });
   }
@@ -537,6 +576,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     pref.setValue(Config.UiTheme.getUiThemeSettings());
     pref.setSummary(pref.getEntry());
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       final String themeName = (String) newValue;
       if (!Config.UiTheme.setUiThemeSettings(themeName))
         return true;
@@ -546,6 +586,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       final ThemeMode mode = ThemeMode.getInstance(themeName);
       final CharSequence summary = pref.getEntries()[mode.ordinal()];
       pref.setSummary(summary);
+      syncWearOsPreferences();
       return true;
     });
   }
@@ -567,7 +608,9 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 
     ((ListPreference) pref).setValue(String.valueOf(UnitLocale.getUnits()));
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
+      if (isUpdatingFromSync) return true;
       UnitLocale.setUnits(Integer.parseInt((String) newValue));
+      syncWearOsPreferences();
       return true;
     });
   }

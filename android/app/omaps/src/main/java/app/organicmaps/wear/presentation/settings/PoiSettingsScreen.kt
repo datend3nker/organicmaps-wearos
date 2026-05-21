@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.WearCommandService
+import app.organicmaps.wear.MapTileStateHolder
 
 @Composable
 fun PoiSettingsScreen(onBack: () -> Unit) {
@@ -20,11 +21,36 @@ fun PoiSettingsScreen(onBack: () -> Unit) {
     
     var mask by remember { mutableIntStateOf(navState.poiCategoriesMask) }
 
+    val categories = listOf(
+        "Eat & Drink" to (1 shl 0),
+        "Hotel" to (1 shl 1),
+        "ATM" to (1 shl 2),
+        "Parking" to (1 shl 3),
+        "Hiking Peaks" to (1 shl 4),
+        "Camping" to (1 shl 5),
+        "Wi-Fi" to (1 shl 6),
+        "Railway" to (1 shl 7),
+        "Subway" to (1 shl 8),
+        "Airport" to (1 shl 9),
+        "Post Office" to (1 shl 10),
+        "Toilets" to (1 shl 11),
+        "Amenities" to (1 shl 12),
+        "Attractions" to (1 shl 13),
+        "Health" to (1 shl 14),
+        "Shopping" to (1 shl 15),
+        "Entertainment" to (1 shl 16),
+        "Water" to (1 shl 17),
+        "All Others" to (1 shl 18)
+    )
+
+    val allMask = (1 shl categories.size) - 1
+
     val updateMask: (Int, Boolean) -> Unit = { bit, checked ->
         val newMask = if (checked) mask or bit else mask and bit.inv()
         mask = newMask
         prefs.edit().putInt("poiCategoriesMask", newMask).apply()
         NavigationStateHolder.update(navState.copy(poiCategoriesMask = newMask))
+        MapTileStateHolder.clearCache()
         WearCommandService.syncPreferences(context)
     }
 
@@ -43,23 +69,22 @@ fun PoiSettingsScreen(onBack: () -> Unit) {
         }
 
         item {
-            Button(
-                onClick = onBack,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                colors = ButtonDefaults.secondaryButtonColors()
-            ) {
-                Text("Back")
-            }
+            val isAllChecked = (mask and allMask) == allMask
+            ToggleChip(
+                checked = isAllChecked,
+                onCheckedChange = { checked ->
+                    val newMask = if (checked) allMask else 0
+                    mask = newMask
+                    prefs.edit().putInt("poiCategoriesMask", newMask).apply()
+                    NavigationStateHolder.update(navState.copy(poiCategoriesMask = newMask))
+                    MapTileStateHolder.clearCache()
+                    WearCommandService.syncPreferences(context)
+                },
+                label = { Text("All POIs") },
+                toggleControl = { Checkbox(checked = isAllChecked) },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+            )
         }
-
-        val categories = listOf(
-            "Eat & Drink" to 1,
-            "Transportation" to 2,
-            "Hotel" to 4,
-            "ATM" to 8,
-            "Main POIs" to 16,
-            "All Details" to 32
-        )
 
         items(categories) { (name, bit) ->
             val isChecked = (mask and bit) != 0
@@ -72,6 +97,16 @@ fun PoiSettingsScreen(onBack: () -> Unit) {
                 },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
             )
+        }
+
+        item {
+            Button(
+                onClick = onBack,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                colors = ButtonDefaults.secondaryButtonColors()
+            ) {
+                Text("Back")
+            }
         }
     }
 }

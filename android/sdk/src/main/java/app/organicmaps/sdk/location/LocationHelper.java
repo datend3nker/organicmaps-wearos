@@ -107,7 +107,7 @@ public class LocationHelper implements BaseLocationProvider.Listener
     mContext = context;
     mSensorHelper = sensorHelper;
     mLocationProvider = locationProviderFactory.getProvider(mContext, this);
-    mHandler = new Handler();
+    mHandler =  new Handler();
   }
 
   /**
@@ -158,10 +158,6 @@ public class LocationHelper implements BaseLocationProvider.Listener
     mHandler.removeCallbacks(mLocationTimeoutRunnable);
     mHandler.postDelayed(mLocationTimeoutRunnable, LOCATION_UPDATE_TIMEOUT_MS); // Reset the timeout.
 
-    mListenersIterator.rewind();
-    while (mListenersIterator.hasNext())
-      mListenersIterator.next().onLocationUpdated(mSavedLocation);
-
     // If we are still in the first run mode, i.e. user is staying on the first run screens,
     // not on the map, we mustn't post location update to the core. Only this preserving allows us
     // to play nice zoom animation once a user will leave first screens and will see a map.
@@ -175,6 +171,10 @@ public class LocationHelper implements BaseLocationProvider.Listener
                                         mSavedLocation.getLongitude(), mSavedLocation.getAccuracy(),
                                         mSavedLocation.getAltitude(), mSavedLocation.getSpeed(),
                                         mSavedLocation.getBearing());
+
+    mListenersIterator.rewind();
+    while (mListenersIterator.hasNext())
+      mListenersIterator.next().onLocationUpdated(mSavedLocation);
   }
 
   private void notifyLocationUpdateTimeout()

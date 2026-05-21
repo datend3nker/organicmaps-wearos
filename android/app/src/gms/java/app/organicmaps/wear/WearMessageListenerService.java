@@ -8,6 +8,8 @@ import androidx.annotation.NonNull;
 import app.organicmaps.SplashActivity;
 import app.organicmaps.R;
 import app.organicmaps.sdk.routing.RoutingController;
+import app.organicmaps.sdk.routing.RoutingOptions;
+import app.organicmaps.sdk.settings.RoadType;
 import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
 import com.google.android.gms.wearable.DataMap;
@@ -83,6 +85,17 @@ public class WearMessageListenerService extends WearableListenerService implemen
                 String mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY");
                 int poiMask = dataMap.getInt("poiCategoriesMask", 0x3F);
                 
+                boolean is3dEnabled = dataMap.getBoolean("is3dEnabled", true);
+                boolean is3dBuildingsEnabled = dataMap.getBoolean("is3dBuildingsEnabled", true);
+                boolean isAutoZoomEnabled = dataMap.getBoolean("isAutoZoomEnabled", true);
+                int mUnits = dataMap.getInt("measurementUnits", 0);
+                String mapStyle = dataMap.getString("mapStyle", "default");
+
+                boolean avoidTolls = dataMap.getBoolean("avoidTolls", false);
+                boolean avoidMotorways = dataMap.getBoolean("avoidMotorways", false);
+                boolean avoidFerries = dataMap.getBoolean("avoidFerries", false);
+                boolean avoidUnpaved = dataMap.getBoolean("avoidUnpaved", false);
+
                 mMainHandler.post(() -> {
                     android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
                     long lastApplied = prefs.getLong("pref_wear_os_last_sync_timestamp", 0);
@@ -94,7 +107,16 @@ public class WearMessageListenerService extends WearableListenerService implemen
                             prefs.getBoolean(getString(R.string.pref_wear_os_standalone_mode), false) != standaloneMode ||
                             !prefs.getString(getString(R.string.pref_wear_os_backend), "GMS").equals(backend) ||
                             !prefs.getString(getString(R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY").equals(mapDownloadMode) ||
-                            prefs.getInt("poiCategoriesMask", 0x3F) != poiMask;
+                            prefs.getInt("poiCategoriesMask", 0x3F) != poiMask ||
+                            prefs.getBoolean(getString(R.string.pref_3d), true) != is3dEnabled ||
+                            prefs.getBoolean(getString(R.string.pref_3d_buildings), true) != is3dBuildingsEnabled ||
+                            prefs.getBoolean(getString(R.string.pref_auto_zoom), true) != isAutoZoomEnabled ||
+                            !prefs.getString(getString(R.string.pref_munits), "0").equals(String.valueOf(mUnits)) ||
+                            !prefs.getString(getString(R.string.pref_map_style), "default").equals(mapStyle) ||
+                            prefs.getBoolean("avoid_tolls", false) != avoidTolls ||
+                            prefs.getBoolean("avoid_motorways", false) != avoidMotorways ||
+                            prefs.getBoolean("avoid_ferries", false) != avoidFerries ||
+                            prefs.getBoolean("avoid_dirty_roads", false) != avoidUnpaved;
 
                     if (!changed && timestamp > 0 && timestamp == lastApplied) return;
 
@@ -107,7 +129,22 @@ public class WearMessageListenerService extends WearableListenerService implemen
                         .putString(getString(R.string.pref_wear_os_backend), backend)
                         .putString(getString(R.string.pref_wear_os_map_download_mode), mapDownloadMode)
                         .putInt("poiCategoriesMask", poiMask)
+                        .putBoolean(getString(R.string.pref_3d), is3dEnabled)
+                        .putBoolean(getString(R.string.pref_3d_buildings), is3dBuildingsEnabled)
+                        .putBoolean(getString(R.string.pref_auto_zoom), isAutoZoomEnabled)
+                        .putString(getString(R.string.pref_munits), String.valueOf(mUnits))
+                        .putString(getString(R.string.pref_map_style), mapStyle)
+                        .putBoolean("avoid_tolls", avoidTolls)
+                        .putBoolean("avoid_motorways", avoidMotorways)
+                        .putBoolean("avoid_ferries", avoidFerries)
+                        .putBoolean("avoid_dirty_roads", avoidUnpaved)
                         .apply();
+                    
+                    if (avoidTolls) RoutingOptions.addOption(RoadType.Toll); else RoutingOptions.removeOption(RoadType.Toll);
+                    if (avoidMotorways) RoutingOptions.addOption(RoadType.Motorway); else RoutingOptions.removeOption(RoadType.Motorway);
+                    if (avoidFerries) RoutingOptions.addOption(RoadType.Ferry); else RoutingOptions.removeOption(RoadType.Ferry);
+                    if (avoidUnpaved) RoutingOptions.addOption(RoadType.Dirty); else RoutingOptions.removeOption(RoadType.Dirty);
+
                     WearSyncService.initSyncLayer(this);
                     
                     if (changed) {

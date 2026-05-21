@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
@@ -32,6 +33,9 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.CircleShape
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 
 @Composable
 fun NavigationScreen(
@@ -42,70 +46,79 @@ fun NavigationScreen(
     deviceRotation: Float = 0f,
     exitNum: Int = 0,
 ) {
+    val listState = rememberScalingLazyListState()
     Scaffold(
-        timeText = { TimeText() }
+        timeText = { TimeText() },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 28.dp, bottom = 16.dp, start = 8.dp, end = 8.dp),
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            contentPadding = PaddingValues(top = 28.dp, bottom = 40.dp, start = 12.dp, end = 12.dp)
         ) {
             // Distance text
-            Text(
-                text = distanceToNextTurn.ifEmpty { "Proceed" },
-                style = MaterialTheme.typography.title1.copy(
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.ExtraBold
-                ),
-                color = MaterialTheme.colors.primary,
-                textAlign = TextAlign.Center
-            )
+            item {
+                Text(
+                    text = distanceToNextTurn.ifEmpty { "Proceed" },
+                    style = MaterialTheme.typography.title1.copy(
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    ),
+                    color = MaterialTheme.colors.primary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+            }
 
             // Large turn icon with optional exit number
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = turnIcon,
-                    contentDescription = "Turn icon",
-                    modifier = Modifier
-                        .size(64.dp)
-                        .rotate(deviceRotation),
-                    tint = MaterialTheme.colors.onBackground
-                )
-                if (exitNum > 0) {
-                    Box(
+            item {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(68.dp)) {
+                    Icon(
+                        imageVector = turnIcon,
+                        contentDescription = "Turn icon",
                         modifier = Modifier
-                            .size(24.dp)
-                            .background(MaterialTheme.colors.surface, CircleShape)
-                            .padding(2.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = exitNum.toString(),
-                            style = MaterialTheme.typography.title3.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
-                            ),
-                            color = MaterialTheme.colors.onSurface
-                        )
+                            .size(56.dp)
+                            .rotate(deviceRotation),
+                        tint = MaterialTheme.colors.onBackground
+                    )
+                    if (exitNum > 0) {
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .align(Alignment.BottomEnd)
+                                .background(MaterialTheme.colors.surface, CircleShape)
+                                .padding(2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = exitNum.toString(),
+                                style = MaterialTheme.typography.title3.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                ),
+                                color = MaterialTheme.colors.onSurface
+                            )
+                        }
                     }
                 }
             }
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                // Street name
+            // Street name
+            item {
                 Text(
                     text = remainingTime,
-                    style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Medium),
+                    style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Medium, fontSize = 15.sp),
                     textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 12.dp)
+                    maxLines = 2,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp)
                 )
-                
+            }
+            
+            // Cancel button
+            item {
                 Spacer(modifier = Modifier.height(6.dp))
-
-                // Cancel button
                 Button(
                     onClick = onCancelClick,
                     modifier = Modifier.size(ButtonDefaults.SmallButtonSize),
@@ -114,7 +127,7 @@ fun NavigationScreen(
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Cancel",
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }

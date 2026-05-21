@@ -11,6 +11,8 @@ import java.util.LinkedHashMap
 
 import kotlin.math.*
 
+import java.nio.charset.StandardCharsets
+
 data class MapTileKey(val x: Int, val y: Int, val zoom: Int = 16)
 
 object Mercator {
@@ -30,9 +32,12 @@ object Mercator {
     }
 }
 
+data class MapFeaturePath(val path: Path, val name: String, val labelPos: Offset? = null)
+data class MapFeaturePoint(val point: Offset, val name: String)
+
 data class ParsedMapTile(
-    val pathsByType: Map<Int, Path>,
-    val pointsByType: Map<Int, List<Offset>>,
+    val pathsByType: Map<Int, List<MapFeaturePath>>,
+    val pointsByType: Map<Int, List<MapFeaturePoint>>,
     val key: MapTileKey,
     val mercatorX: Double,
     val mercatorY: Double,
@@ -86,6 +91,13 @@ object MapTileStateHolder {
         }
     }
 
+    fun clearCache() {
+        synchronized(cache) {
+            cache.clear()
+            _cachedTilesFlow.value = emptyList()
+        }
+    }
+
     fun parseTile(features: ByteArray, key: MapTileKey, width: Float, height: Float): ParsedMapTile {
         val centerLat = Mercator.tileYToLat(key.y, key.zoom)
         val centerLon = Mercator.tileXToLon(key.x, key.zoom)
@@ -111,12 +123,26 @@ object MapTileStateHolder {
         val actualMercSpan = mercRightX - mercLeftX
 
         val buffer = ByteBuffer.wrap(features).order(ByteOrder.LITTLE_ENDIAN)
-        val pathsByType = mutableMapOf<Int, Path>()
-        val pointsByType = mutableMapOf<Int, MutableList<Offset>>()
+        val pathsByType = mutableMapOf<Int, MutableList<MapFeaturePath>>()
+        val pointsByType = mutableMapOf<Int, MutableList<MapFeaturePoint>>()
+
+        // Temporary storage for merged paths to fix stitching
+        val mergedPaths = mutableMapOf<Int, Path>()
+        val lastPoints = mutableMapOf<Int, Offset>()
 
         while (buffer.hasRemaining()) {
-            if (buffer.remaining() < 5) break
+            if (buffer.remaining() < 3) break
             val type = buffer.get().toInt()
+            
+            // Read name
+            val nameLen = buffer.short.toInt() and 0xFFFF
+            val name = if (nameLen > 0 && buffer.remaining() >= nameLen) {
+                val bytes = ByteArray(nameLen)
+                buffer.get(bytes)
+                String(bytes, StandardCharsets.UTF_8)
+            } else ""
+
+            if (buffer.remaining() < 4) break
             val count = buffer.getInt()
             if (buffer.remaining() < count * 16) break
             
@@ -128,10 +154,17 @@ object MapTileStateHolder {
                     
                     val x = ((Mercator.lonToX(lon) - (actualMercCenterX - actualMercSpan / 2.0)) / actualMercSpan * width).toFloat()
                     val y = ((Mercator.latToY(lat) - (actualMercCenterY - actualMercSpan / 2.0)) / actualMercSpan * height).toFloat()
-                    list.add(Offset(x, y))
+                    list.add(MapFeaturePoint(Offset(x, y), name))
                 }
             } else {
-                val mapPath = pathsByType.getOrPut(type) { Path() }
+                val list = pathsByType.getOrPut(type) { mutableListOf() }
+                val isRoad = type in 4..8 || type == 1
+                
+                // For roads with the SAME name in the SAME tile, we try to merge them to ensure StrokeJoin works
+                val roadKey = if (isRoad) "$type-$name" else null
+                val mapPath = if (roadKey != null) mergedPaths.getOrPut(type) { Path() } else Path()
+                
+                var labelPos: Offset? = null
                 for (i in 0 until count) {
                     val lon = buffer.getDouble()
                     val lat = buffer.getDouble()
@@ -139,9 +172,30 @@ object MapTileStateHolder {
                     val x = ((Mercator.lonToX(lon) - (actualMercCenterX - actualMercSpan / 2.0)) / actualMercSpan * width).toFloat()
                     val y = ((Mercator.latToY(lat) - (actualMercCenterY - actualMercSpan / 2.0)) / actualMercSpan * height).toFloat()
                     
-                    if (i == 0) mapPath.moveTo(x, y)
-                    else mapPath.lineTo(x, y)
-                    if (i == count - 1 && type in listOf(2, 3, 9)) mapPath.close()
+                    if (i == 0) {
+                        val lastP = if (roadKey != null) lastPoints[type] else null
+                        if (lastP != null && abs(lastP.x - x) < 0.5f && abs(lastP.y - y) < 0.5f) {
+                            // Continue from last point to enable StrokeJoin and fix stitching
+                        } else {
+                            mapPath.moveTo(x, y)
+                        }
+                    } else {
+                        mapPath.lineTo(x, y)
+                    }
+                    if (i == count / 2) labelPos = Offset(x, y)
+                    if (i == count - 1) {
+                        if (type in listOf(2, 3, 9)) mapPath.close()
+                        if (roadKey != null) lastPoints[type] = Offset(x, y)
+                    }
+                }
+                
+                if (isRoad) {
+                    // Only add the path once to the list if it's being merged
+                    if (list.isEmpty()) list.add(MapFeaturePath(mapPath, name)) 
+                    // Note: In a real scenario, we might want multiple labels for long merged roads, 
+                    // but for the watch, one per tile is usually enough or even too much.
+                } else {
+                    list.add(MapFeaturePath(mapPath, name, labelPos))
                 }
             }
         }

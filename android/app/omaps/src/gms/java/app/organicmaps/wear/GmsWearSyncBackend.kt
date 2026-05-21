@@ -19,6 +19,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         private const val PATH_PING = "/ping"
         private const val PATH_PREFERENCES_REQUEST = "/preferences/request"
         private const val PATH_START_NAVIGATION_REQUEST = "/navigation/start/request"
+        private const val PATH_POI_SHOW = "/poi/show"
     }
 
     override fun stopNavigation(context: Context) {
@@ -75,6 +76,17 @@ class GmsWearSyncBackend : IWearSyncBackend {
         val backend = prefs.getString("pref_wear_os_backend", "GMS")
         val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
         
+        val is3dEnabled = prefs.getBoolean("pref_3d", true)
+        val is3dBuildingsEnabled = prefs.getBoolean("pref_3d_buildings", true)
+        val isAutoZoomEnabled = prefs.getBoolean("pref_auto_zoom", true)
+        val mUnits = prefs.getInt("pref_munits", 0)
+        val mapStyle = prefs.getString("pref_map_style", "default")
+
+        val avoidTolls = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Toll)
+        val avoidMotorways = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Motorway)
+        val avoidFerries = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Ferry)
+        val avoidUnpaved = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Dirty)
+
         android.util.Log.d("GmsWearSync", "Syncing preferences to phone: mapEnabled=$mapEnabled, watchLocal=$watchLocalMode")
 
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/preferences/watch")
@@ -86,6 +98,15 @@ class GmsWearSyncBackend : IWearSyncBackend {
         map.putString("mapDownloadMode", downloadMode)
         map.putString("backend", backend ?: "GMS")
         map.putInt("poiCategoriesMask", poiMask)
+        map.putBoolean("is3dEnabled", is3dEnabled)
+        map.putBoolean("is3dBuildingsEnabled", is3dBuildingsEnabled)
+        map.putBoolean("isAutoZoomEnabled", isAutoZoomEnabled)
+        map.putInt("measurementUnits", mUnits)
+        map.putString("mapStyle", mapStyle ?: "default")
+        map.putBoolean("avoidTolls", avoidTolls)
+        map.putBoolean("avoidMotorways", avoidMotorways)
+        map.putBoolean("avoidFerries", avoidFerries)
+        map.putBoolean("avoidUnpaved", avoidUnpaved)
         map.putLong("timestamp", System.currentTimeMillis())
         
         val putDataReq = putDataMapReq.asPutDataRequest()
@@ -99,6 +120,15 @@ class GmsWearSyncBackend : IWearSyncBackend {
 
     override fun startNavigation(context: Context) {
         sendMessage(context, PATH_START_NAVIGATION_REQUEST, byteArrayOf())
+    }
+
+    override fun showOnPhone(context: Context, result: SearchResultItem) {
+        val nameBytes = result.name.toByteArray(StandardCharsets.UTF_8)
+        val buffer = ByteBuffer.allocate(8 + 8 + nameBytes.size)
+        buffer.putDouble(result.lat)
+        buffer.putDouble(result.lon)
+        buffer.put(nameBytes)
+        sendMessage(context, PATH_POI_SHOW, buffer.array())
     }
 
     override fun checkConnection(context: Context, callback: (Boolean) -> Unit) {

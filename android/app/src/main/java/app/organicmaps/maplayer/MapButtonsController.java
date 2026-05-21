@@ -21,6 +21,7 @@ import androidx.fragment.app.FragmentActivity;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
 import app.organicmaps.MwmActivity;
+import androidx.core.content.ContextCompat;
 import app.organicmaps.R;
 import app.organicmaps.sdk.Framework;
 import app.organicmaps.sdk.downloader.MapManager;
@@ -254,7 +255,7 @@ public class MapButtonsController extends Fragment
       mBadgeDrawable.setMaxCharacterCount(0);
       mBadgeDrawable.setHorizontalOffset(verticalOffset);
       mBadgeDrawable.setVerticalOffset(dpToPx(9, context));
-      mBadgeDrawable.setBackgroundColor(getResources().getColor(R.color.base_accent));
+      mBadgeDrawable.setBackgroundColor(ContextCompat.getColor(context, R.color.base_accent));
       mBadgeDrawable.setVisible(enable);
       BadgeUtils.attachBadgeDrawable(mBadgeDrawable, menuButton);
     }

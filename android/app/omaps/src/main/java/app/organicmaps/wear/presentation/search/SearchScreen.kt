@@ -189,9 +189,9 @@ fun SearchScreen(modifier: Modifier = Modifier, mainViewModel: MainViewModel = v
         }
     ) {
         if (selectedResult != null) {
-            ModeSelectionScreen(
+            PlacePage(
                 result = selectedResult!!,
-                onModeSelected = { routerType ->
+                onNavigate = { routerType ->
                     coroutineScope.launch {
                         val state = NavigationStateHolder.state.value
                         if (state.watchLocalMode) {
@@ -234,7 +234,7 @@ fun SearchScreen(modifier: Modifier = Modifier, mainViewModel: MainViewModel = v
                         searchQuery = TextFieldValue("")
                     }
                 },
-                onCancel = { 
+                onDismiss = { 
                     selectedResult = null 
                 }
             )
@@ -365,6 +365,58 @@ fun SearchScreen(modifier: Modifier = Modifier, mainViewModel: MainViewModel = v
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlacePage(
+    result: SearchResultItem,
+    onNavigate: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var showModeSelection by remember { mutableStateOf(false) }
+
+    if (showModeSelection) {
+        ModeSelectionScreen(
+            result = result,
+            onModeSelected = onNavigate,
+            onCancel = { showModeSelection = false }
+        )
+    } else {
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp, start = 8.dp, end = 8.dp)
+        ) {
+            item {
+                Text(result.name.ifEmpty { "Location" }, style = MaterialTheme.typography.title3, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+            if (result.description.isNotEmpty()) {
+                item {
+                    Text(result.description, style = MaterialTheme.typography.caption2, textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = Color.LightGray)
+                }
+            }
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            item {
+                Chip(
+                    onClick = { showModeSelection = true },
+                    label = { Text("Navigate") },
+                    icon = { Icon(Icons.Default.DirectionsCar, contentDescription = null) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ChipDefaults.primaryChipColors()
+                )
+            }
+            item {
+                Chip(
+                    onClick = onDismiss,
+                    label = { Text("Close") },
+                    colors = ChipDefaults.secondaryChipColors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }

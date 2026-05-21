@@ -61,11 +61,15 @@ class WearApplication : Application() {
         try {
             val asyncContinue = organicMaps.init { 
                 isFullyInitialized = true 
+                app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
                 organicMaps.locationHelper.onExitFromFirstRun()
                 setupLocalNavigationListener()
             }
             if (!asyncContinue) {
                 isFullyInitialized = true
+                app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
                 organicMaps.locationHelper.onExitFromFirstRun()
                 setupLocalNavigationListener()
             }
@@ -149,6 +153,7 @@ class WearApplication : Application() {
             override fun onPlanningStarted() {
                 val currentState = NavigationStateHolder.state.value
                 NavigationStateHolder.update(currentState.copy(
+                    isActive = true,
                     isRouteBuilding = true,
                     isRouteReady = false,
                     routeBuildProgress = 0,
@@ -185,6 +190,7 @@ class WearApplication : Application() {
             override fun onNavigationStarted() {
                 val currentState = NavigationStateHolder.state.value
                 NavigationStateHolder.update(currentState.copy(
+                    isActive = true,
                     isNavigating = true,
                     isRouteBuilding = false,
                     isRouteReady = false,
@@ -216,7 +222,8 @@ class WearApplication : Application() {
                 NavigationStateHolder.update(currentState.copy(
                     isRouteBuilding = false,
                     isRouteReady = false,
-                    routeBuildProgress = 0
+                    routeBuildProgress = 0,
+                    lastRouteError = lastResultCode
                 ))
             }
 
@@ -234,6 +241,7 @@ class WearApplication : Application() {
             private var lastValidLat = 0.0
             private var lastValidLon = 0.0
             private var lastFixTime = 0L
+            private var lastRebuildTime = 0L
 
             override fun onLocationUpdated(location: android.location.Location) {
                 // SANITY CHECK: Ignore "teleports" (Wild jumps > 1km in < 10s)
@@ -261,7 +269,16 @@ class WearApplication : Application() {
                 // POWER SAVING: Ignore local GPS if we are in companion mode and phone is providing location
                 val navState = NavigationStateHolder.state.value
                 if (!navState.standaloneMode && navState.isPhoneConnected && navState.isActive) {
-                    // Phone is currently streaming navigation/location data, skip local update to avoid jitter/battery drain
+                    // Phone is providing navigation data, push it to native core if valid
+                    if (navState.lat != 0.0) {
+                        try {
+                            app.organicmaps.sdk.location.LocationState.nativeLocationUpdated(
+                                System.currentTimeMillis(),
+                                navState.lat, navState.lon,
+                                5.0f, 0.0, navState.speedMps.toFloat(), navState.bearing
+                            )
+                        } catch (_: Throwable) {}
+                    }
                     return
                 }
 
@@ -274,8 +291,29 @@ class WearApplication : Application() {
                         routing.setStartPoint(myPos)
                     }
                 } else if (routing.isPlanning && routing.isErrorEncountered) {
-                    Log.d("WearApplication", "Routing is in error state, trying to rebuild with new position")
-                    routing.checkAndBuildRoute()
+                    val now = System.currentTimeMillis()
+                    // COOLDOWN: Only retry every 3 seconds
+                    if (now - lastRebuildTime > 3000) {
+                        // Only retry if we have a valid position and didn't just fail with the same one
+                        if (location.latitude != 0.0 && navState.lastRouteError != 0) {
+                            Log.d("WearApplication", "Routing is in error state (${navState.lastRouteError}), trying to rebuild with new position")
+                            
+                            // WORKAROUND: If error was NO_POSITION (2), try to set the start point explicitly 
+                            // using current coordinates as a POI instead of MY_POSITION.
+                            // This often bypasses native framework requirements for a "GPS fix" when snapping.
+                            if (navState.lastRouteError == 2) {
+                                Log.d("WearApplication", "Workaround: Setting explicit start point coordinates for NO_POSITION error")
+                                val explicitPos = app.organicmaps.sdk.bookmarks.data.MapObject.createMapObject(
+                                    app.organicmaps.sdk.bookmarks.data.MapObject.POI,
+                                    "My Position", "", location.latitude, location.longitude
+                                )
+                                routing.setStartPoint(explicitPos)
+                            }
+                            
+                            routing.checkAndBuildRoute()
+                            lastRebuildTime = now
+                        }
+                    }
                 }
 
                 val currentState = NavigationStateHolder.state.value
@@ -325,7 +363,7 @@ class WearApplication : Application() {
                     }
                 }
 
-                if (state.watchLocalMode && (routingController.isNavigating || routingController.isBuilt())) {
+                if (state.watchLocalMode && (routingController.isNavigating || routingController.isBuilt || routingController.isBuilding)) {
                     val info = Framework.nativeGetRouteFollowingInfo()
                     // Fetch fewer route points in ambient mode
                     val routeJunctions = Framework.nativeGetRouteJunctionPoints(if (isAmbient) 100.0 else 50.0)
@@ -345,7 +383,17 @@ class WearApplication : Application() {
                             eta = info.totalTimeInSeconds,
                             completionPercent = info.completionPercent,
                             turnLat = info.turnLat,
-                            turnLon = info.turnLon
+                            turnLon = info.turnLon,
+                            isRecalculating = false
+                        ))
+                    } else if (routingController.isNavigating) {
+                        // If info is null but we are navigating, we are likely off-route or recalculating
+                        val currentState = NavigationStateHolder.state.value
+                        NavigationStateHolder.update(currentState.copy(
+                            distToTurn = "Recalculating...",
+                            nextStreet = "",
+                            routePoints = emptyList(),
+                            isRecalculating = true
                         ))
                     }
                 }
