@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.Text
@@ -270,11 +271,11 @@ fun WearApp() {
                 }
             }
             
-            // Status Indicators (Anchored to TopStart for visibility on round watches)
+            // Status Indicators (Anchored for circular safety)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(top = 35.dp, start = 35.dp)
+                    .padding(top = 45.dp, start = 45.dp) // Pushed inward for round watches
                     .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
@@ -309,19 +310,20 @@ fun WearApp() {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.95f)), // Solid background to prevent overlapping messy UI
-                    contentAlignment = Alignment.Center
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)))), 
+                    contentAlignment = Alignment.BottomCenter
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
+                            .padding(horizontal = 20.dp)
+                            .padding(bottom = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
                             text = if (navState.destinationName.isNotEmpty()) navState.destinationName else "Route Preview",
-                            style = MaterialTheme.typography.caption1,
+                            style = MaterialTheme.typography.caption2,
                             color = Color(0xFF00E5FF),
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis

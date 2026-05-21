@@ -15,7 +15,11 @@ data class SearchResultItem(
     val description: String,
     val lat: Double,
     val lon: Double,
-    val type: Int = 2 // Default to TYPE_RESULT
+    val type: Int = 2, // Default to TYPE_RESULT
+    val openingHours: String = "",
+    val website: String = "",
+    val phone: String = "",
+    val address: String = ""
 )
 
 data class NavigationState(
@@ -78,7 +82,10 @@ data class NavigationState(
     val transitEnabled: Boolean = false,
     val isolinesEnabled: Boolean = false,
     val bikingEnabled: Boolean = false,
-    val hikingEnabled: Boolean = false
+    val hikingEnabled: Boolean = false,
+    val allowMobileData: Boolean = false,
+    val hasPhysicalButtons: Boolean = false,
+    val forceGuiButtons: Boolean = false
 )
 
 object NavigationStateHolder {

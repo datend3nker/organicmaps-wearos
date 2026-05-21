@@ -316,6 +316,9 @@ public class Framework
 
   public static native boolean nativeIsDownloadedMapAtLocation(double lat, double lon);
 
+  @Nullable
+  public static native MapObject nativeGetMapObjectForLocation(double lat, double lon);
+
   public static native String nativeGetActiveObjectFormattedCuisine();
 
   public static native String nativeGetActiveObjectFormattedRouteRefs();

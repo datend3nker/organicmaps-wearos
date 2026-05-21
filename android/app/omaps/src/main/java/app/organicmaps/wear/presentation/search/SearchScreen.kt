@@ -16,6 +16,9 @@ import androidx.compose.material.icons.filled.DirectionsTransit
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -57,6 +60,10 @@ import app.organicmaps.sdk.Framework
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.organicmaps.wear.presentation.MainViewModel
 
+import androidx.compose.ui.text.font.FontWeight
+import androidx.wear.compose.material.dialog.Dialog
+import app.organicmaps.sdk.bookmarks.data.Metadata
+
 @Composable
 fun SearchScreen(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewModel()) {
     val context = LocalContext.current
@@ -79,7 +86,7 @@ fun SearchScreen(modifier: Modifier = Modifier, mainViewModel: MainViewModel = v
                         val converted = results.map {
                             SearchResultItem(
                                 name = it.getTitle(context) ?: "",
-                                description = if (it.description != null) it.description.localizedFeatureType ?: "" else "",
+                                description = it.description?.localizedFeatureType ?: "",
                                 lat = it.lat,
                                 lon = it.lon,
                                 type = it.type,
@@ -170,7 +177,7 @@ fun SearchScreen(modifier: Modifier = Modifier, mainViewModel: MainViewModel = v
             TimeText(
                 startLinearContent = {
                     if (!navState.isPhoneConnected && !navState.watchLocalMode) {
-                        Text("OFFLINE", style = TextStyle(color = Color.Red, fontSize = 10.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold))
+                        Text("OFFLINE", style = TextStyle(color = Color.Red, fontSize = 10.sp, fontWeight = FontWeight.Bold))
                         Spacer(modifier = Modifier.width(4.dp))
                     }
                 },
@@ -189,55 +196,62 @@ fun SearchScreen(modifier: Modifier = Modifier, mainViewModel: MainViewModel = v
         }
     ) {
         if (selectedResult != null) {
-            PlacePage(
-                result = selectedResult!!,
-                onNavigate = { routerType ->
-                    coroutineScope.launch {
-                        val state = NavigationStateHolder.state.value
-                        if (state.watchLocalMode) {
-                            try {
-                                val wearApp = context.applicationContext as WearApplication
-                                wearApp.waitForInitializationSuspend()
-                                val startPoint = wearApp.organicMaps.locationHelper.myPosition
-                                val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
-                                val router = when (routerType) {
-                                    0 -> Router.Vehicle
-                                    1 -> Router.Pedestrian
-                                    2 -> Router.Bicycle
-                                    else -> Router.Transit
+            Dialog(
+                showDialog = true,
+                onDismissRequest = { selectedResult = null }
+            ) {
+                PlacePage(
+                    result = selectedResult!!,
+                    onNavigate = { routerType ->
+                        coroutineScope.launch {
+                            val state = NavigationStateHolder.state.value
+                            if (state.watchLocalMode) {
+                                try {
+                                    val wearApp = context.applicationContext as WearApplication
+                                    wearApp.waitForInitializationSuspend()
+                                    val startPoint = wearApp.organicMaps.locationHelper.myPosition
+                                    val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
+                                    val router = when (routerType) {
+                                        0 -> Router.Vehicle
+                                        1 -> Router.Pedestrian
+                                        2 -> Router.Bicycle
+                                        else -> Router.Transit
+                                    }
+                                    val controller = RoutingController.get()
+                                    controller.prepare(startPoint, destination, router)
+                                    controller.checkAndBuildRoute()
+                                    NavigationStateHolder.update { it.copy(
+                                        isActive = true,
+                                        isNavigating = false,
+                                        routeBuildProgress = 0,
+                                        isRouteBuilding = true,
+                                        isRouteReady = false,
+                                        routePoints = emptyList(),
+                                        distToTurn = "",
+                                        nextStreet = "",
+                                        distToTarget = "",
+                                        eta = 0,
+                                        completionPercent = 0.0,
+                                        turnLat = 0.0,
+                                        turnLon = 0.0,
+                                        isExploreMode = false
+                                    ) }
+                                } catch (e: Exception) {
+                                    Log.e("SearchScreen", "Route planning failed: ${e.message}")
                                 }
-                                val controller = RoutingController.get()
-                                controller.prepare(startPoint, destination, router)
-                                controller.checkAndBuildRoute()
-                                NavigationStateHolder.update { it.copy(
-                                    isActive = true,
-                                    isNavigating = false,
-                                    routeBuildProgress = 0,
-                                    isRouteBuilding = true,
-                                    isRouteReady = false,
-                                    routePoints = emptyList(),
-                                    distToTurn = "",
-                                    nextStreet = "",
-                                    distToTarget = "",
-                                    eta = 0,
-                                    completionPercent = 0.0,
-                                    turnLat = 0.0,
-                                    turnLon = 0.0
-                                ) }
-                            } catch (e: Exception) {
-                                Log.e("SearchScreen", "Route planning failed: ${e.message}")
+                            } else {
+                                WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
+                                NavigationStateHolder.update { it.copy(isActive = true, isExploreMode = false) }
                             }
-                        } else {
-                            WearCommandService.selectSearchResult(context, selectedResult!!, routerType)
+                            selectedResult = null
+                            searchQuery = TextFieldValue("")
                         }
-                        selectedResult = null
-                        searchQuery = TextFieldValue("")
+                    },
+                    onDismiss = { 
+                        selectedResult = null 
                     }
-                },
-                onDismiss = { 
-                    selectedResult = null 
-                }
-            )
+                )
+            }
         } else {
             ScalingLazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -377,6 +391,7 @@ fun PlacePage(
     onDismiss: () -> Unit
 ) {
     var showModeSelection by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     if (showModeSelection) {
         ModeSelectionScreen(
@@ -388,19 +403,46 @@ fun PlacePage(
         ScalingLazyColumn(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp, start = 8.dp, end = 8.dp)
+            contentPadding = PaddingValues(top = 28.dp, bottom = 28.dp, start = 10.dp, end = 10.dp)
         ) {
             item {
                 Text(result.name.ifEmpty { "Location" }, style = MaterialTheme.typography.title3, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
             if (result.description.isNotEmpty()) {
                 item {
-                    Text(result.description, style = MaterialTheme.typography.caption2, textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = Color.LightGray)
+                    Text(result.description, style = MaterialTheme.typography.caption2, textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = Color(0xFF00E5FF))
                 }
             }
+
+            if (result.openingHours.isNotEmpty()) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(12.dp), tint = Color.LightGray)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(result.openingHours, style = MaterialTheme.typography.caption2, color = Color.LightGray)
+                    }
+                }
+            }
+
+            if (result.address.isNotEmpty()) {
+                item {
+                    Text(result.address, style = MaterialTheme.typography.caption2, color = Color.Gray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+            } else {
+                item {
+                    Text(
+                        String.format(java.util.Locale.US, "%.5f, %.5f", result.lat, result.lon),
+                        style = MaterialTheme.typography.caption2,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+
             item {
                 Spacer(modifier = Modifier.height(8.dp))
             }
+
             item {
                 Chip(
                     onClick = { showModeSelection = true },
@@ -410,6 +452,36 @@ fun PlacePage(
                     colors = ChipDefaults.primaryChipColors()
                 )
             }
+
+            if (result.website.isNotEmpty()) {
+                item {
+                    Chip(
+                        onClick = { 
+                            // Open on phone logic
+                            WearCommandService.showOnPhone(context, result)
+                        },
+                        label = { Text("Open on Phone") },
+                        secondaryLabel = { Text(result.website, maxLines = 1) },
+                        icon = { Icon(Icons.Default.Language, contentDescription = null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ChipDefaults.secondaryChipColors()
+                    )
+                }
+            }
+
+            if (result.phone.isNotEmpty()) {
+                item {
+                    Chip(
+                        onClick = { /* Could add call logic if Wear supports it or open on phone */ },
+                        label = { Text("Call") },
+                        secondaryLabel = { Text(result.phone) },
+                        icon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ChipDefaults.secondaryChipColors()
+                    )
+                }
+            }
+
             item {
                 Chip(
                     onClick = onDismiss,

@@ -1102,117 +1102,121 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
   if (rect.IsValid())
   {
     int featuresCount = 0;
-    const int maxFeatures = 500; // Increased limit for better city detail
+    // DYNAMIC DETAIL STRATEGY: Higher limits at high zoom levels for maximum POI density
+    int maxFeatures = 1500;
+    if (scale >= 17) maxFeatures = 5000;
+    else if (scale >= 15) maxFeatures = 2500;
 
-    frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
-        if (featuresCount >= maxFeatures) return;
+    // PRIORITY RENDERING: We perform multiple passes to ensure Roads are never dropped
+    // Pass 1: Highways (Roads)
+    // Pass 2: Areas (Water, Greenery, Buildings)
+    // Pass 3: Points (POIs)
+    for (int pass = 1; pass <= 3; ++pass) {
+      frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
+          if (featuresCount >= maxFeatures) return;
 
-        // Relaxed visibility check to ensure more features are extracted for the watch
-        if (feature::GetMinDrawableScaleClassifOnly(feature::TypesHolder(ft)) > (scale + 1)) return;
+          feature::TypesHolder types(ft);
+          auto geomType = ft.GetGeomType();
 
-        auto geomType = ft.GetGeomType();
-        feature::TypesHolder types(ft);
-        uint8_t type = 0;
+          // Pass 1: Only Lines (Roads)
+          if (pass == 1 && geomType != feature::GeomType::Line) return;
+          // Pass 2: Only Areas
+          if (pass == 2 && geomType != feature::GeomType::Area) return;
+          // Pass 3: Only Points
+          if (pass == 3 && geomType != feature::GeomType::Point) return;
 
-        using namespace ftypes;
-        if (geomType == feature::GeomType::Line) {
-            HighwayClass hw = GetHighwayClass(types);
+          // Relaxed visibility check to ensure more features are extracted for the watch
+          if (feature::GetMinDrawableScaleClassifOnly(types) > (scale + 1)) return;
 
-            // Filter for car mode (routerType 0)
-            if (routerType == 0 && hw == HighwayClass::Pedestrian) return;
+          uint8_t type = 0;
+          using namespace ftypes;
 
-            if (hw == HighwayClass::Trunk) type = 4;
-            else if (hw == HighwayClass::Primary) type = 5;
-            else if (hw == HighwayClass::Secondary) type = 6;
-            else if (hw == HighwayClass::Tertiary) type = 7;
-            else if (hw == HighwayClass::LivingStreet) type = 1;
-            else if (hw == HighwayClass::Service || hw == HighwayClass::ServiceMinor) type = 8;
-            else type = 1; // Default to residential/minor road
-        } else if (geomType == feature::GeomType::Area) {
-            if (IsBuildingChecker::Instance()(types)) type = 2;
-            else {
-                bool isWater = false;
-                bool isGreen = false;
-                auto const & c = classif();
-                static uint32_t const water = c.GetTypeByPath({"natural", "water"});
-                static uint32_t const forest = c.GetTypeByPath({"landuse", "forest"});
-                static uint32_t const park = c.GetTypeByPath({"leisure", "park"});
-                static uint32_t const grass = c.GetTypeByPath({"landuse", "grass"});
-                static uint32_t const meadow = c.GetTypeByPath({"landuse", "meadow"});
+          if (geomType == feature::GeomType::Line) {
+              HighwayClass hw = GetHighwayClass(types);
+              if (routerType == 0 && hw == HighwayClass::Pedestrian) return;
 
-                for (uint32_t t : types) {
-                    uint32_t t2 = t;
-                    ftype::TruncValue(t2, 2);
-                    if (t2 == water) isWater = true;
-                    else if (t2 == forest || t2 == park || t2 == grass || t2 == meadow) isGreen = true;
-                }
+              if (hw == HighwayClass::Trunk) type = 4;
+              else if (hw == HighwayClass::Primary) type = 5;
+              else if (hw == HighwayClass::Secondary) type = 6;
+              else if (hw == HighwayClass::Tertiary) type = 7;
+              else if (hw == HighwayClass::LivingStreet) type = 1;
+              else if (hw == HighwayClass::Service || hw == HighwayClass::ServiceMinor) type = 8;
+              else type = 1;
+          } else if (geomType == feature::GeomType::Area) {
+              if (IsBuildingChecker::Instance()(types)) type = 2;
+              else {
+                  bool isWater = false;
+                  bool isGreen = false;
+                  auto const & c = classif();
+                  static uint32_t const water = c.GetTypeByPath({"natural", "water"});
+                  static uint32_t const forest = c.GetTypeByPath({"landuse", "forest"});
+                  static uint32_t const park = c.GetTypeByPath({"leisure", "park"});
+                  static uint32_t const grass = c.GetTypeByPath({"landuse", "grass"});
+                  static uint32_t const meadow = c.GetTypeByPath({"landuse", "meadow"});
 
-                if (isWater) type = 3;
-                else if (isGreen) type = 9;
-                else return;
-            }
-        } else if (geomType == feature::GeomType::Point) {
-            if (poiCategoriesMask == 0) return;
+                  for (uint32_t t : types) {
+                      uint32_t t2 = t;
+                      ftype::TruncValue(t2, 2);
+                      if (t2 == water) isWater = true;
+                      else if (t2 == forest || t2 == park || t2 == grass || t2 == meadow) isGreen = true;
+                  }
 
-            // EXPANDED POI MAPPING (Matching watch list)
-            if ((poiCategoriesMask & (1 << 0)) && IsEatChecker::Instance()(types)) type = 100;
-            else if ((poiCategoriesMask & (1 << 1)) && IsHotelChecker::Instance()(types)) type = 102;
-            else if ((poiCategoriesMask & (1 << 2)) && IsATMChecker::Instance()(types)) type = 103;
-            else if ((poiCategoriesMask & (1 << 3)) && IsParkingChecker::Instance()(types)) type = 107;
-            else if ((poiCategoriesMask & (1 << 4)) && IsPeakChecker::Instance()(types)) type = 108;
-            else if ((poiCategoriesMask & (1 << 5)) && IsCampPitchChecker::Instance()(types)) type = 109;
-            else if ((poiCategoriesMask & (1 << 6)) && IsWifiChecker::Instance()(types)) type = 110;
-            else if ((poiCategoriesMask & (1 << 7)) && IsRailwayStationChecker::Instance()(types)) type = 111;
-            else if ((poiCategoriesMask & (1 << 8)) && IsSubwayStationChecker::Instance()(types)) type = 112;
-            else if ((poiCategoriesMask & (1 << 9)) && IsAirportChecker::Instance()(types)) type = 113;
-            else if ((poiCategoriesMask & (1 << 10)) && IsPostPoiChecker::Instance()(types)) type = 114;
-            else if ((poiCategoriesMask & (1 << 11)) && IsToiletsChecker::Instance()(types)) type = 115;
-            else if ((poiCategoriesMask & (1 << 12)) && IsAmenityChecker::Instance()(types)) type = 105;
-            else if ((poiCategoriesMask & (1 << 13)) && AttractionsChecker::Instance()(types)) type = 116;
-            else if ((poiCategoriesMask & (1 << 14)) && IsPostPoiChecker::Instance()(types)) type = 114; // Health fallback
-            else if ((poiCategoriesMask & (1 << 15)) && OneLevelPOIChecker()(types)) type = 117; // Shopping
-            else if ((poiCategoriesMask & (1 << 16)) && TwoLevelPOIChecker()(types)) type = 118; // Entertainment fallback
-            else if ((poiCategoriesMask & (1 << 17)) && IsAmenityChecker::Instance()(types)) type = 119; // Water fallback
-            else if ((poiCategoriesMask & (1 << 18)) && IsPoiChecker::Instance()(types)) type = 106;
+                  if (isWater) type = 3;
+                  else if (isGreen) type = 9;
+                  else return;
+              }
+          } else if (geomType == feature::GeomType::Point) {
+              if (poiCategoriesMask == 0) return;
+              if ((poiCategoriesMask & (1 << 0)) && IsEatChecker::Instance()(types)) type = 100;
+              else if ((poiCategoriesMask & (1 << 1)) && IsHotelChecker::Instance()(types)) type = 102;
+              else if ((poiCategoriesMask & (1 << 2)) && IsATMChecker::Instance()(types)) type = 103;
+              else if ((poiCategoriesMask & (1 << 3)) && IsParkingChecker::Instance()(types)) type = 107;
+              else if ((poiCategoriesMask & (1 << 4)) && IsPeakChecker::Instance()(types)) type = 108;
+              else if ((poiCategoriesMask & (1 << 5)) && IsCampPitchChecker::Instance()(types)) type = 109;
+              else if ((poiCategoriesMask & (1 << 7)) && IsRailwayStationChecker::Instance()(types)) type = 111;
+              else if ((poiCategoriesMask & (1 << 8)) && IsSubwayStationChecker::Instance()(types)) type = 112;
+              else if ((poiCategoriesMask & (1 << 9)) && IsAirportChecker::Instance()(types)) type = 113;
+              else if (IsPoiChecker::Instance()(types)) type = 106;
 
-            if (type == 0) return;
-        }
+              if (type == 0) return;
+          }
 
-        if (type == 0) return;
+          if (type == 0) return;
 
-        std::vector<m2::PointD> points;
-        if (geomType == feature::GeomType::Point) {
-            points.push_back(ft.GetCenter());
-        } else {
-            ft.ForEachPoint([&](m2::PointD const & p) {
-              points.push_back(p);
-            }, scale);
-        }
+          std::vector<m2::PointD> points;
+          if (geomType == feature::GeomType::Point) {
+              points.push_back(ft.GetCenter());
+          } else {
+              ft.ForEachPoint([&](m2::PointD const & p) {
+                points.push_back(p);
+              }, scale);
+          }
 
-        if (points.empty() || (geomType != feature::GeomType::Point && points.size() < 2)) return;
+          if (points.empty() || (geomType != feature::GeomType::Point && points.size() < 2)) return;
 
-        featuresCount++;
-        buffer.push_back(static_cast<uint8_t>(type));
-        
-        std::string name(ft.GetName(0));
-        uint16_t nameLen = static_cast<uint16_t>(name.size());
-        uint8_t * pNameLen = reinterpret_cast<uint8_t *>(&nameLen);
-        buffer.insert(buffer.end(), pNameLen, pNameLen + sizeof(nameLen));
-        if (nameLen > 0) buffer.insert(buffer.end(), name.begin(), name.end());
+          featuresCount++;
+          buffer.push_back(static_cast<uint8_t>(type));
 
-        uint32_t count = points.size();
-        uint8_t * pCount = reinterpret_cast<uint8_t *>(&count);
-        buffer.insert(buffer.end(), pCount, pCount + sizeof(count));
+          std::string name(ft.GetName(0));
+          uint16_t nameLen = static_cast<uint16_t>(name.size());
+          uint8_t * pNameLen = reinterpret_cast<uint8_t *>(&nameLen);
+          buffer.insert(buffer.end(), pNameLen, pNameLen + sizeof(nameLen));
+          if (nameLen > 0) buffer.insert(buffer.end(), name.begin(), name.end());
 
-        for (auto const & p : points) {
-          double lat = mercator::YToLat(p.y);
-          double lon = mercator::XToLon(p.x);
-          uint8_t * pLon = reinterpret_cast<uint8_t *>(&lon);
-          uint8_t * pLat = reinterpret_cast<uint8_t *>(&lat);
-          buffer.insert(buffer.end(), pLon, pLon + sizeof(lon));
-          buffer.insert(buffer.end(), pLat, pLat + sizeof(lat));
-        }
-    }, rect, scale);
+          uint32_t count = points.size();
+          uint8_t * pCount = reinterpret_cast<uint8_t *>(&count);
+          buffer.insert(buffer.end(), pCount, pCount + sizeof(count));
+
+          for (auto const & p : points) {
+            double lat = mercator::YToLat(p.y);
+            double lon = mercator::XToLon(p.x);
+            uint8_t * pLon = reinterpret_cast<uint8_t *>(&lon);
+            uint8_t * pLat = reinterpret_cast<uint8_t *>(&lat);
+            buffer.insert(buffer.end(), pLon, pLon + sizeof(lon));
+            buffer.insert(buffer.end(), pLat, pLat + sizeof(lat));
+          }
+      }, rect, scale);
+    }
   }
 
   jbyteArray result = env->NewByteArray(buffer.size());
@@ -1745,6 +1749,30 @@ JNIEXPORT jboolean Java_app_organicmaps_sdk_Framework_nativeIsDownloadedMapAtLoc
 {
   ::Framework * fr = frm();
   return storage::IsPointCoveredByDownloadedMaps(mercator::FromLatLon(lat, lon), fr->GetStorage(), fr->GetCountryInfoGetter());
+}
+
+JNIEXPORT jobject Java_app_organicmaps_sdk_Framework_nativeGetMapObjectForLocation(JNIEnv * env, jclass, jdouble lat, jdouble lon)
+{
+  m2::PointD const pt = mercator::FromLatLon(lat, lon);
+  // Find feature at coordinates
+  // We use a small tolerance for tapping
+  double const tolerance = 0.0001; // Approx 10 meters
+  m2::RectD const rect(pt.x - tolerance, pt.y - tolerance, pt.x + tolerance, pt.y + tolerance);
+
+  jobject result = nullptr;
+  frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
+    if (result != nullptr) return;
+    if (ft.GetGeomType() != feature::GeomType::Point) return;
+
+    place_page::Info info;
+    info.SetFromFeatureType(ft);
+    result = env->NewGlobalRef(CreateMapObject(env, info));
+  }, rect, 18);
+
+  if (result == nullptr) return nullptr;
+  jobject localResult = env->NewLocalRef(result);
+  env->DeleteGlobalRef(result);
+  return localResult;
 }
 
 JNIEXPORT jstring Java_app_organicmaps_sdk_Framework_nativeGetActiveObjectFormattedCuisine(JNIEnv * env, jclass)

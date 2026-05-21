@@ -46,6 +46,8 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
     val mapEnabled = navState.mapEnabled
     val watchLocalMode = navState.watchLocalMode
     val standaloneMode = navState.standaloneMode
+    val allowMobileData = navState.allowMobileData
+    val forceGuiButtons = navState.forceGuiButtons
     val autoDownload = navState.autoDownloadRouteMaps
     val mapDownloadMode = navState.mapDownloadMode
     val backend = navState.backend
@@ -311,6 +313,54 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
                 secondaryLabel = { Text(if (standaloneMode) "Independent mode" else "Connected to phone") },
                 toggleControl = {
                     Switch(checked = standaloneMode, enabled = true)
+                },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = allowMobileData,
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("pref_mobile_data", newVal).apply()
+                        try {
+                            app.organicmaps.sdk.util.Config.setUseMobileDataSettings(
+                                if (newVal) app.organicmaps.sdk.util.NetworkPolicy.Type.ALWAYS 
+                                else app.organicmaps.sdk.util.NetworkPolicy.Type.NEVER
+                            )
+                        } catch (_: Throwable) {}
+                        current.copy(
+                            allowMobileData = newVal,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
+                },
+                label = { Text("Mobile Data") },
+                secondaryLabel = { Text("Use LTE if available") },
+                toggleControl = {
+                    Switch(checked = allowMobileData, enabled = true)
+                },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            )
+        }
+
+        item {
+            ToggleChip(
+                checked = forceGuiButtons,
+                onCheckedChange = { newVal ->
+                    NavigationStateHolder.update { current ->
+                        prefs.edit().putBoolean("pref_force_gui_buttons", newVal).apply()
+                        current.copy(
+                            forceGuiButtons = newVal,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
+                },
+                label = { Text("Always Show Controls") },
+                secondaryLabel = { Text("Ignore hardware buttons") },
+                toggleControl = {
+                    Switch(checked = forceGuiButtons, enabled = true)
                 },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )

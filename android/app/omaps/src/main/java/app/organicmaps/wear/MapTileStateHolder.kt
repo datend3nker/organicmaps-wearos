@@ -127,8 +127,8 @@ object MapTileStateHolder {
         val pointsByType = mutableMapOf<Int, MutableList<MapFeaturePoint>>()
 
         // Temporary storage for merged paths to fix stitching
-        val mergedPaths = mutableMapOf<Int, Path>()
-        val lastPoints = mutableMapOf<Int, Offset>()
+        val mergedPaths = mutableMapOf<String, Path>()
+        val lastPoints = mutableMapOf<String, Offset>()
 
         while (buffer.hasRemaining()) {
             if (buffer.remaining() < 3) break
@@ -157,12 +157,16 @@ object MapTileStateHolder {
                     list.add(MapFeaturePoint(Offset(x, y), name))
                 }
             } else {
-                val list = pathsByType.getOrPut(type) { mutableListOf() }
                 val isRoad = type in 4..8 || type == 1
                 
-                // For roads with the SAME name in the SAME tile, we try to merge them to ensure StrokeJoin works
-                val roadKey = if (isRoad) "$type-$name" else null
-                val mapPath = if (roadKey != null) mergedPaths.getOrPut(type) { Path() } else Path()
+                // For roads in the SAME tile, we try to merge them to ensure StrokeJoin works.
+                // We use a looser key (just type) for unnamed roads to group them, 
+                // but keep named roads separate if they have different names.
+                val mergeKey = if (isRoad) {
+                    if (name.isNotEmpty()) "$type-$name" else "$type-unnamed"
+                } else null
+                
+                val mapPath = if (mergeKey != null) mergedPaths.getOrPut(mergeKey) { Path() } else Path()
                 
                 var labelPos: Offset? = null
                 for (i in 0 until count) {
@@ -173,8 +177,9 @@ object MapTileStateHolder {
                     val y = ((Mercator.latToY(lat) - (actualMercCenterY - actualMercSpan / 2.0)) / actualMercSpan * height).toFloat()
                     
                     if (i == 0) {
-                        val lastP = if (roadKey != null) lastPoints[type] else null
-                        if (lastP != null && abs(lastP.x - x) < 0.5f && abs(lastP.y - y) < 0.5f) {
+                        val lastP = if (mergeKey != null) lastPoints[mergeKey] else null
+                        // Relaxed matching for stitching (1.0 units)
+                        if (lastP != null && abs(lastP.x - x) < 1.0f && abs(lastP.y - y) < 1.0f) {
                             // Continue from last point to enable StrokeJoin and fix stitching
                         } else {
                             mapPath.moveTo(x, y)
@@ -185,17 +190,17 @@ object MapTileStateHolder {
                     if (i == count / 2) labelPos = Offset(x, y)
                     if (i == count - 1) {
                         if (type in listOf(2, 3, 9)) mapPath.close()
-                        if (roadKey != null) lastPoints[type] = Offset(x, y)
+                        if (mergeKey != null) lastPoints[mergeKey] = Offset(x, y)
                     }
                 }
                 
-                if (isRoad) {
-                    // Only add the path once to the list if it's being merged
-                    if (list.isEmpty()) list.add(MapFeaturePath(mapPath, name)) 
-                    // Note: In a real scenario, we might want multiple labels for long merged roads, 
-                    // but for the watch, one per tile is usually enough or even too much.
-                } else {
-                    list.add(MapFeaturePath(mapPath, name, labelPos))
+                if (mergeKey == null || !pathsByType.getOrPut(type) { mutableListOf() }.any { it.name == name && name.isNotEmpty() }) {
+                    // For unnamed roads, we keep adding to the merged path but only add the path OBJECT once
+                    if (mergeKey != null && name.isEmpty() && pathsByType.getOrPut(type) { mutableListOf() }.any { it.name.isEmpty() }) {
+                        // Already added the "unnamed" path for this type
+                    } else {
+                        pathsByType.getOrPut(type) { mutableListOf() }.add(MapFeaturePath(mapPath, name, labelPos))
+                    }
                 }
             }
         }
