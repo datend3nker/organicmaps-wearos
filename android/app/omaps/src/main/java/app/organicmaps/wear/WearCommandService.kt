@@ -114,8 +114,8 @@ object WearCommandService {
             getBackend(context).selectSearchResult(context, result, routerType)
         }
     }
-    fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, routerType: Int, poiCategoriesMask: Int) =
-        getBackend(context).requestMapTile(context, requestId, minLat, minLon, maxLat, maxLon, routerType, poiCategoriesMask)
+    fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, scale: Int, routerType: Int, poiCategoriesMask: Int) =
+        getBackend(context).requestMapTile(context, requestId, minLat, minLon, maxLat, maxLon, scale, routerType, poiCategoriesMask)
     fun sendPing(context: Context) = getBackend(context).sendPing(context)
     fun syncPreferences(context: Context) = getBackend(context).syncPreferences(context)
     fun requestPreferences(context: Context) = getBackend(context).requestPreferences(context)

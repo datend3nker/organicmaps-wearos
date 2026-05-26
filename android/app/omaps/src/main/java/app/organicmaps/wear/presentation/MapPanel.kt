@@ -44,7 +44,7 @@ import androidx.wear.compose.material.Switch
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import androidx.wear.compose.material.ToggleChip
-import app.organicmaps.sdk.R
+import app.organicmaps.sdk.R as SdkR
 import app.organicmaps.sdk.Framework
 import app.organicmaps.wear.MapTileKey
 import app.organicmaps.wear.MapTileStateHolder
@@ -77,8 +77,11 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import app.organicmaps.wear.SearchResultItem
 import app.organicmaps.wear.presentation.search.ModeSelectionScreen
 import app.organicmaps.sdk.bookmarks.data.MapObject
+import app.organicmaps.sdk.bookmarks.data.Metadata
 import app.organicmaps.sdk.Router
 import app.organicmaps.sdk.routing.RoutingController
+import app.organicmaps.sdk.routing.RoutingOptions
+import app.organicmaps.sdk.settings.RoadType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.focus.focusRequester
@@ -87,11 +90,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
 
 import androidx.wear.compose.material.dialog.Dialog
 
 @Composable
-fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewModel()) {
+fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewModel(), isVisible: Boolean = true) {
     val context = LocalContext.current
     val isAmbient = LocalAmbientMode.current
     val app = context.applicationContext as WearApplication
@@ -110,15 +114,20 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
     val compassHeading by sensorViewModel.heading.collectAsState()
     val focusRequester = remember { FocusRequester() }
     
+    // CRITICAL: Request focus for hardware buttons
+    LaunchedEffect(Unit) {
+        if (isVisible) focusRequester.requestFocus()
+    }
+    
     var showQuickMenu by remember { mutableStateOf(false) }
     var tappedDestination by remember { mutableStateOf<SearchResultItem?>(null) }
 
-    val effectiveLat = if (navState.isExploreMode) navState.manualCenterLat else navState.lat
-    val effectiveLon = if (navState.isExploreMode) navState.manualCenterLon else navState.lon
+    val effectiveLat = if (navState.isMapUnlocked) navState.manualCenterLat else navState.lat
+    val effectiveLon = if (navState.isMapUnlocked) navState.manualCenterLon else navState.lon
     
     // PERSISTENT VALID LOCATION to prevent flickering on 0.0 jumps
-    var lastValidLat by remember { mutableStateOf(if (navState.lat != 0.0) navState.lat else 48.2082) }
-    var lastValidLon by remember { mutableStateOf(if (navState.lon != 0.0) navState.lon else 16.3738) }
+    var lastValidLat by remember { mutableStateOf(if (navState.lat != 0.0) navState.lat else 0.0) }
+    var lastValidLon by remember { mutableStateOf(if (navState.lon != 0.0) navState.lon else 0.0) }
     
     LaunchedEffect(navState.lat, navState.lon) {
         if (navState.lat != 0.0) {
@@ -127,74 +136,90 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
         }
     }
     
-    val currentLat = if (navState.isExploreMode) effectiveLat else lastValidLat
-    val currentLon = if (navState.isExploreMode) effectiveLon else lastValidLon
+    val currentLat = if (navState.isMapUnlocked) effectiveLat else lastValidLat
+    val currentLon = if (navState.isMapUnlocked) effectiveLon else lastValidLon
 
     val requestKeys = remember { mutableMapOf<Long, MapTileKey>() }
 
     // Interaction is now allowed whenever NOT actively building a route
     val canInteract = !navState.isRouteBuilding
     
-    // Auto-disable explore mode if navigation starts in companion mode and we want to follow
+    // Auto-disable unlock mode if navigation starts in companion mode and we want to follow
     // But allow user to re-enable it manually.
     LaunchedEffect(navState.isActive, navState.standaloneMode) {
-        if (navState.isActive && !navState.standaloneMode && navState.isExploreMode && navState.lastSettingsInteractionTime < System.currentTimeMillis() - 5000) {
+        if (navState.isActive && !navState.standaloneMode && navState.isMapUnlocked && navState.lastSettingsInteractionTime < System.currentTimeMillis() - 5000) {
             // Only auto-disable if no recent user interaction
-            // NavigationStateHolder.update(navState.copy(isExploreMode = false))
+            // NavigationStateHolder.update(navState.copy(isMapUnlocked = false))
         }
     }
 
-    // IMPROVED AUTO-ZOOM (Phone App Logic)
-    val targetViewSpan = remember(navState.speedMps, navState.distToTurnMeters, navState.routerType, navState.isActive, navState.isExploreMode, navState.manualViewSpan) {
-        if (navState.isExploreMode) return@remember navState.manualViewSpan.toDouble()
-        if (navState.routerType != 0 || !navState.isActive) return@remember 0.003
+    // IMPROVED DYNAMIC AUTO-ZOOM (Matches df::CalculateZoomBySpeed)
+    val targetViewSpan = remember(navState.speedMps, navState.routerType, navState.isActive, navState.isMapUnlocked, navState.manualViewSpan) {
+        if (navState.isMapUnlocked) return@remember navState.manualViewSpan.toDouble()
         
-        val speedKmH = navState.speedMps * 3.6
-        val speedSpan = when {
-            speedKmH < 30.0 -> 0.002
-            speedKmH < 70.0 -> 0.004
-            speedKmH < 100.0 -> 0.006
-            else -> 0.010
-        }
+        // Base scales in meters per pixel (from native core df::CalculateZoomBySpeed)
+        // Pedestrian: ~0.7 m/px (Zoom 18-19)
+        // Vehicle at low speed: ~0.7 m/px
+        // Vehicle at 100km/h: ~4.0 m/px (Zoom 14-15)
         
-        val turnDist = navState.distToTurnMeters
-        val targetSpan = if (turnDist > 0.0 && turnDist < 250.0) {
-            0.0015
-        } else if (turnDist > 0.0 && turnDist < 500.0) {
-            0.002
-        } else if (turnDist > 3000.0) {
-            maxOf(speedSpan, 0.008)
-        } else {
-            speedSpan
-        }
+        val vs = 1.0 // Visual scale simplification
+        val speedKmpH = if (navState.speedMps >= 0) navState.speedMps * 3.6 else 0.0
+        
+        val scales2d = listOf(
+            20.0 to 0.70,
+            40.0 to 1.25,
+            60.0 to 2.25,
+            75.0 to 3.00,
+            85.0 to 3.75,
+            95.0 to 6.00
+        )
+        
+        val baseScale = when {
+            navState.routerType == 1 -> 0.70 // Pedestrian always close
+            speedKmpH <= scales2d.first().first -> scales2d.first().second
+            speedKmpH >= scales2d.last().first -> scales2d.last().second
+            else -> {
+                var idx = 1
+                while (idx < scales2d.size && scales2d[idx].first < speedKmpH) idx++
+                val s1 = scales2d[idx-1]
+                val s2 = scales2d[idx]
+                val k = (speedKmpH - s1.first) / (s2.first - s1.first)
+                s1.second + k * (s2.second - s1.second)
+            }
+        } / vs
+        
+        // Convert meters-per-pixel to viewSpan (degrees)
+        // ~111,000 meters per degree lat
+        // 1000 pixels (watch size ref) * baseScale = total meters across screen
+        val targetSpan = (1000.0 * baseScale) / 111000.0
         targetSpan
     }
     
     val viewSpan by animateFloatAsState(
         targetValue = targetViewSpan.toFloat(),
-        animationSpec = if (navState.isExploreMode) tween(80) else tween(durationMillis = 2500, easing = FastOutSlowInEasing),
+        animationSpec = if (navState.isMapUnlocked) tween(80) else tween(durationMillis = 2500, easing = FastOutSlowInEasing),
         label = "zoom"
     )
 
     // Fix: Clamp viewSpan to avoid 0.0 or negative values in calculations
     val clampedViewSpan = viewSpan.coerceAtLeast(0.0001f)
 
-    // Corrected scale calculation: normalize viewSpan (degrees) to world range (~360)
+    // CORRECTED SCALE: min span 0.0001 for extreme urban detail (benches, fountains)
     val currentScale = remember(clampedViewSpan) {
-        (log2(360.0 / (clampedViewSpan * 2.0)).toInt() + 1).coerceIn(1, 18)
+        (log2(360.0 / (clampedViewSpan * 2.0)).toInt() + 1).coerceIn(1, 19)
     }
 
     var isUsingGpsBearing by remember { mutableStateOf(false) }
 
     // SAFE STABILIZED ROTATION with Speed-based Hysteresis
-    LaunchedEffect(navState.bearing, navState.speedMps, compassHeading, navState.isActive, navState.isExploreMode) {
+    LaunchedEffect(navState.bearing, navState.speedMps, compassHeading, navState.isActive, navState.isMapUnlocked) {
         if (navState.speedMps > 2.0f) {
             isUsingGpsBearing = true
         } else if (navState.speedMps < 0.8f || navState.bearing < 0f) {
             isUsingGpsBearing = false
         }
         val targetDeg = when {
-            navState.isExploreMode -> 0f
+            navState.isMapUnlocked -> 0f
             navState.isActive && isUsingGpsBearing && navState.bearing >= 0f -> -navState.bearing
             else -> -compassHeading
         }
@@ -209,12 +234,14 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
         )
     }
 
-    val verticalOffsetFractionTarget = if (navState.routerType == 0 && navState.isActive && !navState.isExploreMode) 0.25f else 0.0f
+    val verticalOffsetFractionTarget = if (navState.routerType == 0 && navState.isActive && !navState.isMapUnlocked) 0.25f else 0.0f
     val verticalOffsetFraction by animateFloatAsState(
         targetValue = verticalOffsetFractionTarget,
         animationSpec = spring(stiffness = Spring.StiffnessLow),
         label = "offset"
     )
+
+    val effectivelyStandalone = navState.isEffectivelyStandalone
 
     val useOfflineMaps = navState.watchLocalMode || !navState.isPhoneConnected || navState.standaloneMode
 
@@ -232,19 +259,111 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
 
     val scope = rememberCoroutineScope()
 
-    // Pre-load POI icons
-    val poiIcons = mapOf(
-        100 to painterResource(id = R.drawable.ic_bookmark_food),
-        101 to painterResource(id = R.drawable.ic_bookmark_cafe),
-        102 to painterResource(id = R.drawable.ic_bookmark_hotel),
-        103 to painterResource(id = R.drawable.ic_bookmark_money),
-        107 to painterResource(id = R.drawable.ic_bookmark_parking),
-        108 to painterResource(id = R.drawable.ic_bookmark_mountain),
-        109 to painterResource(id = R.drawable.ic_bookmark_park),
-        111 to painterResource(id = R.drawable.ic_bookmark_transport),
-        112 to painterResource(id = R.drawable.ic_bookmark_transport),
-        113 to painterResource(id = R.drawable.ic_bookmark_airport)
-    )
+    // PERFORMANCE: Load icons individually to avoid function call overhead in mapOf
+    val iconFood = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_food) else null
+    val iconCafe = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_cafe) else null
+    val iconHotel = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_hotel) else null
+    val iconMoney = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_money) else null
+    val iconParking = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_parking) else null
+    val iconMountain = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_mountain) else null
+    val iconPark = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_park) else null
+    val iconTransport = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_transport) else null
+    val iconAirport = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_airport) else null
+    val iconPharmacy = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_pharmacy) else null
+    val iconShop = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_shop) else null
+    val iconBank = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_bank) else null
+    val iconGas = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_gas) else null
+    val iconMedicine = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_medicine) else null
+    val iconPub = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_pub) else null
+    val iconBar = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_bar) else null
+    val iconMuseum = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_museum) else null
+    val iconTheatre = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_theatre) else null
+    val iconEntertainment = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_entertainment) else null
+    val iconViewpoint = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_viewpoint) else null
+    val iconSights = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_sights) else null
+    val iconBench = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_bench) else null
+    val iconNone = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_none) else null
+    val iconWater = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_water) else null
+    val iconFastFood = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_fast_food) else null
+    val iconAtm = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_money) else null
+    val iconCinema = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_entertainment) else null
+    val iconAttraction = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_sights) else null
+    val iconReligious = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_christianity) else null
+    val iconBicycleParking = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_bicycle_parking) else null
+    val iconChargingStation = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_charging_station) else null
+    val iconArt = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_art) else null
+    val iconAnimals = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_animals) else null
+    val iconSport = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_sport) else null
+    val iconSwim = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_swim) else null
+    val iconInformation = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_information) else null
+    val iconBuilding = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_building) else null
+    val iconFountain = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_fountain) else null
+    val iconPicnicTable = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_picnic_table) else null
+    val iconWasteBasket = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_waste_basket) else null
+    val iconToilets = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_toilets) else null
+    val iconDrinkingWater = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_drinking_water) else null
+    val iconPostbox = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_postbox) else null
+    val iconRecycling = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_recycling) else null
+    val iconShelter = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_shelter) else null
+    val iconPlayground = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_playground) else null
+    val iconClinic = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_clinic) else null
+    val iconHostel = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_hostel) else null
+    val iconBakery = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_bakery) else null
+    val iconSupermarket = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_supermarket) else null
+    val iconConvenience = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_convenience) else null
+    val iconCemetery = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_cemetery) else null
+    val iconLighthouse = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_lighthouse) else null
+    val iconVending = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_vending) else null
+    val iconLaundry = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_laundry) else null
+    val iconCarWash = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_car_wash) else null
+    val iconFireHydrant = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_firehydrant) else null
+    val iconHospital = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_hospital) else null
+    val iconBus = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_bus) else null
+    val iconTrain = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_train) else null
+    val iconTram = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_tram) else null
+    val iconSubway = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_subway) else null
+    val iconTaxi = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_taxi) else null
+    val iconGarden = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_garden) else null
+    val iconSoccer = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_soccer) else null
+    val iconBasketball = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_basketball) else null
+    val iconTennis = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_tennis) else null
+    val iconZoo = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_zoo) else null
+    val iconBeach = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_beach) else null
+    val iconBbq = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_bbq) else null
+    val iconFireStation = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_fire_station) else null
+    val iconDentist = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_dentist) else null
+    val iconCollege = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_college) else null
+    val iconStatue = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_statue) else null
+    val iconMonument = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_monument) else null
+    val iconThemePark = if (!isAmbient) painterResource(id = SdkR.drawable.ic_bookmark_theme_park) else null
+
+    val poiIcons = remember(isAmbient, iconFood, iconCafe, iconHotel, iconMoney, iconParking, iconMountain, iconPark, iconTransport, iconAirport, iconPharmacy, iconShop, iconBank, iconGas, iconMedicine, iconPub, iconBar, iconMuseum, iconTheatre, iconEntertainment, iconViewpoint, iconSights, iconBench, iconNone, iconWater, iconFastFood, iconAtm, iconCinema, iconAttraction, iconReligious, iconBicycleParking, iconChargingStation, iconArt, iconAnimals, iconSport, iconSwim, iconInformation, iconBuilding, iconFountain, iconPicnicTable, iconWasteBasket, iconToilets, iconDrinkingWater, iconPostbox, iconRecycling, iconShelter, iconPlayground, iconClinic, iconHostel, iconBakery, iconSupermarket, iconConvenience, iconCemetery, iconLighthouse, iconVending, iconLaundry, iconCarWash, iconFireHydrant, iconHospital, iconBus, iconTrain, iconTram, iconSubway, iconTaxi, iconGarden, iconSoccer, iconBasketball, iconTennis, iconZoo, iconBeach, iconBbq, iconFireStation, iconDentist, iconCollege, iconStatue, iconMonument, iconThemePark) {
+        if (isAmbient) emptyMap()
+        else mapOf(
+            "food" to iconFood!!, "cafe" to iconCafe!!, "hotel" to iconHotel!!, "money" to iconMoney!!,
+            "parking" to iconParking!!, "mountain" to iconMountain!!, "park" to iconPark!!, "transport" to iconTransport!!,
+            "airport" to iconAirport!!, "pharmacy" to iconPharmacy!!, "shop" to iconShop!!, "bank" to iconBank!!,
+            "gas" to iconGas!!, "medicine" to iconMedicine!!, "pub" to iconPub!!, "bar" to iconBar!!,
+            "museum" to iconMuseum!!, "theatre" to iconTheatre!!, "entertainment" to iconEntertainment!!,
+            "viewpoint" to iconViewpoint!!, "sights" to iconSights!!, "bench" to iconBench!!, "fountain" to iconFountain!!,
+            "fast_food" to iconFastFood!!, "atm" to iconAtm!!, "cinema" to iconCinema!!, "attraction" to iconAttraction!!,
+            "christianity" to iconReligious!!, "islam" to iconReligious!!, "judaism" to iconReligious!!, "buddhism" to iconReligious!!,
+            "bicycle_parking" to iconBicycleParking!!, "charging_station" to iconChargingStation!!,
+            "art" to iconArt!!, "animals" to iconAnimals!!, "sport" to iconSport!!, "swim" to iconSwim!!,
+            "information" to iconInformation!!, "building" to iconBuilding!!, "none" to iconNone!!,
+            "picnic_table" to iconPicnicTable!!, "waste_basket" to iconWasteBasket!!, "toilets" to iconToilets!!,
+            "drinking_water" to iconDrinkingWater!!, "postbox" to iconPostbox!!, "recycling" to iconRecycling!!,
+            "shelter" to iconShelter!!, "playground" to iconPlayground!!, "clinic" to iconClinic!!,
+            "hostel" to iconHostel!!, "bakery" to iconBakery!!, "supermarket" to iconSupermarket!!, "convenience" to iconConvenience!!,
+            "cemetery" to iconCemetery!!, "lighthouse" to iconLighthouse!!, "vending" to iconVending!!,
+            "laundry" to iconLaundry!!, "car_wash" to iconCarWash!!, "fire_hydrant" to iconFireHydrant!!,
+            "hospital" to iconHospital!!, "bus" to iconBus!!, "train" to iconTrain!!, "tram" to iconTram!!,
+            "subway" to iconSubway!!, "taxi" to iconTaxi!!, "garden" to iconGarden!!, "soccer" to iconSoccer!!,
+            "basketball" to iconBasketball!!, "tennis" to iconTennis!!, "zoo" to iconZoo!!, "beach" to iconBeach!!,
+            "bbq" to iconBbq!!, "fire_station" to iconFireStation!!, "dentist" to iconDentist!!, "college" to iconCollege!!,
+            "statue" to iconStatue!!, "monument" to iconMonument!!, "theme_park" to iconThemePark!!
+        )
+    }
 
     // Hardware button detection
     val isEmulator = remember {
@@ -257,11 +376,11 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
         android.os.Build.PRODUCT.contains("sdk_gwear")
     }
     // Sync manual center when map is locked to avoid "jumps"
-    LaunchedEffect(navState.isExploreMode) {
-        if (!navState.isExploreMode) {
+    LaunchedEffect(lastValidLat, lastValidLon, navState.isMapUnlocked) {
+        if (!navState.isMapUnlocked && lastValidLat != 0.0) {
             NavigationStateHolder.update { it.copy(
-                manualCenterLat = navState.lat,
-                manualCenterLon = navState.lon
+                manualCenterLat = lastValidLat,
+                manualCenterLon = lastValidLon
             ) }
         }
     }
@@ -278,12 +397,12 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
         // currentLat/Lon is where the user marker is (if VerticalOffset is active) or the map center
         // VerticalOffset shifts the map DOWN, so the "visual center" is slightly ABOVE the marker
         // We need to account for rotation as well for the loading center
-        val screenCenterLat = if (!navState.isExploreMode && navState.isActive) {
+        val screenCenterLat = if (!navState.isMapUnlocked && navState.isActive) {
             val rotationRad = Math.toRadians(sensorViewModel.mapRotationAnimatable.value.toDouble())
             currentLat + (verticalOffsetFraction * clampedViewSpan * 2.0 * cos(rotationRad))
         } else currentLat
         
-        val screenCenterLon = if (!navState.isExploreMode && navState.isActive) {
+        val screenCenterLon = if (!navState.isMapUnlocked && navState.isActive) {
             val rotationRad = Math.toRadians(sensorViewModel.mapRotationAnimatable.value.toDouble())
             currentLon - (verticalOffsetFraction * clampedViewSpan * 2.0 * sin(rotationRad))
         } else currentLon
@@ -300,19 +419,24 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
     // PERFORMANCE: Limited dispatcher for JNI calls to avoid lagginess during roaming
     val jniDispatcher = remember { Dispatchers.Default.limitedParallelism(4) }
 
-    // SMART PRE-FETCHING LOGIC
-    LaunchedEffect(localRequestLat, localRequestLon, localRequestSpan, useOfflineMaps, effectivePoiMask) {
-        val currentKey = MapTileKey(Mercator.lonToTileX(localRequestLon, 16), Mercator.latToTileY(localRequestLat, 16))
+    // SMART SPIRAL PRE-FETCHING LOGIC
+    LaunchedEffect(localRequestLat, localRequestLon, localRequestSpan, useOfflineMaps, effectivePoiMask, navState.isMapUnlocked, currentScale) {
+        val currentKey = MapTileKey(Mercator.lonToTileX(localRequestLon, 16), Mercator.latToTileY(localRequestLat, 16), currentScale)
         
-        // Always load around center to prevent gaps
+        // Generate a 3x3 grid and sort by distance from center (Spiral Loading)
         val grid = mutableListOf<MapTileKey>()
         for (dx in -1..1) {
             for (dy in -1..1) {
-                grid.add(MapTileKey(currentKey.x + dx, currentKey.y + dy))
+                grid.add(MapTileKey(currentKey.x + dx, currentKey.y + dy, currentScale))
             }
         }
+        
+        // Distance-based sorting for spiral effect
+        val sortedGrid = grid.sortedBy { key ->
+            hypot((key.x - currentKey.x).toDouble(), (key.y - currentKey.y).toDouble())
+        }
 
-        grid.forEach { key ->
+        sortedGrid.forEach { key ->
             if (MapTileStateHolder.getCachedTileByKey(key) == null) {
                 launch(jniDispatcher) {
                     if (app.isFullyInitialized) {
@@ -338,7 +462,18 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
                     if (!useOfflineMaps || navState.isPhoneConnected) {
                         val requestId = System.nanoTime()
                         requestKeys[requestId] = key
-                        WearCommandService.requestMapTile(context, requestId, 0.0, 0.0, 0.0, 0.0, navState.routerType, effectivePoiMask)
+                        
+                        val tileLeftLon = Mercator.tileXToLon(key.x, 16)
+                        val tileTopLat = Mercator.tileYToLat(key.y, 16)
+                        val tileRightLon = Mercator.tileXToLon(key.x + 1, 16)
+                        val tileBottomLat = Mercator.tileYToLat(key.y + 1, 16)
+                        
+                        WearCommandService.requestMapTile(
+                            context, requestId, 
+                            minOf(tileTopLat, tileBottomLat), minOf(tileLeftLon, tileRightLon),
+                            maxOf(tileTopLat, tileBottomLat), maxOf(tileLeftLon, tileRightLon),
+                            currentScale, navState.routerType, effectivePoiMask
+                        )
                     }
                 }
             }
@@ -347,7 +482,7 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
 
     LaunchedEffect(streamedTile) {
         val tile = streamedTile ?: return@LaunchedEffect
-        val key = requestKeys[tile.requestId] ?: MapTileKey(Mercator.lonToTileX(currentLon, 16), Mercator.latToTileY(currentLat, 16))
+        val key = requestKeys[tile.requestId] ?: MapTileKey(Mercator.lonToTileX(currentLon, 16), Mercator.latToTileY(currentLat, 16), currentScale)
         
         scope.launch(Dispatchers.Default) {
             val parsed = MapTileStateHolder.parseTile(tile.features, key, 1000f, 1000f)
@@ -370,10 +505,11 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
                     showQuickMenu = true
                     true
                 } else if (it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_STEM_2) {
-                    NavigationStateHolder.update(navState.copy(
-                        isExploreMode = !navState.isExploreMode,
-                        manualCenterLat = if (!navState.isExploreMode) currentLat else navState.manualCenterLat,
-                        manualCenterLon = if (!navState.isExploreMode) currentLon else navState.manualCenterLon,
+                    val current = NavigationStateHolder.state.value
+                    NavigationStateHolder.update(current.copy(
+                        isMapUnlocked = !current.isMapUnlocked,
+                        manualCenterLat = if (!current.isMapUnlocked) currentLat else current.manualCenterLat,
+                        manualCenterLon = if (!current.isMapUnlocked) currentLon else current.manualCenterLon,
                         manualViewSpan = viewSpan,
                         lastSettingsInteractionTime = System.currentTimeMillis()
                     ))
@@ -381,121 +517,151 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
                 } else false
             }
             .onRotaryScrollEvent {
-                if (canInteract) {
-                    val factor = if (it.verticalScrollPixels > 0) 1.25f else 0.75f
-                    val currentSpan = if (navState.isExploreMode) navState.manualViewSpan else viewSpan
-                    val newSpan = (currentSpan * factor).coerceIn(0.0001f, 0.05f)
-                    NavigationStateHolder.update(navState.copy(
-                        isExploreMode = true,
-                        manualViewSpan = newSpan,
-                        manualCenterLat = if (!navState.isExploreMode) currentLat else navState.manualCenterLat,
-                        manualCenterLon = if (!navState.isExploreMode) currentLon else navState.manualCenterLon,
-                        lastSettingsInteractionTime = System.currentTimeMillis()
-                    ))
-                    true
-                } else false
+                val currentState = NavigationStateHolder.state.value
+                val factor = if (it.verticalScrollPixels > 0) 1.25f else 0.75f
+                val currentSpan = if (currentState.isMapUnlocked) currentState.manualViewSpan else viewSpan
+                val newSpan = (currentSpan * factor).coerceIn(0.0001f, 0.05f)
+                
+                NavigationStateHolder.update(currentState.copy(
+                    isMapUnlocked = true,
+                    isMapUnlockedBeforeNav = currentState.isMapUnlocked, // Remember previous state
+                    manualViewSpan = newSpan,
+                    manualCenterLat = if (currentState.manualCenterLat == 0.0) currentLat else currentState.manualCenterLat,
+                    manualCenterLon = if (currentState.manualCenterLon == 0.0) currentLon else currentState.manualCenterLon,
+                    lastSettingsInteractionTime = System.currentTimeMillis()
+                ))
+                true
             }
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    if (canInteract) {
-                        if (zoom != 1f) {
-                            val currentSpan = if (navState.isExploreMode) navState.manualViewSpan else viewSpan
-                            val newSpan = (currentSpan / zoom).coerceIn(0.0001f, 0.05f)
-                            NavigationStateHolder.update(navState.copy(
-                                isExploreMode = true,
-                                manualViewSpan = newSpan,
-                                manualCenterLat = if (!navState.isExploreMode) currentLat else navState.manualCenterLat,
-                                manualCenterLon = if (!navState.isExploreMode) currentLon else navState.manualCenterLon,
-                                lastSettingsInteractionTime = System.currentTimeMillis()
-                            ))
-                        }
-                        if (navState.isExploreMode && (pan.x != 0f || pan.y != 0f)) {
-                            val latStep = (pan.y / size.height) * (viewSpan * 2)
-                            val lonStep = -(pan.x / size.width) * (viewSpan * 2)
-                            NavigationStateHolder.update(navState.copy(
-                                manualCenterLat = navState.manualCenterLat + latStep.toDouble(),
-                                manualCenterLon = navState.manualCenterLon + lonStep.toDouble(),
-                                lastSettingsInteractionTime = System.currentTimeMillis()
-                            ))
-                        }
+            .pointerInput(navState.isMapUnlocked, navState.isRouteBuilding) {
+                // PAN AND ZOOM - ONLY ACTIVE WHEN UNLOCKED
+                if (navState.isMapUnlocked && !navState.isRouteBuilding) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        val currentState = NavigationStateHolder.state.value
+                        val currentSpan = currentState.manualViewSpan
+                        val newSpan = (currentSpan / zoom).coerceIn(0.0001f, 0.05f)
+                        
+                        // "Drag the paper" logic: drag down (+pan.y) -> move center North (+lat)
+                        val latStep = (pan.y / size.height) * (currentSpan * 2)
+                        val lonStep = -(pan.x / size.width) * (currentSpan * 2)
+                        
+                        NavigationStateHolder.update(currentState.copy(
+                            manualViewSpan = newSpan,
+                            manualCenterLat = currentState.manualCenterLat + latStep.toDouble(),
+                            manualCenterLon = currentState.manualCenterLon + lonStep.toDouble(),
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        ))
                     }
                 }
             }
-            .pointerInput(viewSpan, currentLat, currentLon, navState.standaloneMode, navState.isPhoneConnected, allTiles) {
+            .pointerInput(Unit) {
+                // TAPS AND LONG PRESS - ALWAYS ACTIVE
                 detectTapGestures(
-                    onDoubleTap = {
-                        // Double-tap to re-center (Force Lock)
-                        NavigationStateHolder.update(navState.copy(
-                            isExploreMode = false,
-                            manualCenterLat = navState.lat,
-                            manualCenterLon = navState.lon,
-                            lastSettingsInteractionTime = System.currentTimeMillis()
-                        ))
-                    },
                     onLongPress = {
                         showQuickMenu = true
                     },
                     onTap = { offset ->
-                        // Convert screen offset to lat/lon
-                        val dx = (offset.x - size.width / 2) / size.width * (viewSpan * 2)
-                        val dy = (offset.y - size.height / 2) / size.height * (viewSpan * 2)
-                        
-                        val tappedLat = currentLat - dy
-                        val tappedLon = currentLon + dx
-                        
-                        // Precise POI hit-testing
-                        val density = context.resources.displayMetrics.density
-                        val tapRadiusPx = 20f * density
-                        var nearestPoi: MapFeaturePoint? = null
-                        var minDistPx = tapRadiusPx
-                        
-                        // We need a way to estimate current scale/span for hit-testing
-                        val curSpanVal = (abs(Mercator.latToY(currentLat) - Mercator.latToY(currentLat + clampedViewSpan)) * 2.0).coerceAtLeast(1e-9)
+                        val currentState = NavigationStateHolder.state.value
+                        // POI tapping now works in all modes as long as not actively building a route
+                        if (!currentState.isRouteBuilding) {
+                            val curViewSpan = if (currentState.isMapUnlocked) currentState.manualViewSpan else viewSpan
+                            val cLat = if (currentState.isMapUnlocked) currentState.manualCenterLat else currentLat
+                            val cLon = if (currentState.isMapUnlocked) currentState.manualCenterLon else currentLon
 
-                        allTiles.forEach { tile ->
-                            // Transform tappedLat/Lon to tile coordinates (0..1000)
-                            val tx = ((Mercator.lonToX(tappedLon) - (tile.mercatorX - tile.mercatorSpan / 2.0)) / tile.mercatorSpan * 1000.0).toFloat()
-                            val ty = ((Mercator.latToY(tappedLat) - (tile.mercatorY - tile.mercatorSpan / 2.0)) / tile.mercatorSpan * 1000.0).toFloat()
+                            val offsetValPx = verticalOffsetFraction * size.height
+                            val rotationRad = Math.toRadians(sensorViewModel.mapRotationAnimatable.value.toDouble())
+                            val cosR = cos(rotationRad).toFloat()
+                            val sinR = sin(rotationRad).toFloat()
+
+                            // Offset relative to screen center
+                            val relX = offset.x - size.width / 2
+                            val relY = offset.y - size.height / 2
+
+                            // Rotate back (un-rotate map rotation)
+                            val unRotX = relX * cosR + relY * sinR
+                            val unRotY = -relX * sinR + relY * cosR
+
+                            val dx = unRotX / size.width * (curViewSpan * 2)
+                            val dy = (unRotY - offsetValPx) / size.height * (curViewSpan * 2)
                             
-                            tile.pointsByType.values.flatten().forEach { poi ->
-                                val dist = hypot(poi.point.x - tx, poi.point.y - ty)
-                                // Convert tile units to screen pixels
-                                val screenDist = dist * (tile.mercatorSpan / curSpanVal * size.height / 1000f)
-                                if (screenDist < minDistPx) {
-                                    minDistPx = screenDist.toFloat()
-                                    nearestPoi = poi
+                            val tappedLat = cLat - dy
+                            val tappedLon = cLon + dx
+                            
+                            val density = context.resources.displayMetrics.density
+                            val tapRadiusPx = 16f * density
+                            var nearestPoi: MapFeaturePoint? = null
+                            var minDistPx = tapRadiusPx
+                            val curSpanVal = (abs(Mercator.latToY(cLat) - Mercator.latToY(cLat + curViewSpan)) * 2.0).coerceAtLeast(1e-9)
+
+                            MapTileStateHolder.getAllCachedTiles().forEach { tile ->
+                                val tx = ((Mercator.lonToX(tappedLon) - (tile.mercatorX - tile.mercatorSpan / 2.0)) / tile.mercatorSpan * 1000.0).toFloat()
+                                val ty = ((Mercator.latToY(tappedLat) - (tile.mercatorY - tile.mercatorSpan / 2.0)) / tile.mercatorSpan * 1000.0).toFloat()
+                                tile.pointsByType.values.flatten().forEach { poi ->
+                                    val dist = hypot(poi.point.x - tx, poi.point.y - ty)
+                                    val screenDist = dist * (tile.mercatorSpan / curSpanVal * size.height / 1000f)
+                                    if (screenDist < minDistPx) {
+                                        // PRIORITIZE features with names
+                                        if (nearestPoi == null || (poi.name.isNotEmpty() && nearestPoi!!.name.isEmpty())) {
+                                            minDistPx = screenDist.toFloat()
+                                            nearestPoi = poi
+                                        } else if (poi.name.isEmpty() == nearestPoi!!.name.isEmpty() && screenDist < minDistPx) {
+                                            minDistPx = screenDist.toFloat()
+                                            nearestPoi = poi
+                                        }
+                                    }
                                 }
                             }
-                        }
 
-                        val resultItem = if (nearestPoi != null) {
-                            val mapObject = if (app.isFullyInitialized) {
-                                Framework.nativeGetMapObjectForLocation(tappedLat, tappedLon)
-                            } else null
-                            SearchResultItem(
-                                name = mapObject?.title ?: nearestPoi!!.name,
-                                description = mapObject?.subtitle ?: "POI",
-                                lat = tappedLat, // Use tapped location for better precision on watch
-                                lon = tappedLon,
-                                type = 2, // TYPE_RESULT
-                                openingHours = mapObject?.getMetadata(app.organicmaps.sdk.bookmarks.data.Metadata.MetadataType.FMD_OPEN_HOURS) ?: "",
-                                website = mapObject?.getMetadata(app.organicmaps.sdk.bookmarks.data.Metadata.MetadataType.FMD_WEBSITE) ?: "",
-                                phone = mapObject?.getMetadata(app.organicmaps.sdk.bookmarks.data.Metadata.MetadataType.FMD_PHONE_NUMBER) ?: "",
-                                address = mapObject?.address ?: ""
-                            )
-                        } else {
-                            SearchResultItem(
-                                name = "Tapped Location",
-                                description = String.format(java.util.Locale.US, "%.5f, %.5f", tappedLat, tappedLon),
-                                lat = tappedLat,
-                                lon = tappedLon,
-                                type = 2
-                            )
-                        }
+                            val resultItem = if (nearestPoi != null) {
+                                val mapObject = if (app.isFullyInitialized) {
+                                    Framework.nativeGetMapObjectForLocation(tappedLat, tappedLon)
+                                } else null
+                                SearchResultItem(
+                                    name = mapObject?.title ?: nearestPoi!!.name,
+                                    description = if (mapObject?.subtitle?.isNotEmpty() == true) mapObject.subtitle else "POI",
+                                    lat = tappedLat,
+                                    lon = tappedLon,
+                                    type = 2,
+                                    openingHours = mapObject?.getMetadata(Metadata.MetadataType.FMD_OPEN_HOURS) ?: "",
+                                    website = mapObject?.getMetadata(Metadata.MetadataType.FMD_WEBSITE) ?: "",
+                                    phone = mapObject?.getMetadata(Metadata.MetadataType.FMD_PHONE_NUMBER) ?: "",
+                                    address = mapObject?.address ?: "",
+                                    cuisine = mapObject?.getMetadata(Metadata.MetadataType.FMD_CUISINE) ?: "",
+                                    operator = mapObject?.getMetadata(Metadata.MetadataType.FMD_OPERATOR) ?: "",
+                                    brand = mapObject?.getMetadata(Metadata.MetadataType.FMD_BRAND) ?: "",
+                                    stars = mapObject?.getMetadata(Metadata.MetadataType.FMD_STARS) ?: ""
+                                )
+                            } else {
+                                // Try native search even if no POI icon was near
+                                val mapObject = if (app.isFullyInitialized) {
+                                    Framework.nativeGetMapObjectForLocation(tappedLat, tappedLon)
+                                } else null
 
-                        if (!navState.standaloneMode && navState.isPhoneConnected) {
-                            WearCommandService.showOnPhone(context, resultItem)
-                        } else {
+                                if (mapObject != null) {
+                                    SearchResultItem(
+                                        name = mapObject.title,
+                                        description = if (mapObject.subtitle.isNotEmpty()) mapObject.subtitle else "Dropped Pin",
+                                        lat = tappedLat,
+                                        lon = tappedLon,
+                                        type = 2,
+                                        openingHours = mapObject.getMetadata(Metadata.MetadataType.FMD_OPEN_HOURS),
+                                        website = mapObject.getMetadata(Metadata.MetadataType.FMD_WEBSITE),
+                                        phone = mapObject.getMetadata(Metadata.MetadataType.FMD_PHONE_NUMBER),
+                                        address = mapObject.address,
+                                        cuisine = mapObject.getMetadata(Metadata.MetadataType.FMD_CUISINE),
+                                        operator = mapObject.getMetadata(Metadata.MetadataType.FMD_OPERATOR),
+                                        brand = mapObject.getMetadata(Metadata.MetadataType.FMD_BRAND),
+                                        stars = mapObject.getMetadata(Metadata.MetadataType.FMD_STARS)
+                                    )
+                                } else {
+                                    SearchResultItem(
+                                        name = "Dropped Pin",
+                                        description = "",
+                                        lat = tappedLat,
+                                        lon = tappedLon,
+                                        type = 2
+                                    )
+                                }
+                            }
                             tappedDestination = resultItem
                         }
                     }
@@ -507,12 +673,15 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
 
         val currentTiles = allTiles
         
-        // PERSISTENT ROUTE state to prevent flickering when map reloads
-        var routeToDraw by remember { mutableStateOf<List<Pair<Double, Double>>>(emptyList()) }
-        if (navState.isActive && navState.routePoints.isNotEmpty()) {
-            routeToDraw = navState.routePoints
-        } else if (!navState.isActive || navState.isRecalculating) {
-            routeToDraw = emptyList()
+        // PERSISTENT ROUTE state with optimization
+        val routeToDraw by remember {
+            derivedStateOf {
+                if (navState.isActive && navState.routePoints.isNotEmpty()) {
+                    navState.routePoints
+                } else {
+                    emptyList()
+                }
+            }
         }
 
         val curX = Mercator.lonToX(currentLon)
@@ -520,15 +689,18 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
         val topY = Mercator.latToY(currentLat + clampedViewSpan)
         val curSpan = (abs(curY - topY) * 2.0).coerceAtLeast(1e-9)
 
-        // PERFORMANCE: Pre-filter and group visible tiles once per frame
-        val visibleTiles = remember(allTiles, curX, curY, curSpan) {
-            val threshold = (curSpan + (1.0 / (1 shl 16))) * 1.5
-            allTiles.filter { 
-                abs(it.mercatorX - curX) < threshold && abs(it.mercatorY - curY) < threshold 
+        // PERFORMANCE: Filter visible tiles in background and memoize
+        val visibleTiles by remember(allTiles, curX, curY, curSpan) {
+            derivedStateOf {
+                val threshold = (curSpan + (1.0 / (1 shl 16))) * 1.5
+                allTiles.filter { 
+                    abs(it.mercatorX - curX) < threshold && abs(it.mercatorY - curY) < threshold 
+                }
             }
         }
 
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        Canvas(modifier = Modifier.fillMaxSize()
+        ) {
             val offsetValPx = verticalOffsetFraction * size.height
             
             // UNIFIED MERCATOR COORDINATE SYSTEM
@@ -665,7 +837,7 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
         }
         
         // Navigation Instructions Overlay
-        if (navState.isActive && navState.distToTurn.isNotEmpty() && !navState.isExploreMode) {
+        if (navState.isActive && navState.distToTurn.isNotEmpty() && !navState.isMapUnlocked) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -692,7 +864,8 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
         }
 
         // USER MARKER (Unified 3D-style Arrow)
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        Canvas(modifier = Modifier.fillMaxSize()
+        ) {
             val offsetValPx = verticalOffsetFraction * size.height
             
             // Map parameters
@@ -704,7 +877,7 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
             val userScreenX: Float
             val userScreenY: Float
 
-            if (navState.isExploreMode) {
+            if (navState.isMapUnlocked) {
                 // Project user location relative to the map's current center
                 val rawDx = ((Mercator.lonToX(lastValidLon) - curX) / curSpan * size.height).toFloat()
                 val rawDy = ((Mercator.latToY(lastValidLat) - curY) / curSpan * size.height).toFloat()
@@ -725,13 +898,14 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
                 userScreenY = size.height / 2 + offsetValPx
             }
 
-            if (userScreenX in -30f..(size.width + 30f) && userScreenY in -30f..(size.height + 30f)) {
+            // USER MARKER (Unified 3D-style Arrow)
+            if (userScreenX in -100f..(size.width + 100f) && userScreenY in -100f..(size.height + 100f)) {
                 val arrowBlue = if (isDark) Color(0xFF1E88E5) else Color(0xFF249CF2) 
                 
                 withTransform({
                     translate(userScreenX, userScreenY)
                     // If exploring, arrow shows actual compass. If navigating, it shows relative rotation.
-                    rotate(if (navState.isExploreMode) compassHeading + sensorViewModel.mapRotationAnimatable.value else 0f)
+                    rotate(if (navState.isMapUnlocked) compassHeading + sensorViewModel.mapRotationAnimatable.value else 0f)
                 }) {
                     val arrowPath = Path().apply {
                         moveTo(0f, -14.dp.toPx())
@@ -750,20 +924,63 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
             // ... (no change to this box)
         }
 
-        if (navState.isActive && navState.isExploreMode) {
+        if (navState.isMapUnlocked) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp)
+                    .padding(bottom = if (navState.isRouteBuilt && !navState.isNavigating) 60.dp else 24.dp)
             ) {
                 androidx.wear.compose.material.CompactChip(
                     onClick = {
-                        NavigationStateHolder.update { it.copy(isExploreMode = false, lastSettingsInteractionTime = System.currentTimeMillis()) }
+                        NavigationStateHolder.update { it.copy(isMapUnlocked = false, lastSettingsInteractionTime = System.currentTimeMillis()) }
                     },
                     label = { Text("Recenter") },
                     icon = { Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp)) },
                     colors = ChipDefaults.secondaryChipColors()
                 )
+            }
+        }
+
+        // NO FIX INDICATOR
+        if (effectivelyStandalone && navState.lat == 0.0 && !isAmbient) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 10.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Searching for GPS...", style = MaterialTheme.typography.caption3, color = Color.White)
+                }
+            }
+        }
+        
+        // STANDALONE MODE INDICATOR is now handled in Omaps.kt (Global overlay)
+        
+        // STANDALONE START BUTTON
+        if (navState.isRouteBuilt && !navState.isNavigating) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = if (navState.isMapUnlocked) 60.dp else 24.dp)
+            ) {
+                androidx.wear.compose.material.Button(
+                    onClick = {
+                        RoutingController.get().start()
+                    },
+                    modifier = Modifier.height(40.dp).fillMaxWidth(0.5f),
+                    colors = ButtonDefaults.primaryButtonColors()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Start")
+                    }
+                }
             }
         }
         
@@ -785,41 +1002,90 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
                 val scope = rememberCoroutineScope()
                 PlacePage(
                     result = dest,
-                    onNavigate = { routerType ->
-                        scope.launch {
-                            if (navState.watchLocalMode || navState.standaloneMode) {
-                                try {
-                                    app.waitForInitializationSuspend()
-                                    val startPoint = app.organicMaps.locationHelper.myPosition
-                                    val destination = MapObject.createMapObject(MapObject.POI, dest.name, dest.description, dest.lat, dest.lon)
-                                    val router = when (routerType) {
-                                        0 -> Router.Vehicle
-                                        1 -> Router.Pedestrian
-                                        2 -> Router.Bicycle
-                                        else -> Router.Transit
-                                    }
-                                    val controller = RoutingController.get()
-                                    controller.prepare(startPoint, destination, router)
-                                    controller.checkAndBuildRoute()
-                                    NavigationStateHolder.update { it.copy(
-                                        isActive = true,
-                                        isNavigating = false,
-                                        routeBuildProgress = 0,
-                                        isRouteBuilding = true,
-                                        isRouteReady = false,
-                                        routePoints = emptyList(),
-                                        distToTurn = "",
-                                        nextStreet = "",
-                                        distToTarget = "",
-                                        eta = 0,
-                                        completionPercent = 0.0,
-                                        turnLat = 0.0,
-                                        turnLon = 0.0,
-                                        isExploreMode = false // Force lock when navigation starts
-                                    ) }
-                                } catch (e: Exception) {
-                                    android.util.Log.e("MapPanel", "Route planning failed: ${e.message}")
-                                }
+                                    onNavigate = { routerType, avoidTolls, avoidMotorways, avoidFerries, avoidUnpaved ->
+                                        scope.launch {
+                                            if (navState.standaloneMode || (!navState.isPhoneConnected && navState.watchLocalMode)) {
+                                                // PRE-CHECK Map Material
+                                                if (app.isFullyInitialized && !Framework.nativeIsDownloadedMapAtLocation(dest.lat, dest.lon)) {
+                                                    android.widget.Toast.makeText(context, "Map not downloaded for destination", android.widget.Toast.LENGTH_LONG).show()
+                                                    return@launch
+                                                }
+
+                                                try {
+                                                    app.waitForInitializationSuspend()
+
+                                                    // RESET ROUTE BUILDING STATE FIRST to avoid any overlap
+                                                    NavigationStateHolder.update { it.copy(
+                                                        isActive = true,
+                                                        isNavigating = false,
+                                                        routeBuildProgress = 0,
+                                                        isRouteBuilding = true,
+                                                        isRouteReady = false,
+                                                        routePoints = emptyList(),
+                                                        lastRouteError = 0,
+                                                        isMapUnlockedBeforeNav = it.isMapUnlocked,
+                                                        isMapUnlocked = true // LOCK SWIPE during route building
+                                                    ) }
+
+                                                    // APPLY ROUTING OPTIONS
+                                                    val roadTypes = RoadType.values()
+                                                    roadTypes.forEach { RoutingOptions.removeOption(it) }
+                                                    if (avoidTolls) RoutingOptions.addOption(RoadType.Toll)
+                                                    if (avoidMotorways) RoutingOptions.addOption(RoadType.Motorway)
+                                                    if (avoidFerries) RoutingOptions.addOption(RoadType.Ferry)
+                                                    if (avoidUnpaved) RoutingOptions.addOption(RoadType.Dirty)
+
+                                                    // FALLBACK FOR STANDALONE ROUTING START POINT
+                                                    val startPoint = app.organicMaps.locationHelper.myPosition 
+                                                        ?: app.organicMaps.locationHelper.savedLocation?.let { 
+                                                            MapObject.createMapObject(MapObject.MY_POSITION, "My Location", "", it.latitude, it.longitude)
+                                                        }
+                                                        ?: let {
+                                                            val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
+                                                            val lastLat = prefs.getFloat("last_known_lat", 0f).toDouble()
+                                                            val lastLon = prefs.getFloat("last_known_lon", 0f).toDouble()
+                                                            if (lastLat != 0.0) {
+                                                                MapObject.createMapObject(MapObject.MY_POSITION, "Previous Fix", "", lastLat, lastLon)
+                                                            } else null
+                                                        }
+
+                                                    if (startPoint == null) {
+                                                        android.util.Log.e("MapPanel", "No GPS position for routing")
+                                                        android.widget.Toast.makeText(context, "No GPS position for routing", android.widget.Toast.LENGTH_LONG).show()
+                                                        NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
+                                                        return@launch
+                                                    }
+                                                    val destination = MapObject.createMapObject(MapObject.POI, dest.name, dest.description, dest.lat, dest.lon)
+                                                    val router = when (routerType) {
+                                                        0 -> Router.Vehicle
+                                                        1 -> Router.Pedestrian
+                                                        2 -> Router.Bicycle
+                                                        else -> Router.Transit
+                                                    }
+                                                    val controller = RoutingController.get()
+                                                    controller.prepare(startPoint, destination, router)
+                                                    controller.checkAndBuildRoute()
+                                                    
+                                                    // Update meta info only, building state already set
+                                                                    NavigationStateHolder.update { it.copy(
+                                                        distToTurn = "",
+                                                        nextStreet = "",
+                                                        distToTarget = "",
+                                                        eta = 0,
+                                                        completionPercent = 0.0,
+                                                        turnLat = 0.0,
+                                                        turnLon = 0.0,
+                                                        isMapUnlocked = false,
+                                                        avoidTolls = avoidTolls,
+                                                        avoidMotorways = avoidMotorways,
+                                                        avoidFerries = avoidFerries,
+                                                        avoidUnpaved = avoidUnpaved
+                                                    ) }
+                                                } catch (e: Exception) {
+                                                    android.util.Log.e("MapPanel", "Route planning failed: ${e.message}")
+                                                    android.widget.Toast.makeText(context, "Routing failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                                                    NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
+                                                }
                             } else {
                                 WearCommandService.selectSearchResult(context, dest, routerType)
                                 // Transition to route preview state locally too
@@ -827,13 +1093,30 @@ fun MapPanel(modifier: Modifier = Modifier, mainViewModel: MainViewModel = viewM
                                     isActive = true,
                                     isNavigating = false,
                                     destinationName = dest.name,
-                                    isExploreMode = false
+                                    isMapUnlockedBeforeNav = it.isMapUnlocked,
+                                    isMapUnlocked = true, // LOCK SWIPE
+                                    isRouteBuilding = true
                                 ) }
                             }
                             tappedDestination = null
                         }
                     },
-                    onDismiss = { tappedDestination = null }
+                    onDismiss = { 
+                        tappedDestination = null 
+                        val state = NavigationStateHolder.state.value
+                        if (state.isRouteBuilding || (state.isActive && !state.isNavigating)) {
+                            RoutingController.get().cancel()
+                            NavigationStateHolder.update(state.copy(
+                                isRouteBuilding = false, 
+                                isActive = false,
+                                isMapUnlocked = state.isMapUnlockedBeforeNav
+                            ), force = true)
+                        } else {
+                            NavigationStateHolder.update(state.copy(
+                                isRouteBuilding = false
+                            ), force = true)
+                        }
+                    }
                 )
             }
         }
@@ -863,10 +1146,10 @@ fun QuickMenu(currentLat: Double, currentLon: Double, viewSpan: Float, onDismiss
                     onClick = {
                         val newSpan = (viewSpan * 0.75f).coerceAtLeast(0.0001f)
                         NavigationStateHolder.update(navState.copy(
-                            isExploreMode = true,
+                            isMapUnlocked = true,
                             manualViewSpan = newSpan,
-                            manualCenterLat = if (!navState.isExploreMode) currentLat else navState.manualCenterLat,
-                            manualCenterLon = if (!navState.isExploreMode) currentLon else navState.manualCenterLon,
+                            manualCenterLat = if (!navState.isMapUnlocked) currentLat else navState.manualCenterLat,
+                            manualCenterLon = if (!navState.isMapUnlocked) currentLon else navState.manualCenterLon,
                             lastSettingsInteractionTime = System.currentTimeMillis()
                         ))
                         onDismiss()
@@ -883,10 +1166,10 @@ fun QuickMenu(currentLat: Double, currentLon: Double, viewSpan: Float, onDismiss
                     onClick = {
                         val newSpan = (viewSpan * 1.33f).coerceAtMost(0.05f)
                         NavigationStateHolder.update(navState.copy(
-                            isExploreMode = true,
+                            isMapUnlocked = true,
                             manualViewSpan = newSpan,
-                            manualCenterLat = if (!navState.isExploreMode) currentLat else navState.manualCenterLat,
-                            manualCenterLon = if (!navState.isExploreMode) currentLon else navState.manualCenterLon,
+                            manualCenterLat = if (!navState.isMapUnlocked) currentLat else navState.manualCenterLat,
+                            manualCenterLon = if (!navState.isMapUnlocked) currentLon else navState.manualCenterLon,
                             lastSettingsInteractionTime = System.currentTimeMillis()
                         ))
                         onDismiss()
@@ -901,10 +1184,10 @@ fun QuickMenu(currentLat: Double, currentLon: Double, viewSpan: Float, onDismiss
             item {
                 Chip(
                     onClick = {
-                        NavigationStateHolder.update { it.copy(isExploreMode = false, lastSettingsInteractionTime = System.currentTimeMillis()) }
+                        NavigationStateHolder.update { it.copy(isMapUnlocked = false, lastSettingsInteractionTime = System.currentTimeMillis()) }
                         onDismiss()
                     },
-                    label = { Text("Re-center") },
+                    label = { Text("Follow Position") },
                     icon = { Icon(Icons.Default.MyLocation, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                     colors = ChipDefaults.secondaryChipColors()
@@ -913,20 +1196,23 @@ fun QuickMenu(currentLat: Double, currentLon: Double, viewSpan: Float, onDismiss
             
             item {
                 ToggleChip(
-                    checked = navState.isExploreMode,
+                    checked = !navState.isMapUnlocked,
                     onCheckedChange = { newVal ->
-                        NavigationStateHolder.update(navState.copy(
-                            isExploreMode = newVal,
-                            manualCenterLat = navState.lat, // Always sync on lock/unlock
-                            manualCenterLon = navState.lon,
-                            manualViewSpan = viewSpan,
+                        // CRITICAL: Fetch absolute latest state value
+                        val current = NavigationStateHolder.state.value
+                        NavigationStateHolder.update(current.copy(
+                            isMapUnlocked = !newVal,
+                            // If unlocking, initialize manual center to exactly where we are looking now
+                            manualCenterLat = if (current.lat != 0.0) current.lat else currentLat,
+                            manualCenterLon = if (current.lon != 0.0) current.lon else currentLon,
+                            manualViewSpan = 0.003f,
                             lastSettingsInteractionTime = System.currentTimeMillis()
                         ))
                         onDismiss()
                     },
-                    label = { Text(if (navState.isExploreMode) "Unlock Map" else "Lock Map") },
+                    label = { Text("Follow Position") },
                     toggleControl = {
-                        Switch(checked = navState.isExploreMode)
+                        Switch(checked = !navState.isMapUnlocked)
                     },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
                 )
@@ -954,7 +1240,7 @@ fun DrawPassInternal(
     viewSpan: Float,
     isDark: Boolean,
     drawScope: DrawScope,
-    poiIcons: Map<Int, Painter>,
+    poiIcons: Map<String, Painter>,
     specificType: Int? = null
 ) {
     with(drawScope) {
@@ -983,7 +1269,7 @@ fun DrawPassInternal(
     }
 }
 
-fun DrawTilePassInternal(tile: ParsedMapTile, pass: Int, isAmbient: Boolean = false, viewSpan: Float = 0.003f, isDark: Boolean = false, drawScope: DrawScope, poiIcons: Map<Int, Painter>, specificType: Int? = null) {
+fun DrawTilePassInternal(tile: ParsedMapTile, pass: Int, isAmbient: Boolean = false, viewSpan: Float = 0.003f, isDark: Boolean = false, drawScope: DrawScope, poiIcons: Map<String, Painter>, specificType: Int? = null) {
     with(drawScope) {
         val typesToDraw = if (specificType != null) listOf(specificType) else tile.pathsByType.keys.toList()
 
@@ -1046,7 +1332,10 @@ fun DrawTilePassInternal(tile: ParsedMapTile, pass: Int, isAmbient: Boolean = fa
                 }
                 
                 // Pass 4: Labels
-                if (pass == 4 && !hideLabels && f.name.isNotEmpty() && type in listOf(4, 5, 6, 7)) {
+                if (pass == 4 && !hideLabels && f.name.isNotEmpty() && type in listOf(4, 5, 6, 7, 1, 8)) {
+                    // Show road names for residential (1) and service (8) only when zoomed in closely
+                    if (type in listOf(1, 8) && viewSpan > 0.015f) continue
+                    
                     drawIntoCanvas { canvas ->
                         val textPaint = android.graphics.Paint().apply {
                             this.color = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
@@ -1061,8 +1350,32 @@ fun DrawTilePassInternal(tile: ParsedMapTile, pass: Int, isAmbient: Boolean = fa
             }
         }
         
-        // Pass 4: POIs
+        // Pass 4: POIs & House Numbers
         if (pass == 4 && !isAmbient && !hideLabels) {
+            // Draw House Numbers for buildings (Type 2) when zoomed in closely
+            if (viewSpan < 0.008f) {
+                val buildingFeatures = tile.pathsByType[2] ?: emptyList()
+                for (f in buildingFeatures) {
+                    if (f.name.isEmpty()) continue
+                    // Extract just the number if it's "Name (12a)" or use full if it's just "12a"
+                    val label = if (f.name.contains("(")) {
+                        f.name.substringAfter("(").substringBefore(")")
+                    } else f.name
+                    
+                    f.labelPos?.let { p ->
+                        drawIntoCanvas { canvas ->
+                            val textPaint = android.graphics.Paint().apply {
+                                color = if (isDark) android.graphics.Color.GRAY else android.graphics.Color.DKGRAY
+                                textSize = 7.dp.toPx()
+                                textAlign = android.graphics.Paint.Align.CENTER
+                                isAntiAlias = true
+                            }
+                            canvas.nativeCanvas.drawText(label, p.x, p.y + 3.dp.toPx(), textPaint)
+                        }
+                    }
+                }
+            }
+
             for ((type, features) in tile.pointsByType) {
                 val color = when (type) {
                     100, 101 -> Color(0xFFE67E22) // Eat / Cafe
@@ -1075,28 +1388,130 @@ fun DrawTilePassInternal(tile: ParsedMapTile, pass: Int, isAmbient: Boolean = fa
                     else -> Color(0xFF95A5A6)
                 }
 
-                val icon = poiIcons[type] ?: poiIcons[111] // Fallback
+                val groupIcon = when (type) {
+                    100 -> "food"
+                    101 -> "cafe"
+                    102 -> "hotel"
+                    103 -> "money"
+                    107 -> "parking"
+                    108 -> "mountain"
+                    109 -> "park"
+                    111, 112 -> "transport"
+                    113 -> "airport"
+                    else -> "sights"
+                }
 
                 for (f in features) {
                     val p = f.point
                     
-                    // Draw POI Pin
-                    drawCircle(Color.Black.copy(alpha = 0.2f), radius = 8.dp.toPx(), center = p.copy(y = p.y + 1.dp.toPx()))
-                    drawCircle(Color.White, radius = 7.dp.toPx(), center = p)
-                    drawCircle(color, radius = 7.dp.toPx(), center = p, style = Stroke(width = 1.5.dp.toPx()))
+                    val iconKey = if (f.iconName.isNotEmpty()) {
+                        when {
+                            f.iconName.contains("bench") -> "bench"
+                            f.iconName.contains("fountain") -> "fountain"
+                            f.iconName.contains("picnic_table") -> "picnic_table"
+                            f.iconName.contains("waste_basket") || f.iconName.contains("bin") -> "waste_basket"
+                            f.iconName.contains("toilets") -> "toilets"
+                            f.iconName.contains("drinking_water") -> "drinking_water"
+                            f.iconName.contains("postbox") -> "postbox"
+                            f.iconName.contains("recycling") -> "recycling"
+                            f.iconName.contains("shelter") -> "shelter"
+                            f.iconName.contains("playground") -> "playground"
+                            f.iconName.contains("clinic") -> "clinic"
+                            f.iconName.contains("hostel") -> "hostel"
+                            f.iconName.contains("bakery") -> "bakery"
+                            f.iconName.contains("supermarket") -> "supermarket"
+                            f.iconName.contains("convenience") -> "convenience"
+                            f.iconName.contains("cemetery") || f.iconName.contains("tomb") -> "cemetery"
+                            f.iconName.contains("lighthouse") -> "lighthouse"
+                            f.iconName.contains("vending") -> "vending"
+                            f.iconName.contains("laundry") -> "laundry"
+                            f.iconName.contains("car_wash") -> "car_wash"
+                            f.iconName.contains("fire_hydrant") || f.iconName.contains("firehydrant") -> "fire_hydrant"
+                            f.iconName.contains("hospital") -> "hospital"
+                            f.iconName.contains("bus") -> "bus"
+                            f.iconName.contains("train") -> "train"
+                            f.iconName.contains("railway") -> "train"
+                            f.iconName.contains("tram") -> "tram"
+                            f.iconName.contains("subway") -> "subway"
+                            f.iconName.contains("taxi") -> "taxi"
+                            f.iconName.contains("garden") -> "garden"
+                            f.iconName.contains("soccer") -> "soccer"
+                            f.iconName.contains("basketball") -> "basketball"
+                            f.iconName.contains("tennis") -> "tennis"
+                            f.iconName.contains("zoo") -> "zoo"
+                            f.iconName.contains("beach") -> "beach"
+                            f.iconName.contains("bbq") -> "bbq"
+                            f.iconName.contains("fire_station") -> "fire_station"
+                            f.iconName.contains("dentist") -> "dentist"
+                            f.iconName.contains("doctor") -> "medicine"
+                            f.iconName.contains("college") || f.iconName.contains("university") -> "college"
+                            f.iconName.contains("museum") -> "museum"
+                            f.iconName.contains("cinema") -> "cinema"
+                            f.iconName.contains("stadium") -> "stadium"
+                            f.iconName.contains("statue") -> "statue"
+                            f.iconName.contains("monument") -> "monument"
+                            f.iconName.contains("attraction") -> "attraction"
+                            f.iconName.contains("theme_park") -> "theme_park"
+                            f.iconName.contains("restaurant") || f.iconName.contains("food") -> "food"
+                            f.iconName.contains("fast_food") -> "fast_food"
+                            f.iconName.contains("cafe") -> "cafe"
+                            f.iconName.contains("hotel") || f.iconName.contains("motel") || f.iconName.contains("guest_house") -> "hotel"
+                            f.iconName.contains("atm") -> "atm"
+                            f.iconName.contains("bank") -> "bank"
+                            f.iconName.contains("fuel") || f.iconName.contains("gas") || f.iconName.contains("petrol") -> "gas"
+                            f.iconName.contains("hospital") || f.iconName.contains("pharmacy") || f.iconName.contains("medicine") || f.iconName.contains("clinic") || f.iconName.contains("doctor") || f.iconName.contains("dentist") -> "medicine"
+                            f.iconName.contains("peak") || f.iconName.contains("mountain") -> "mountain"
+                            f.iconName.contains("camp_site") || f.iconName.contains("pitch") || f.iconName.contains("caravan") -> "park"
+                            f.iconName.contains("aerodrome") || f.iconName.contains("airport") -> "airport"
+                            f.iconName.contains("cinema") -> "cinema"
+                            f.iconName.contains("theatre") -> "theatre"
+                            f.iconName.contains("museum") || f.iconName.contains("gallery") || f.iconName.contains("art") -> "museum"
+                            f.iconName.contains("church") || f.iconName.contains("cathedral") || f.iconName.contains("temple") || f.iconName.contains("christian") || f.iconName.contains("religious") || f.iconName.contains("synagogue") || f.iconName.contains("mosque") -> "christianity"
+                            f.iconName.contains("attraction") || f.iconName.contains("monument") || f.iconName.contains("viewpoint") || f.iconName.contains("tourism") || f.iconName.contains("memorial") -> "viewpoint"
+                            f.iconName.contains("bicycle_parking") || f.iconName.contains("bicycle_rental") -> "bicycle_parking"
+                            f.iconName.contains("charging_station") -> "charging_station"
+                            f.iconName.contains("parking") -> "parking"
+                            f.iconName.contains("shop") -> "shop"
+                            f.iconName.contains("bar") || f.iconName.contains("pub") || f.iconName.contains("biergarten") -> "bar"
+                            f.iconName.contains("zoo") || f.iconName.contains("aquarium") || f.iconName.contains("park") || f.iconName.contains("garden") || f.iconName.contains("forest") -> "animals"
+                            f.iconName.contains("stadium") || f.iconName.contains("sport") || f.iconName.contains("leisure") -> "sport"
+                            f.iconName.contains("swimming") || f.iconName.contains("beach") -> "swim"
+                            f.iconName.contains("information") || f.iconName.contains("guide") -> "information"
+                            f.iconName.contains("building") || f.iconName.contains("castle") || f.iconName.contains("fortress") || f.iconName.contains("palace") || f.iconName.contains("manor") -> "building"
+                            f.iconName.contains("bus") || f.iconName.contains("subway") || f.iconName.contains("train") || f.iconName.contains("railway") || f.iconName.contains("tram") || f.iconName.contains("station") -> "transport"
+                            else -> f.iconName
+                        }
+                    } else groupIcon
+
+                    val icon = poiIcons[iconKey] ?: poiIcons[groupIcon] ?: poiIcons["none"]
+                    
+                    // Simple, performant POI Pin
+                    val pinSize = 10.dp.toPx()
+                    drawCircle(
+                        color = color,
+                        radius = pinSize,
+                        center = p
+                    )
+                    drawCircle(
+                        color = Color.White,
+                        radius = pinSize,
+                        center = p,
+                        style = Stroke(width = 1.5.dp.toPx())
+                    )
                     
                     // Draw Icon
                     if (icon != null) {
-                        val iconSizePx = 9.dp.toPx()
+                        val iconSizePx = 13.dp.toPx()
                         withTransform({
                             translate(p.x - iconSizePx / 2f, p.y - iconSizePx / 2f)
                         }) {
                             with(icon) {
-                                draw(size = androidx.compose.ui.geometry.Size(iconSizePx, iconSizePx))
+                                draw(
+                                    size = androidx.compose.ui.geometry.Size(iconSizePx, iconSizePx),
+                                    colorFilter = ColorFilter.tint(Color.White)
+                                )
                             }
                         }
-                    } else {
-                        drawCircle(color, radius = 3.dp.toPx(), center = p)
                     }
                     
                     // Labels only when zoomed in very closely

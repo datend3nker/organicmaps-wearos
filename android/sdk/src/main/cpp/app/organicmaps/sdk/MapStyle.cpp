@@ -8,6 +8,9 @@ extern "C"
 {
 JNIEXPORT void Java_app_organicmaps_sdk_MapStyle_nativeSet(JNIEnv *, jclass, jint mapStyle)
 {
+  if (!g_framework)
+    return;
+
   auto const val = static_cast<MapStyle>(mapStyle);
   if (val != g_framework->GetMapStyle())
     g_framework->SetMapStyle(val);
@@ -15,11 +18,14 @@ JNIEXPORT void Java_app_organicmaps_sdk_MapStyle_nativeSet(JNIEnv *, jclass, jin
 
 JNIEXPORT jint Java_app_organicmaps_sdk_MapStyle_nativeGet(JNIEnv *, jclass)
 {
-  return g_framework->GetMapStyle();
+  return g_framework ? g_framework->GetMapStyle() : 0;
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_MapStyle_nativeMark(JNIEnv *, jclass, jint mapStyle)
 {
+  if (!g_framework)
+    return;
+
   auto const val = static_cast<MapStyle>(mapStyle);
   if (val != g_framework->GetMapStyle())
     g_framework->MarkMapStyle(val);

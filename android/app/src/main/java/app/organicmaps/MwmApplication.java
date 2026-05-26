@@ -161,6 +161,7 @@ public class MwmApplication extends Application implements Application.ActivityL
       }
 
       app.organicmaps.wear.WearSyncService.initSyncLayer(this);
+      app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize();
       
       // Start Bluetooth service if selected in settings (for non-OSS flavors)
       if (!BuildConfig.FLAVOR.equals("oss") && "BLUETOOTH".equals(PreferenceManager.getDefaultSharedPreferences(this).getString("pref_wear_os_backend", "GMS"))) {

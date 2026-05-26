@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:app="http://schemas.android.com/apk/res-auto">
+
+  <androidx.preference.PreferenceCategory
+    android:title="@string/settings">
+    <androidx.preference.ListPreference
+      android:key="@string/pref_wear_os_backend"
+      android:title="@string/pref_wear_os_backend_title"
+      android:summary="@string/pref_wear_os_backend_summary"
+      app:singleLineTitle="false"
+      android:entries="@array/wear_backend"
+      android:entryValues="@array/wear_backend_values"
+      android:defaultValue="GMS" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_map_enabled"
+      android:title="@string/pref_wear_map_enabled_title"
+      android:summary="@string/pref_wear_map_enabled_summary"
+      app:singleLineTitle="false"
+      android:defaultValue="false" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_standalone_mode"
+      android:title="@string/pref_wear_os_standalone_mode_title"
+      android:summary="@string/pref_wear_os_standalone_mode_summary"
+      app:singleLineTitle="false"
+      android:defaultValue="false" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_watch_local_mode"
+      android:title="@string/pref_wear_os_watch_local_mode_title"
+      android:summary="@string/pref_wear_os_watch_local_mode_summary"
+      app:singleLineTitle="false"
+      android:dependency="@string/pref_wear_os_map_enabled"
+      android:defaultValue="false" />
+    <androidx.preference.ListPreference
+      android:key="@string/pref_wear_os_map_download_mode"
+      android:title="@string/pref_wear_map_download_mode_title"
+      app:singleLineTitle="false"
+      android:entries="@array/wear_map_download_mode"
+      android:entryValues="@array/wear_map_download_mode_values"
+      android:defaultValue="BLUETOOTH_ONLY" />
+  </androidx.preference.PreferenceCategory>
+
+  <androidx.preference.PreferenceCategory
+    android:title="@string/pref_map_layers">
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="transit_enabled"
+      android:title="@string/button_layer_subway"
+      android:defaultValue="false" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="biking_enabled"
+      android:title="@string/button_layer_cycling"
+      android:defaultValue="false" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="hiking_enabled"
+      android:title="@string/button_layer_hiking"
+      android:defaultValue="false" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="isolines_enabled"
+      android:title="@string/button_layer_isolines"
+      android:defaultValue="false" />
+  </androidx.preference.PreferenceCategory>
+
+  <androidx.preference.PreferenceCategory
+    android:title="@string/prefs_routing">
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="avoid_tolls"
+      android:title="@string/avoid_tolls"
+      android:defaultValue="false" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="avoid_motorways"
+      android:title="@string/avoid_motorways"
+      android:defaultValue="false" />
+  </androidx.preference.PreferenceCategory>
+
+</androidx.preference.PreferenceScreen>

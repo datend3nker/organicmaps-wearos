@@ -108,11 +108,13 @@ class BluetoothWearDataListenerService : Service() {
             1 -> { // MSG_TYPE_NAV_STATUS
                 (application as WearApplication).onPongReceived()
                 val active = buffer.get().toInt() == 1
+                val currentState = NavigationStateHolder.state.value
                 if (!active) {
-                    NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
+                    NavigationStateHolder.update(currentState.copy(
                         isActive = false,
-                        isNavigating = false
-                    ))
+                        isNavigating = false,
+                        isRouteBuilding = false
+                    ), force = true)
                     return
                 }
                 val carDir = buffer.get().toInt()
@@ -135,10 +137,10 @@ class BluetoothWearDataListenerService : Service() {
                 buffer.position(buffer.position() + streetLen)
                 val dist = String(data, buffer.position(), distLen, StandardCharsets.UTF_8)
                 
-                val currentState = NavigationStateHolder.state.value
                 val newState = currentState.copy(
                     isActive = true,
                     isNavigating = true,
+                    isRouteBuilding = false,
                     carDirection = carDir,
                     pedestrianDirection = pedDir,
                     exitNum = exitNum,
@@ -338,9 +340,6 @@ class BluetoothWearDataListenerService : Service() {
                         mapDownloadMode = mapDownloadMode,
                         autoDownloadRouteMaps = autoDownload,
                         backend = backend,
-                        is3dEnabled = is3dEnabled,
-                        is3dBuildingsEnabled = is3dBuildingsEnabled,
-                        isAutoZoomEnabled = isAutoZoomEnabled,
                         measurementUnits = measurementUnits,
                         mapStyle = mapStyle,
                         lastSettingsInteractionTime = timestamp // Sync local interaction clock

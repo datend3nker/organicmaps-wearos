@@ -378,6 +378,13 @@ public class LocationHelper implements BaseLocationProvider.Listener
       return;
     }
 
+    if (!LocationUtils.areLocationServicesTurnedOn(mContext))
+    {
+      Logger.w(TAG, "Location services are turned off");
+      onLocationDisabled();
+      return;
+    }
+
     Logger.i(TAG);
     checkForAgpsUpdates();
 

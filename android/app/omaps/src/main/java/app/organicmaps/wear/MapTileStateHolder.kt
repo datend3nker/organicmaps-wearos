@@ -13,7 +13,7 @@ import kotlin.math.*
 
 import java.nio.charset.StandardCharsets
 
-data class MapTileKey(val x: Int, val y: Int, val zoom: Int = 16)
+data class MapTileKey(val x: Int, val y: Int, val zoom: Int)
 
 object Mercator {
     fun lonToX(lon: Double): Double = lon / 360.0 + 0.5
@@ -33,7 +33,7 @@ object Mercator {
 }
 
 data class MapFeaturePath(val path: Path, val name: String, val labelPos: Offset? = null)
-data class MapFeaturePoint(val point: Offset, val name: String)
+data class MapFeaturePoint(val point: Offset, val name: String, val iconName: String = "")
 
 data class ParsedMapTile(
     val pathsByType: Map<Int, List<MapFeaturePath>>,
@@ -62,10 +62,10 @@ object MapTileStateHolder {
     private val _cachedTilesFlow = MutableStateFlow<List<ParsedMapTile>>(emptyList())
     val cachedTilesFlow: StateFlow<List<ParsedMapTile>> = _cachedTilesFlow.asStateFlow()
 
-    fun getCachedTile(lat: Double, lon: Double): ParsedMapTile? {
-        val x = Mercator.lonToTileX(lon, 16)
-        val y = Mercator.latToTileY(lat, 16)
-        return getCachedTileByKey(MapTileKey(x, y))
+    fun getCachedTile(lat: Double, lon: Double, zoom: Int): ParsedMapTile? {
+        val x = Mercator.lonToTileX(lon, zoom)
+        val y = Mercator.latToTileY(lat, zoom)
+        return getCachedTileByKey(MapTileKey(x, y, zoom))
     }
 
     fun getCachedTileByKey(key: MapTileKey): ParsedMapTile? {
@@ -131,9 +131,20 @@ object MapTileStateHolder {
         val lastPoints = mutableMapOf<String, Offset>()
 
         while (buffer.hasRemaining()) {
-            if (buffer.remaining() < 3) break
-            val type = buffer.get().toInt()
+            if (buffer.remaining() < 1) break
+            val type = buffer.get().toInt() and 0xFF
             
+            val iconName = if (type >= 100) {
+                if (buffer.remaining() < 1) break
+                val iconLen = buffer.get().toInt() and 0xFF
+                if (iconLen > 0 && buffer.remaining() >= iconLen) {
+                    val bytes = ByteArray(iconLen)
+                    buffer.get(bytes)
+                    String(bytes, StandardCharsets.UTF_8)
+                } else ""
+            } else ""
+
+            if (buffer.remaining() < 2) break
             // Read name
             val nameLen = buffer.short.toInt() and 0xFFFF
             val name = if (nameLen > 0 && buffer.remaining() >= nameLen) {
@@ -154,7 +165,7 @@ object MapTileStateHolder {
                     
                     val x = ((Mercator.lonToX(lon) - (actualMercCenterX - actualMercSpan / 2.0)) / actualMercSpan * width).toFloat()
                     val y = ((Mercator.latToY(lat) - (actualMercCenterY - actualMercSpan / 2.0)) / actualMercSpan * height).toFloat()
-                    list.add(MapFeaturePoint(Offset(x, y), name))
+                    list.add(MapFeaturePoint(Offset(x, y), name, iconName))
                 }
             } else {
                 val isRoad = type in 4..8 || type == 1

@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.setValue
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
@@ -95,7 +96,7 @@ class Omaps : ComponentActivity() {
         
         // Initialize state from prefs
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
-        val isMapEnabled = prefs.getBoolean("mapEnabled", false)
+        val isMapEnabled = prefs.getBoolean("mapEnabled", true)
         val isOfflineMapsEnabled = prefs.getBoolean("watchLocalMode", false)
         val routerType = prefs.getInt("routerType", 0)
         val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
@@ -124,9 +125,6 @@ class Omaps : ComponentActivity() {
             watchLocalMode = isOfflineMapsEnabled,
             routerType = routerType,
             poiCategoriesMask = poiMask,
-            is3dEnabled = is3dEnabled,
-            is3dBuildingsEnabled = is3dBldEnabled,
-            isAutoZoomEnabled = isAutoZoomEnabled,
             measurementUnits = units,
             mapStyle = style,
             avoidTolls = avoidTolls,
@@ -159,15 +157,27 @@ class Omaps : ComponentActivity() {
         if (navState.mapEnabled) {
             when (keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_NAVIGATE_IN -> {
-                    val currentSpan = if (navState.isExploreMode) navState.manualViewSpan else 0.003f
-                    val newSpan = (currentSpan * 0.8f).coerceIn(0.0005f, 0.05f)
-                    NavigationStateHolder.update(navState.copy(isExploreMode = true, manualViewSpan = newSpan))
+                    val currentSpan = if (navState.isMapUnlocked) navState.manualViewSpan else 0.003f
+                    val newSpan = (currentSpan * 0.8f).coerceIn(0.0001f, 0.05f)
+                    NavigationStateHolder.update(navState.copy(
+                        isMapUnlocked = true,
+                        manualViewSpan = newSpan,
+                        manualCenterLat = if (!navState.isMapUnlocked) navState.lat else navState.manualCenterLat,
+                        manualCenterLon = if (!navState.isMapUnlocked) navState.lon else navState.manualCenterLon,
+                        lastSettingsInteractionTime = System.currentTimeMillis()
+                    ))
                     return true
                 }
                 KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_NAVIGATE_OUT -> {
-                    val currentSpan = if (navState.isExploreMode) navState.manualViewSpan else 0.003f
-                    val newSpan = (currentSpan * 1.2f).coerceIn(0.0005f, 0.05f)
-                    NavigationStateHolder.update(navState.copy(isExploreMode = true, manualViewSpan = newSpan))
+                    val currentSpan = if (navState.isMapUnlocked) navState.manualViewSpan else 0.003f
+                    val newSpan = (currentSpan * 1.25f).coerceIn(0.0001f, 0.05f)
+                    NavigationStateHolder.update(navState.copy(
+                        isMapUnlocked = true,
+                        manualViewSpan = newSpan,
+                        manualCenterLat = if (!navState.isMapUnlocked) navState.lat else navState.manualCenterLat,
+                        manualCenterLon = if (!navState.isMapUnlocked) navState.lon else navState.manualCenterLon,
+                        lastSettingsInteractionTime = System.currentTimeMillis()
+                    ))
                     return true
                 }
                 KeyEvent.KEYCODE_STEM_1 -> {
@@ -176,16 +186,16 @@ class Omaps : ComponentActivity() {
                 }
                 KeyEvent.KEYCODE_STEM_2 -> {
                     NavigationStateHolder.update(navState.copy(
-                        isExploreMode = !navState.isExploreMode,
-                        manualCenterLat = if (!navState.isExploreMode) navState.lat else navState.manualCenterLat,
-                        manualCenterLon = if (!navState.isExploreMode) navState.lon else navState.manualCenterLon,
+                        isMapUnlocked = !navState.isMapUnlocked,
+                        manualCenterLat = if (!navState.isMapUnlocked) navState.lat else navState.manualCenterLat,
+                        manualCenterLon = if (!navState.isMapUnlocked) navState.lon else navState.manualCenterLon,
                         manualViewSpan = 0.003f
                     ))
                     return true
                 }
                 KeyEvent.KEYCODE_BACK -> {
-                    if (navState.isExploreMode) {
-                        NavigationStateHolder.update(navState.copy(isExploreMode = false))
+                    if (navState.isMapUnlocked) {
+                        NavigationStateHolder.update(navState.copy(isMapUnlocked = false))
                         return true
                     }
                 }
@@ -202,17 +212,15 @@ fun WearApp() {
     val isNavigating = navState.isNavigating
     val isMapEnabled = navState.mapEnabled
     
-    val pagerState = remember(isNavigating, isMapEnabled) {
-        PagerState(
-            pageCount = { 
-                if (isNavigating) {
-                    if (isMapEnabled) 3 else 2
-                } else {
-                    if (isMapEnabled) 4 else 3
-                }
+    val pagerState = rememberPagerState(
+        pageCount = { 
+            if (isNavigating) {
+                if (isMapEnabled) 3 else 2
+            } else {
+                if (isMapEnabled) 4 else 3
             }
-        )
-    }
+        }
+    )
 
     androidx.compose.runtime.LaunchedEffect(navState.openMapManager) {
         if (navState.openMapManager && !isNavigating) {
@@ -221,9 +229,21 @@ fun WearApp() {
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(isNavigating) {
+    androidx.compose.runtime.LaunchedEffect(isNavigating, navState.showOnLockScreen) {
         if (isNavigating && isMapEnabled) {
             pagerState.scrollToPage(0)
+        }
+        
+        // Lock screen logic
+        if (context is android.app.Activity) {
+            val activity = context
+            if (isNavigating && navState.showOnLockScreen) {
+                activity.setShowWhenLocked(true)
+                activity.setTurnScreenOn(true)
+            } else {
+                activity.setShowWhenLocked(false)
+                activity.setTurnScreenOn(false)
+            }
         }
     }
 
@@ -233,19 +253,20 @@ fun WearApp() {
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    userScrollEnabled = !navState.isExploreMode
+                    userScrollEnabled = !navState.isMapUnlocked && !navState.isRouteBuilding
                 ) { page ->
+                    val isVisible = pagerState.currentPage == page
                     if (isMapEnabled) {
                         when (page) {
                             0 -> MapPanel()
-                            1 -> SearchScreen()
-                            2 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen()
+                            1 -> SearchScreen(isVisible = isVisible)
+                            2 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
                             3 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
                         }
                     } else {
                         when (page) {
-                            0 -> SearchScreen()
-                            1 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen()
+                            0 -> SearchScreen(isVisible = isVisible)
+                            1 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
                             2 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
                         }
                     }
@@ -254,7 +275,7 @@ fun WearApp() {
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    userScrollEnabled = !navState.isExploreMode
+                    userScrollEnabled = !navState.isMapUnlocked && !navState.isRouteBuilding
                 ) { page ->
                     if (isMapEnabled) {
                         when (page) {
@@ -271,37 +292,41 @@ fun WearApp() {
                 }
             }
             
-            // Status Indicators (Anchored for circular safety)
+            // Streamlined Status Indicators
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(top = 45.dp, start = 45.dp) // Pushed inward for round watches
-                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .align(Alignment.TopCenter)
+                    .padding(top = 10.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
                 Row(
                     horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 4.dp)
                 ) {
                     if (navState.watchLocalMode) {
                         Icon(
-                            imageVector = Icons.Default.Map,
+                            imageVector = Icons.Default.SdCard,
                             contentDescription = "Offline Mode",
                             tint = Color(0xFF00E5FF),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(16.dp)
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
                     }
-                    if (navState.watchLocalMode && !navState.isPhoneConnected) {
-                        Spacer(modifier = Modifier.width(6.dp))
+                    
+                    val (connIcon, connColor) = when {
+                        navState.standaloneMode -> Icons.Default.BluetoothDisabled to Color.Red
+                        !navState.isPhoneConnected -> Icons.Default.CloudOff to Color.Red
+                        else -> Icons.Default.Bluetooth to Color(0xFF4CAF50)
                     }
-                    if (!navState.isPhoneConnected) {
-                        Icon(
-                            imageVector = Icons.Default.CloudOff,
-                            contentDescription = "Disconnected",
-                            tint = Color.Red,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
+                    
+                    Icon(
+                        imageVector = connIcon,
+                        contentDescription = "Connection Status",
+                        tint = connColor,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
 
@@ -424,7 +449,15 @@ fun WearApp() {
                                 } else {
                                     WearCommandService.stopNavigation(context)
                                 }
-                                NavigationStateHolder.update(navState.copy(isActive = false, lastRouteError = 0), force = true)
+                                NavigationStateHolder.update(navState.copy(
+                                    isActive = false, 
+                                    isNavigating = false, 
+                                    isRouteBuilding = false,
+                                    isRouteBuilt = false,
+                                    isRouteReady = false,
+                                    lastRouteError = 0,
+                                    isMapUnlocked = navState.isMapUnlockedBeforeNav
+                                ), force = true)
                             },
                             colors = ChipDefaults.secondaryChipColors(),
                             label = { Text("Cancel", style = MaterialTheme.typography.caption2) },
@@ -454,7 +487,12 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
             if (!navState.standaloneMode) {
                 WearCommandService.stopNavigation(context)
             }
-            NavigationStateHolder.update(navState.copy(isActive = false, isNavigating = false), force = true)
+            NavigationStateHolder.update(navState.copy(
+                isActive = false, 
+                isNavigating = false,
+                isRouteBuilding = false,
+                isMapUnlocked = navState.isMapUnlockedBeforeNav
+            ), force = true)
         },
         deviceRotation = deviceRotation,
         exitNum = navState.exitNum

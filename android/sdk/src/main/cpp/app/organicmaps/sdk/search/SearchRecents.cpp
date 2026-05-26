@@ -10,6 +10,9 @@ extern "C"
 {
 JNIEXPORT void Java_app_organicmaps_sdk_search_SearchRecents_nativeGetList(JNIEnv * env, jclass, jobject result)
 {
+  if (!g_framework)
+    return;
+
   auto const & items = g_framework->NativeFramework()->GetSearchAPI().GetLastSearchQueries();
   if (items.empty())
     return;
@@ -26,12 +29,18 @@ JNIEXPORT void Java_app_organicmaps_sdk_search_SearchRecents_nativeGetList(JNIEn
 JNIEXPORT void Java_app_organicmaps_sdk_search_SearchRecents_nativeAdd(JNIEnv * env, jclass, jstring locale,
                                                                        jstring query)
 {
+  if (!g_framework)
+    return;
+
   SearchRequest const sr(jni::ToNativeString(env, locale), jni::ToNativeString(env, query));
   g_framework->NativeFramework()->GetSearchAPI().SaveSearchQuery(sr);
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_search_SearchRecents_nativeClear(JNIEnv * env, jclass)
 {
+  if (!g_framework)
+    return;
+
   g_framework->NativeFramework()->GetSearchAPI().ClearSearchHistory();
 }
 }

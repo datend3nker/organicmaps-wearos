@@ -74,8 +74,12 @@ object WearMapDownloader {
         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val network = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        
+        val allowMobile = NavigationStateHolder.state.value.allowMobileData
+        
         return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || 
-               capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+               capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+               (allowMobile && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR))
     }
 
     private suspend fun downloadOverWifi(context: Context, mapId: String, downloadUrl: String) = withContext(Dispatchers.IO) {

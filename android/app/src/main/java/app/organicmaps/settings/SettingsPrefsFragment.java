@@ -42,10 +42,27 @@ import androidx.preference.PreferenceManager;
 public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements LanguagesFragment.Listener
 {
   private final SharedPreferences.OnSharedPreferenceChangeListener mSharedPreferenceChangeListener = (sharedPreferences, key) -> {
-    if (key != null && key.startsWith("pref_wear_os_"))
+    if (key == null) return;
+    if (key.startsWith("pref_wear_os_") || 
+        key.equals(getString(R.string.pref_3d)) || 
+        key.equals(getString(R.string.pref_3d_buildings)) || 
+        key.equals(getString(R.string.pref_auto_zoom)) || 
+        key.equals(getString(R.string.pref_munits)) || 
+        key.equals(getString(R.string.pref_map_style)) ||
+        key.equals("avoid_tolls") || 
+        key.equals("avoid_motorways") || 
+        key.equals("avoid_ferries") || 
+        key.equals("avoid_dirty_roads") ||
+        key.equals("transit_enabled") || 
+        key.equals("biking_enabled") || 
+        key.equals("hiking_enabled") || 
+        key.equals("isolines_enabled") ||
+        key.equals("locationSource")) {
       new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
           refreshWearOsPrefs();
+          syncWearOsPreferences();
       });
+    }
   };
 
   private final android.content.BroadcastReceiver mSettingsChangedReceiver = new android.content.BroadcastReceiver() {
@@ -101,6 +118,8 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     initSearchPrivacyPrefsCallbacks();
     initScreenSleepEnabledPrefsCallbacks();
     initShowOnLockScreenPrefsCallbacks();
+    initMapLayerPrefsCallbacks();
+    initAvoidancePrefsCallbacks();
   }
 
   private void updateVoiceInstructionsPrefsSummary()
@@ -155,27 +174,11 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
   private void refreshWearOsPrefs()
   {
     if (!isAdded()) return;
-    updateWearOsPrefsSummary();
     
     isUpdatingFromSync = true;
     try {
         // Force refresh the toggle states manually
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(requireContext());
-        
-        TwoStatePreference mapEnabledPref = findPreference(getString(R.string.pref_wear_os_map_enabled));
-        if (mapEnabledPref != null) mapEnabledPref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_map_enabled), false));
-
-        TwoStatePreference watchLocalModePref = findPreference(getString(R.string.pref_wear_os_watch_local_mode));
-        if (watchLocalModePref != null) watchLocalModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_watch_local_mode), false));
-
-        TwoStatePreference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
-        if (standaloneModePref != null) standaloneModePref.setChecked(prefs.getBoolean(getString(R.string.pref_wear_os_standalone_mode), false));
-
-        ListPreference backendPref = findPreference(getString(R.string.pref_wear_os_backend));
-        if (backendPref != null) backendPref.setValue(prefs.getString(getString(R.string.pref_wear_os_backend), "GMS"));
-
-        ListPreference downloadModePref = findPreference(getString(R.string.pref_wear_os_map_download_mode));
-        if (downloadModePref != null) downloadModePref.setValue(prefs.getString(getString(R.string.pref_wear_os_map_download_mode), "BLUETOOTH_ONLY"));
 
         // Core Map Settings
         TwoStatePreference perspectivePref = findPreference(getString(R.string.pref_3d));
@@ -425,61 +428,12 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 
   private void initWearOsPrefsCallbacks()
   {
-    androidx.preference.Preference.OnPreferenceChangeListener wearPrefsListener = (preference, newValue) -> {
-      if (isUpdatingFromSync) return true;
-      // Sync to watch when map streaming setting changes
-      // Run it slightly later so SharedPreferences gives the new saved value
-      new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
-      return true;
-    };
-
-    final Preference mapEnabledPref = findPreference(getString(R.string.pref_wear_os_map_enabled));
-    if (mapEnabledPref != null) {
-        mapEnabledPref.setOnPreferenceChangeListener(wearPrefsListener);
-    }
-
-    final Preference offlineMapsPref = findPreference(getString(R.string.pref_wear_os_watch_local_mode));
-    if (offlineMapsPref != null) {
-        offlineMapsPref.setOnPreferenceChangeListener(wearPrefsListener);
-    }
-
-    final Preference mapDownloadModePref = findPreference(getString(R.string.pref_wear_os_map_download_mode));
-    if (mapDownloadModePref != null) {
-        mapDownloadModePref.setOnPreferenceChangeListener(wearPrefsListener);
-        updateWearOsPrefsSummary();
-    }
-
-    final Preference standaloneModePref = findPreference(getString(R.string.pref_wear_os_standalone_mode));
-    if (standaloneModePref != null) {
-        standaloneModePref.setOnPreferenceChangeListener((preference, newValue) -> {
-            if (isUpdatingFromSync) return true;
-            new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
-            return true;
-        });
-    }
-
-    final Preference backendPref = findPreference(getString(R.string.pref_wear_os_backend));
-    if (backendPref != null) {
-        if (app.organicmaps.BuildConfig.FLAVOR.equals("oss")) {
-            backendPref.setVisible(false);
-        } else {
-            backendPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                if (isUpdatingFromSync) return true;
-                // Update implementation
-                app.organicmaps.wear.WearSyncService.initSyncLayer(requireContext());
-                
-                // Start/stop Bluetooth service based on selection
-                Intent bluetoothService = new Intent(requireContext(), app.organicmaps.wear.BluetoothMessageListenerService.class);
-                if ("BLUETOOTH".equals(newValue)) {
-                    requireContext().startService(bluetoothService);
-                } else {
-                    requireContext().stopService(bluetoothService);
-                }
-
-                new android.os.Handler(android.os.Looper.getMainLooper()).post(this::syncWearOsPreferences);
-                return true;
-            });
-        }
+    final Preference wearOsPref = findPreference(getString(R.string.pref_wear_os));
+    if (wearOsPref != null) {
+      wearOsPref.setOnPreferenceClickListener(preference -> {
+        getSettingsActivity().stackFragment(WearOsSettingsFragment.class, getString(R.string.prefs_group_wear_os), null);
+        return true;
+      });
     }
   }
 
@@ -693,6 +647,43 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       Framework.nativeSetShowDownloadedRegions((boolean) newValue);
       return true;
     });
+  }
+
+  private void initMapLayerPrefsCallbacks() {
+    String[] keys = {"transit_enabled", "biking_enabled", "hiking_enabled", "isolines_enabled"};
+    for (String key : keys) {
+      Preference pref = findPreference(key);
+      if (pref != null) {
+        pref.setOnPreferenceChangeListener((preference, newValue) -> {
+          if (isUpdatingFromSync) return true;
+          boolean enabled = (boolean) newValue;
+          if ("transit_enabled".equals(key)) Framework.nativeSetTransitSchemeEnabled(enabled);
+          else if ("biking_enabled".equals(key)) Framework.nativeSetCyclingLayerEnabled(enabled);
+          else if ("hiking_enabled".equals(key)) Framework.nativeSetHikingLayerEnabled(enabled);
+          else if ("isolines_enabled".equals(key)) Framework.nativeSetIsolinesLayerEnabled(enabled);
+          syncWearOsPreferences();
+          return true;
+        });
+      }
+    }
+  }
+
+  private void initAvoidancePrefsCallbacks() {
+    String[] keys = {"avoid_tolls", "avoid_motorways"};
+    for (String key : keys) {
+      Preference pref = findPreference(key);
+      if (pref != null) {
+        pref.setOnPreferenceChangeListener((preference, newValue) -> {
+          if (isUpdatingFromSync) return true;
+          app.organicmaps.sdk.settings.RoadType type = "avoid_tolls".equals(key) ? 
+              app.organicmaps.sdk.settings.RoadType.Toll : app.organicmaps.sdk.settings.RoadType.Motorway;
+          if ((boolean) newValue) RoutingOptions.addOption(type);
+          else RoutingOptions.removeOption(type);
+          syncWearOsPreferences();
+          return true;
+        });
+      }
+    }
   }
 
   private void removePreference(@NonNull String categoryKey, @NonNull Preference preference)

@@ -50,11 +50,15 @@ JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv *
 JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeAddLocalization(JNIEnv * env, jclass clazz, jstring name,
                                                                           jstring value)
 {
-  g_framework->AddString(jni::ToNativeString(env, name), jni::ToNativeString(env, value));
+  if (g_framework)
+    g_framework->AddString(jni::ToNativeString(env, name), jni::ToNativeString(env, value));
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeOnTransit(JNIEnv *, jclass, jboolean foreground)
 {
+  if (!g_framework)
+    return;
+
   if (static_cast<bool>(foreground))
     g_framework->NativeFramework()->EnterForeground();
   else

@@ -215,8 +215,10 @@
     <string name="auto">Auto</string>
     <!-- Settings «Map» category: «Perspective view» title -->
     <string name="pref_map_3d_title">Perspective view</string>
+    <string name="pref_map_3d_summary">Tilt map for a 3D perspective</string>
     <!-- Settings «Map» category: «3D buildings» title -->
     <string name="pref_map_3d_buildings_title">3D buildings</string>
+    <string name="pref_map_3d_buildings_summary">Render 3D building geometry</string>
     <!-- A message in Settings/Preferences explaining why is it not possible to enable 3D buildings when max power saving mode is enabled -->
     <string name="pref_map_3d_buildings_disabled_summary">3D buildings are disabled in power saving mode</string>
     <!-- Settings «Route» category: «Tts enabled» title -->
@@ -897,4 +899,5 @@
         <item>Google Play Services (Recommended)</item>
         <item>Bluetooth RFCOMM (Legacy/OSS)</item>
     </string-array>
+    <string name="pref_map_layers">Map layers</string>
 </resources>

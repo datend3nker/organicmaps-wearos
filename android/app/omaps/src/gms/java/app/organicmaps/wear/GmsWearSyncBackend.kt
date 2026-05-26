@@ -50,13 +50,14 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, PATH_SEARCH_SELECT, buffer.array())
     }
 
-    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, routerType: Int, poiCategoriesMask: Int) {
-        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4) + Int.SIZE_BYTES + Int.SIZE_BYTES)
+    override fun requestMapTile(context: Context, requestId: Long, minLat: Double, minLon: Double, maxLat: Double, maxLon: Double, scale: Int, routerType: Int, poiCategoriesMask: Int) {
+        val buffer = ByteBuffer.allocate(Long.SIZE_BYTES + (Double.SIZE_BYTES * 4) + Int.SIZE_BYTES + Int.SIZE_BYTES + Int.SIZE_BYTES)
         buffer.putLong(requestId)
         buffer.putDouble(minLat)
         buffer.putDouble(minLon)
         buffer.putDouble(maxLat)
         buffer.putDouble(maxLon)
+        buffer.putInt(scale)
         buffer.putInt(routerType)
         buffer.putInt(poiCategoriesMask)
         sendMessage(context, PATH_MAP_TILE_REQUEST, buffer.array())
@@ -82,6 +83,11 @@ class GmsWearSyncBackend : IWearSyncBackend {
         val mUnits = prefs.getInt("pref_munits", 0)
         val mapStyle = prefs.getString("pref_map_style", "default")
 
+        val transitEnabled = prefs.getBoolean("transit_enabled", false)
+        val bikingEnabled = prefs.getBoolean("biking_enabled", false)
+        val hikingEnabled = prefs.getBoolean("hiking_enabled", false)
+        val isolinesEnabled = prefs.getBoolean("isolines_enabled", false)
+
         val avoidTolls = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Toll)
         val avoidMotorways = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Motorway)
         val avoidFerries = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Ferry)
@@ -103,6 +109,10 @@ class GmsWearSyncBackend : IWearSyncBackend {
         map.putBoolean("isAutoZoomEnabled", isAutoZoomEnabled)
         map.putInt("measurementUnits", mUnits)
         map.putString("mapStyle", mapStyle ?: "default")
+        map.putBoolean("transitEnabled", transitEnabled)
+        map.putBoolean("bikingEnabled", bikingEnabled)
+        map.putBoolean("hikingEnabled", hikingEnabled)
+        map.putBoolean("isolinesEnabled", isolinesEnabled)
         map.putBoolean("avoidTolls", avoidTolls)
         map.putBoolean("avoidMotorways", avoidMotorways)
         map.putBoolean("avoidFerries", avoidFerries)

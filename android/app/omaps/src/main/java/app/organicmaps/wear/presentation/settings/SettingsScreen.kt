@@ -17,26 +17,22 @@ import kotlinx.coroutines.delay
 @Composable
 fun SettingsScreen() {
     var showPoiSettings by remember { mutableStateOf(false) }
-    var showRoutingOptions by remember { mutableStateOf(false) }
     var showLayerSettings by remember { mutableStateOf(false) }
 
     if (showPoiSettings) {
         PoiSettingsScreen(onBack = { showPoiSettings = false })
-    } else if (showRoutingOptions) {
-        RoutingOptionsScreen(onBack = { showRoutingOptions = false })
     } else if (showLayerSettings) {
         LayerSettingsScreen(onBack = { showLayerSettings = false })
     } else {
         MainSettingsList(
             onOpenPoiSettings = { showPoiSettings = true },
-            onOpenRoutingOptions = { showRoutingOptions = true },
             onOpenLayerSettings = { showLayerSettings = true }
         )
     }
 }
 
 @Composable
-fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> Unit, onOpenLayerSettings: () -> Unit) {
+fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val navState by NavigationStateHolder.state.collectAsState()
@@ -52,11 +48,9 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
     val mapDownloadMode = navState.mapDownloadMode
     val backend = navState.backend
     
-    val is3dEnabled = navState.is3dEnabled
-    val is3dBuildingsEnabled = navState.is3dBuildingsEnabled
-    val isAutoZoomEnabled = navState.isAutoZoomEnabled
-    val measurementUnits = navState.measurementUnits
     val mapStyle = navState.mapStyle
+    val locationSource = navState.locationSource
+    val measurementUnits = navState.measurementUnits
 
     // Request fresh settings when screen is opened
     LaunchedEffect(Unit) {
@@ -102,151 +96,9 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
             )
         }
 
-        item {
-            Chip(
-                onClick = onOpenPoiSettings,
-                label = { Text("Map Details") },
-                secondaryLabel = { Text("Configure POIs") },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                colors = ChipDefaults.secondaryChipColors()
-            )
-        }
-
-        item {
-            Chip(
-                onClick = onOpenLayerSettings,
-                label = { Text("Map Layers") },
-                secondaryLabel = { Text("Subway, Biking, Hiking") },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                colors = ChipDefaults.secondaryChipColors()
-            )
-        }
-
-        item {
-            ToggleChip(
-                checked = is3dEnabled,
-                onCheckedChange = { newVal ->
-                    NavigationStateHolder.update { current ->
-                        prefs.edit().putBoolean("pref_3d", newVal).apply()
-                        try {
-                            app.organicmaps.sdk.Framework.nativeSet3dMode(newVal, current.is3dBuildingsEnabled)
-                        } catch (_: Throwable) {}
-                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
-                        current.copy(
-                            is3dEnabled = newVal,
-                            lastSettingsInteractionTime = System.currentTimeMillis()
-                        )
-                    }
-                },
-                label = { Text("3D View") },
-                toggleControl = {
-                    Switch(checked = is3dEnabled, enabled = true)
-                },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-            )
-        }
-
-        item {
-            ToggleChip(
-                checked = is3dBuildingsEnabled,
-                onCheckedChange = { newVal ->
-                    NavigationStateHolder.update { current ->
-                        prefs.edit().putBoolean("pref_3d_buildings", newVal).apply()
-                        try {
-                            app.organicmaps.sdk.Framework.nativeSet3dMode(current.is3dEnabled, newVal)
-                        } catch (_: Throwable) {}
-                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
-                        current.copy(
-                            is3dBuildingsEnabled = newVal,
-                            lastSettingsInteractionTime = System.currentTimeMillis()
-                        )
-                    }
-                },
-                label = { Text("3D Buildings") },
-                toggleControl = {
-                    Switch(checked = is3dBuildingsEnabled, enabled = is3dEnabled)
-                },
-                enabled = is3dEnabled,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-            )
-        }
-
-        item {
-            ToggleChip(
-                checked = isAutoZoomEnabled,
-                onCheckedChange = { newVal ->
-                    NavigationStateHolder.update { current ->
-                        prefs.edit().putBoolean("pref_auto_zoom", newVal).apply()
-                        try {
-                            app.organicmaps.sdk.Framework.nativeSetAutoZoomEnabled(newVal)
-                        } catch (_: Throwable) {}
-                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
-                        current.copy(
-                            isAutoZoomEnabled = newVal,
-                            lastSettingsInteractionTime = System.currentTimeMillis()
-                        )
-                    }
-                },
-                label = { Text("Auto Zoom") },
-                toggleControl = {
-                    Switch(checked = isAutoZoomEnabled, enabled = true)
-                },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-            )
-        }
-
-        item {
-            val unitLabels = listOf("Metric (km)", "Imperial (mi)")
-            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                Text("Units", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
-                Chip(
-                    onClick = {
-                        NavigationStateHolder.update { current ->
-                            val nextUnits = (current.measurementUnits + 1) % 2
-                            prefs.edit().putInt("pref_munits", nextUnits).apply()
-                            // Framework units setup is usually done via UnitLocale.setUnits which calls native code
-                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
-                            current.copy(
-                                measurementUnits = nextUnits,
-                                lastSettingsInteractionTime = System.currentTimeMillis()
-                            )
-                        }
-                    },
-                    label = { Text(unitLabels[measurementUnits.coerceIn(0, 1)]) },
-                    secondaryLabel = { Text("Tap to change") },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ChipDefaults.secondaryChipColors()
-                )
-            }
-        }
-
-        item {
-            val styleLabels = listOf("Day", "Night", "Auto", "Nav Auto")
-            val styleValues = listOf("default", "night", "auto", "nav_auto")
-            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                Text("Map Style", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
-                Chip(
-                    onClick = {
-                        NavigationStateHolder.update { current ->
-                            val currentIdx = styleValues.indexOf(current.mapStyle).coerceAtLeast(0)
-                            val nextIdx = (currentIdx + 1) % styleValues.size
-                            val nextStyle = styleValues[nextIdx]
-                            prefs.edit().putString("pref_map_style", nextStyle).apply()
-                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
-                            current.copy(
-                                mapStyle = nextStyle,
-                                lastSettingsInteractionTime = System.currentTimeMillis()
-                            )
-                        }
-                    },
-                    label = { Text(styleLabels[styleValues.indexOf(mapStyle).coerceAtLeast(0)]) },
-                    secondaryLabel = { Text("Tap to change") },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ChipDefaults.secondaryChipColors()
-                )
-            }
-        }
-
+        // --- DISPLAY GROUP ---
+        item { SettingHeader("Display") }
+        
         item {
             ToggleChip(
                 checked = mapEnabled,
@@ -263,36 +115,70 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
                 label = { Text("Map UI") },
                 secondaryLabel = { Text(if (mapEnabled) "Map is visible" else "Map is hidden") },
                 toggleControl = {
-                    Switch(checked = mapEnabled, enabled = !standaloneMode)
+                    Switch(checked = mapEnabled, enabled = true)
                 },
-                enabled = !standaloneMode,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )
         }
 
         item {
             ToggleChip(
-                checked = watchLocalMode,
+                checked = navState.showOnLockScreen,
                 onCheckedChange = { newVal ->
                     NavigationStateHolder.update { current ->
-                        prefs.edit().putBoolean("watchLocalMode", newVal).apply()
-                        if (!newVal) prefs.edit().putBoolean("forceWatchLocalMode", false).apply()
-                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        prefs.edit().putBoolean("pref_show_on_lock_screen", newVal).apply()
                         current.copy(
-                            watchLocalMode = newVal,
+                            showOnLockScreen = newVal,
                             lastSettingsInteractionTime = System.currentTimeMillis()
                         )
                     }
                 },
-                label = { Text("Local Maps") },
-                secondaryLabel = { Text(if (watchLocalMode) "Using watch storage" else "Streaming from phone") },
+                label = { Text("Show on Lock Screen") },
+                secondaryLabel = { Text("Display nav when locked") },
                 toggleControl = {
-                    Switch(checked = watchLocalMode, enabled = !standaloneMode)
+                    Switch(checked = navState.showOnLockScreen, enabled = true)
                 },
-                enabled = !standaloneMode,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )
         }
+
+        item {
+            val styleLabels = listOf("Day", "Night", "Auto", "Nav Auto")
+            val styleValues = listOf("default", "night", "auto", "nav_auto")
+            Chip(
+                onClick = {
+                    NavigationStateHolder.update { current ->
+                        val currentIdx = styleValues.indexOf(current.mapStyle).coerceAtLeast(0)
+                        val nextIdx = (currentIdx + 1) % styleValues.size
+                        val nextStyle = styleValues[nextIdx]
+                        prefs.edit().putString("pref_map_style", nextStyle).apply()
+                        app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                        current.copy(
+                            mapStyle = nextStyle,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
+                },
+                label = { Text("Map Style") },
+                secondaryLabel = { Text(styleLabels[styleValues.indexOf(mapStyle).coerceAtLeast(0)]) },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                colors = ChipDefaults.secondaryChipColors()
+            )
+        }
+
+        item {
+            Chip(
+                onClick = onOpenLayerSettings,
+                label = { Text("Map Layers") },
+                secondaryLabel = { Text("Subway, Biking, Hiking") },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                colors = ChipDefaults.secondaryChipColors()
+            )
+        }
+
+        // --- CONNECTIVITY GROUP ---
+        item { Spacer(modifier = Modifier.height(8.dp)) }
+        item { SettingHeader("Connectivity") }
 
         item {
             ToggleChip(
@@ -303,14 +189,12 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
                         app.organicmaps.wear.WearCommandService.syncPreferences(context)
                         current.copy(
                             standaloneMode = newVal,
-                            mapEnabled = if (newVal) true else current.mapEnabled,
-                            watchLocalMode = if (newVal) true else current.watchLocalMode,
                             lastSettingsInteractionTime = System.currentTimeMillis()
                         )
                     }
                 },
-                label = { Text("Standalone") },
-                secondaryLabel = { Text(if (standaloneMode) "Independent mode" else "Connected to phone") },
+                label = { Text("Standalone Mode") },
+                secondaryLabel = { Text(if (standaloneMode) "Disconnected from phone" else "Connected to phone") },
                 toggleControl = {
                     Switch(checked = standaloneMode, enabled = true)
                 },
@@ -318,52 +202,79 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
             )
         }
 
-        item {
-            ToggleChip(
-                checked = allowMobileData,
-                onCheckedChange = { newVal ->
-                    NavigationStateHolder.update { current ->
-                        prefs.edit().putBoolean("pref_mobile_data", newVal).apply()
-                        try {
-                            app.organicmaps.sdk.util.Config.setUseMobileDataSettings(
-                                if (newVal) app.organicmaps.sdk.util.NetworkPolicy.Type.ALWAYS 
-                                else app.organicmaps.sdk.util.NetworkPolicy.Type.NEVER
+        if (!standaloneMode) {
+            item {
+                ToggleChip(
+                    checked = watchLocalMode,
+                    onCheckedChange = { newVal ->
+                        NavigationStateHolder.update { current ->
+                            prefs.edit().putBoolean("watchLocalMode", newVal).apply()
+                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                            current.copy(
+                                watchLocalMode = newVal,
+                                lastSettingsInteractionTime = System.currentTimeMillis()
                             )
-                        } catch (_: Throwable) {}
-                        current.copy(
-                            allowMobileData = newVal,
-                            lastSettingsInteractionTime = System.currentTimeMillis()
-                        )
-                    }
-                },
-                label = { Text("Mobile Data") },
-                secondaryLabel = { Text("Use LTE if available") },
-                toggleControl = {
-                    Switch(checked = allowMobileData, enabled = true)
-                },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-            )
-        }
+                        }
+                    },
+                    label = { Text("Local Maps") },
+                    secondaryLabel = { Text(if (watchLocalMode) "Using watch storage" else "Streaming from phone") },
+                    toggleControl = {
+                        Switch(checked = watchLocalMode, enabled = true)
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                )
+            }
 
-        item {
-            ToggleChip(
-                checked = forceGuiButtons,
-                onCheckedChange = { newVal ->
-                    NavigationStateHolder.update { current ->
-                        prefs.edit().putBoolean("pref_force_gui_buttons", newVal).apply()
-                        current.copy(
-                            forceGuiButtons = newVal,
-                            lastSettingsInteractionTime = System.currentTimeMillis()
-                        )
-                    }
-                },
-                label = { Text("Always Show Controls") },
-                secondaryLabel = { Text("Ignore hardware buttons") },
-                toggleControl = {
-                    Switch(checked = forceGuiButtons, enabled = true)
-                },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-            )
+            item {
+                ToggleChip(
+                    checked = allowMobileData,
+                    onCheckedChange = { newVal ->
+                        NavigationStateHolder.update { current ->
+                            prefs.edit().putBoolean("pref_mobile_data", newVal).apply()
+                            if (newVal) {
+                                try {
+                                    app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                                } catch (_: Throwable) {}
+                            }
+                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                            current.copy(
+                                allowMobileData = newVal,
+                                lastSettingsInteractionTime = System.currentTimeMillis()
+                            )
+                        }
+                    },
+                    label = { Text("Mobile Data") },
+                    secondaryLabel = { Text(if (allowMobileData) "Enabled for downloads" else "Disabled") },
+                    toggleControl = {
+                        Switch(checked = allowMobileData, enabled = true)
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                )
+            }
+
+            item {
+                val sourceLabels = listOf("Auto (Fused)", "Phone Only")
+                val sourceValues = listOf("AUTO", "PHONE_ONLY")
+                Chip(
+                    onClick = {
+                        NavigationStateHolder.update { current ->
+                            val currentIdx = sourceValues.indexOf(current.locationSource).coerceAtLeast(0)
+                            val nextIdx = (currentIdx + 1) % sourceValues.size
+                            val nextSource = sourceValues[nextIdx]
+                            prefs.edit().putString("locationSource", nextSource).apply()
+                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                            current.copy(
+                                locationSource = nextSource,
+                                lastSettingsInteractionTime = System.currentTimeMillis()
+                            )
+                        }
+                    },
+                    label = { Text("Location Source") },
+                    secondaryLabel = { Text(sourceLabels[sourceValues.indexOf(locationSource).coerceAtLeast(0)]) },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    colors = ChipDefaults.secondaryChipColors()
+                )
+            }
         }
 
         item {
@@ -379,8 +290,8 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
                         )
                     }
                 },
-                label = { Text("Auto-Download") },
-                secondaryLabel = { Text("Fetch maps for routes") },
+                label = { Text(if (backend == "GMS") "Auto-Sync" else "Auto-Download") },
+                secondaryLabel = { Text(if (backend == "GMS") "Request maps from phone" else "Fetch maps for routes") },
                 toggleControl = {
                     Switch(checked = autoDownload, enabled = true)
                 },
@@ -388,76 +299,49 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenRoutingOptions: () -> 
             )
         }
 
-        item {
-            val modes = listOf("BLUETOOTH_ONLY", "AUTO", "WIFI_ONLY")
-            val modeLabels = listOf("Always Bluetooth", "Auto (Wi-Fi/BT)", "Wi-Fi Only")
-            
-            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                Text("Map Sync Mode", style = MaterialTheme.typography.caption2, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
-                Chip(
-                    onClick = {
-                        NavigationStateHolder.update { current ->
-                            val currentIdx = modes.indexOf(current.mapDownloadMode).coerceAtLeast(0)
-                            val nextIdx = (currentIdx + 1) % modes.size
-                            val nextMode = modes[nextIdx]
-                            prefs.edit().putString("mapDownloadMode", nextMode).apply()
-                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
-                            current.copy(
-                                mapDownloadMode = nextMode,
-                                lastSettingsInteractionTime = System.currentTimeMillis()
-                            )
-                        }
-                    },
-                    label = { Text(modeLabels[modes.indexOf(mapDownloadMode).coerceAtLeast(0)]) },
-                    secondaryLabel = { Text("Tap to change") },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ChipDefaults.secondaryChipColors()
-                )
-            }
-        }
+        // --- ROUTING GROUP ---
+        item { Spacer(modifier = Modifier.height(8.dp)) }
+        item { SettingHeader("Routing & General") }
 
-        if (app.organicmaps.wear.BuildConfig.FLAVOR != "oss") {
-            item {
-                Text(
-                    "Sync Backend",
-                    style = MaterialTheme.typography.caption2,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-            item {
-                ToggleChip(
-                    checked = backend == "GMS",
-                    onCheckedChange = {
-                        val newBackend = if (it) "GMS" else "BLUETOOTH"
-                        prefs.edit().putString("pref_wear_os_backend", newBackend).apply()
-                        NavigationStateHolder.update(navState.copy(backend = newBackend))
-                        
-                        // 1. Sync preferences with OLD backend so phone knows to switch
+        item {
+            val unitLabels = listOf("Metric (km)", "Imperial (mi)")
+            Chip(
+                onClick = {
+                    NavigationStateHolder.update { current ->
+                        val nextUnits = (current.measurementUnits + 1) % 2
+                        prefs.edit().putInt("pref_munits", nextUnits).apply()
                         app.organicmaps.wear.WearCommandService.syncPreferences(context)
-                        
-                        scope.launch {
-                            delay(200)
-                            // 2. Re-initialize watch's internal backend
-                            app.organicmaps.wear.WearCommandService.initBackend(context)
-                            // 3. Sync again with NEW backend
-                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
-                            
-                            val intent = Intent(context, app.organicmaps.wear.BluetoothWearDataListenerService::class.java)
-                            if (newBackend == "BLUETOOTH") {
-                                context.startService(intent)
-                            } else if (app.organicmaps.wear.BuildConfig.FLAVOR != "oss") {
-                                context.stopService(intent)
-                            }
-                        }
-                    },
-                    label = { Text("Google Services") },
-                    secondaryLabel = { Text(if (backend == "GMS") "Recommended" else "Using Bluetooth") },
-                    toggleControl = {
-                        Checkbox(checked = backend == "GMS", enabled = true)
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                )
-            }
+                        current.copy(
+                            measurementUnits = nextUnits,
+                            lastSettingsInteractionTime = System.currentTimeMillis()
+                        )
+                    }
+                },
+                label = { Text("Measurement Units") },
+                secondaryLabel = { Text(unitLabels[measurementUnits.coerceIn(0, 1)]) },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                colors = ChipDefaults.secondaryChipColors()
+            )
+        }
+        
+        item {
+            Chip(
+                onClick = onOpenPoiSettings,
+                label = { Text("POI Visibility") },
+                secondaryLabel = { Text("Choose shown categories") },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                colors = ChipDefaults.secondaryChipColors()
+            )
         }
     }
+}
+
+@Composable
+fun SettingHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.caption1,
+        color = Color.Gray,
+        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+    )
 }

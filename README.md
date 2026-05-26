@@ -31,7 +31,15 @@ Organic Maps is the ultimate companion app for travellers, tourists, hikers, and
 - Dark Mode to protect your eyes
 - Countries and regions don't take a lot of space
 - Free and open-source
-- **Full-featured Wear OS Companion**: Offline maps, independent search, standalone navigation, and manual interaction (panning/zooming) directly on your wrist
+- **Full-featured Wear OS Companion**:
+  - **Standalone & Companion Modes**: Use it independently or paired with your phone
+  - **Bluetooth Sync**: Uses "Nearby Devices" permission for zero-config syncing between watch and phone
+  - **Offline Maps**: Download regions directly to your watch or stream them from your phone
+  - **Energy Saving**: "Phone Only" location mode to save watch battery in companion mode
+  - **Live Sync**: All map and routing settings sync bidirectionally between devices
+  - **Hardware Support**: Rotary crown zoom, physical button shortcuts, and stabilized compass rotation
+  - **Search & Nav**: Independent offline search and turn-by-turn navigation with local GPS support
+  - **Lock Screen**: Navigation instructions appear even when the watch is locked (configurable)
 
 ## Why Organic?
 

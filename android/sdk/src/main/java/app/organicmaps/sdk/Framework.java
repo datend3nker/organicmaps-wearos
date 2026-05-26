@@ -316,6 +316,8 @@ public class Framework
 
   public static native boolean nativeIsDownloadedMapAtLocation(double lat, double lon);
 
+  public static native boolean nativeIsWorldMapDownloaded();
+
   @Nullable
   public static native MapObject nativeGetMapObjectForLocation(double lat, double lon);
 

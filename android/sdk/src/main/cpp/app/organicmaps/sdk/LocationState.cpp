@@ -17,7 +17,8 @@ static void LocationStateModeChanged(location::EMyPositionMode mode, std::shared
 //  public static void nativeSwitchToNextMode();
 JNIEXPORT void Java_app_organicmaps_sdk_location_LocationState_nativeSwitchToNextMode(JNIEnv * env, jclass clazz)
 {
-  g_framework->SwitchMyPositionNextMode();
+  if (g_framework)
+    g_framework->SwitchMyPositionNextMode();
 }
 
 // private static int nativeGetMode();
@@ -25,7 +26,9 @@ JNIEXPORT jint Java_app_organicmaps_sdk_location_LocationState_nativeGetMode(JNI
 {
   // GetMyPositionMode() is initialized only after drape creation.
   // https://github.com/organicmaps/organicmaps/issues/1128#issuecomment-1784435190
-  ASSERT(g_framework && g_framework->IsDrapeEngineCreated(), ());
+  if (!g_framework || !g_framework->IsDrapeEngineCreated())
+    return 0;
+
   return g_framework->GetMyPositionMode();
 }
 
@@ -33,20 +36,25 @@ JNIEXPORT jint Java_app_organicmaps_sdk_location_LocationState_nativeGetMode(JNI
 JNIEXPORT void Java_app_organicmaps_sdk_location_LocationState_nativeSetListener(JNIEnv * env, jclass clazz,
                                                                                  jobject listener)
 {
-  g_framework->SetMyPositionModeListener(
-      std::bind(&LocationStateModeChanged, std::placeholders::_1, jni::make_global_ref(listener)));
+  if (g_framework)
+  {
+    g_framework->SetMyPositionModeListener(
+        std::bind(&LocationStateModeChanged, std::placeholders::_1, jni::make_global_ref(listener)));
+  }
 }
 
 //  public static void nativeRemoveListener();
 JNIEXPORT void Java_app_organicmaps_sdk_location_LocationState_nativeRemoveListener(JNIEnv * env, jclass clazz)
 {
-  g_framework->SetMyPositionModeListener(location::TMyPositionModeChanged());
+  if (g_framework)
+    g_framework->SetMyPositionModeListener(location::TMyPositionModeChanged());
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_location_LocationState_nativeOnLocationError(JNIEnv * env, jclass clazz,
                                                                                      int errorCode)
 {
-  g_framework->OnLocationError(errorCode);
+  if (g_framework)
+    g_framework->OnLocationError(errorCode);
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_location_LocationState_nativeLocationUpdated(JNIEnv * env, jclass clazz,
@@ -77,7 +85,8 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_LocationState_nativeLocationUpd
   if (speed > 0.0)
     info.m_speed = speed;
 
-  g_framework->OnLocationUpdated(info);
+  if (g_framework)
+    g_framework->OnLocationUpdated(info);
   GpsTracker::Instance().OnLocationUpdated(info);
 }
 }  // extern "C"

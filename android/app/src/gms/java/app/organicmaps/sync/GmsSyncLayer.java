@@ -45,6 +45,7 @@ public class GmsSyncLayer implements ISyncLayer {
         String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
         boolean autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true);
         int poiMask = prefs.getInt("poiCategoriesMask", 0x3F);
+        String locationSource = prefs.getString("locationSource", "AUTO");
 
         // Map-specific settings
         boolean is3dEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_3d), true);
@@ -52,6 +53,12 @@ public class GmsSyncLayer implements ISyncLayer {
         boolean isAutoZoomEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_auto_zoom), true);
         int mUnits = Integer.parseInt(prefs.getString(context.getString(app.organicmaps.R.string.pref_munits), "0"));
         String mapStyle = prefs.getString(context.getString(app.organicmaps.R.string.pref_map_style), "default");
+
+        // Map Layers
+        boolean transitEnabled = app.organicmaps.sdk.Framework.nativeIsTransitSchemeEnabled();
+        boolean bikingEnabled = app.organicmaps.sdk.Framework.nativeIsCyclingLayerEnabled();
+        boolean hikingEnabled = app.organicmaps.sdk.Framework.nativeIsHikingLayerEnabled();
+        boolean isolinesEnabled = app.organicmaps.sdk.Framework.nativeIsIsolinesLayerEnabled();
 
         // Routing options
         boolean avoidTolls = RoutingOptions.hasOption(RoadType.Toll);
@@ -73,10 +80,15 @@ public class GmsSyncLayer implements ISyncLayer {
         map.putBoolean("isAutoZoomEnabled", isAutoZoomEnabled);
         map.putInt("measurementUnits", mUnits);
         map.putString("mapStyle", mapStyle);
+        map.putBoolean("transitEnabled", transitEnabled);
+        map.putBoolean("bikingEnabled", bikingEnabled);
+        map.putBoolean("hikingEnabled", hikingEnabled);
+        map.putBoolean("isolinesEnabled", isolinesEnabled);
         map.putBoolean("avoidTolls", avoidTolls);
         map.putBoolean("avoidMotorways", avoidMotorways);
         map.putBoolean("avoidFerries", avoidFerries);
         map.putBoolean("avoidUnpaved", avoidUnpaved);
+        map.putString("locationSource", locationSource);
         map.putLong("timestamp", System.currentTimeMillis());
         
         com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
@@ -289,6 +301,76 @@ public class GmsSyncLayer implements ISyncLayer {
         com.google.android.gms.wearable.PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         putDataReq.setUrgent();
         Wearable.getDataClient(context).putDataItem(putDataReq);
+    }
+
+    @Override
+    public void parsePreferences(@NonNull Context context, @NonNull byte[] data, @NonNull android.content.SharedPreferences prefs) {
+        DataMap dataMap = DataMap.fromByteArray(data);
+        applyPreferencesFromDataMap(context, dataMap, prefs);
+    }
+
+    public void applyPreferencesFromDataMap(@NonNull Context context, @NonNull DataMap dataMap, @NonNull android.content.SharedPreferences prefs) {
+        long timestamp = dataMap.getLong("timestamp", 0);
+        long lastApplied = prefs.getLong("pref_wear_os_last_sync_timestamp", 0);
+        if (timestamp > 0 && timestamp < lastApplied) return;
+
+        boolean mapEnabled = dataMap.getBoolean("mapEnabled", false);
+        boolean watchLocalMode = dataMap.getBoolean("watchLocalMode", false);
+        boolean standaloneMode = dataMap.getBoolean("standaloneMode", false);
+        String backend = dataMap.getString("backend", "GMS");
+        String mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY");
+        String locationSource = dataMap.getString("locationSource", "AUTO");
+        int poiMask = dataMap.getInt("poiCategoriesMask", 0x3F);
+
+        boolean is3dEnabled = dataMap.getBoolean("is3dEnabled", true);
+        boolean is3dBuildingsEnabled = dataMap.getBoolean("is3dBuildingsEnabled", true);
+        boolean isAutoZoomEnabled = dataMap.getBoolean("isAutoZoomEnabled", true);
+        int mUnits = dataMap.getInt("measurementUnits", 0);
+        String mapStyle = dataMap.getString("mapStyle", "default");
+
+        boolean transitEnabled = dataMap.getBoolean("transitEnabled", false);
+        boolean bikingEnabled = dataMap.getBoolean("bikingEnabled", false);
+        boolean hikingEnabled = dataMap.getBoolean("hikingEnabled", false);
+        boolean isolinesEnabled = dataMap.getBoolean("isolinesEnabled", false);
+
+        boolean avoidTolls = dataMap.getBoolean("avoidTolls", false);
+        boolean avoidMotorways = dataMap.getBoolean("avoidMotorways", false);
+        boolean avoidFerries = dataMap.getBoolean("avoidFerries", false);
+        boolean avoidUnpaved = dataMap.getBoolean("avoidUnpaved", false);
+
+        prefs.edit()
+            .putLong("pref_wear_os_last_sync_timestamp", timestamp)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), mapEnabled)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), watchLocalMode)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), standaloneMode)
+            .putString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), backend)
+            .putString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), mapDownloadMode)
+            .putString("locationSource", locationSource)
+            .putInt("poiCategoriesMask", poiMask)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_3d), is3dEnabled)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_3d_buildings), is3dBuildingsEnabled)
+            .putBoolean(context.getString(app.organicmaps.R.string.pref_auto_zoom), isAutoZoomEnabled)
+            .putString(context.getString(app.organicmaps.R.string.pref_munits), String.valueOf(mUnits))
+            .putString(context.getString(app.organicmaps.R.string.pref_map_style), mapStyle)
+            .putBoolean("avoid_tolls", avoidTolls)
+            .putBoolean("avoid_motorways", avoidMotorways)
+            .putBoolean("avoid_ferries", avoidFerries)
+            .putBoolean("avoid_dirty_roads", avoidUnpaved)
+            .putBoolean("transit_enabled", transitEnabled)
+            .putBoolean("biking_enabled", bikingEnabled)
+            .putBoolean("hiking_enabled", hikingEnabled)
+            .putBoolean("isolines_enabled", isolinesEnabled)
+            .apply();
+
+        app.organicmaps.sdk.Framework.nativeSetTransitSchemeEnabled(transitEnabled);
+        app.organicmaps.sdk.Framework.nativeSetCyclingLayerEnabled(bikingEnabled);
+        app.organicmaps.sdk.Framework.nativeSetHikingLayerEnabled(hikingEnabled);
+        app.organicmaps.sdk.Framework.nativeSetIsolinesLayerEnabled(isolinesEnabled);
+
+        if (avoidTolls) RoutingOptions.addOption(RoadType.Toll); else RoutingOptions.removeOption(RoadType.Toll);
+        if (avoidMotorways) RoutingOptions.addOption(RoadType.Motorway); else RoutingOptions.removeOption(RoadType.Motorway);
+        if (avoidFerries) RoutingOptions.addOption(RoadType.Ferry); else RoutingOptions.removeOption(RoadType.Ferry);
+        if (avoidUnpaved) RoutingOptions.addOption(RoadType.Dirty); else RoutingOptions.removeOption(RoadType.Dirty);
     }
 
     @Override

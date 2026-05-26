@@ -258,6 +258,12 @@ static void PutItemsToList(
   storage::NodeAttrs attrs;
   for (storage::CountryId const & child : children)
   {
+    if (!GetStorage().IsNode(child))
+    {
+      LOG(LWARNING, ("CountryId =", child, "not found in m_countries."));
+      continue;
+    }
+
     GetStorage().GetNodeAttrs(child, attrs);
 
     if (predicate && !predicate(child, attrs))
@@ -338,7 +344,13 @@ JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeSearchItems(
     if (match)
     {
       storage::NodeAttrs attrs;
-      GetStorage().GetNodeAttrs(id, attrs);
+      auto const & storage = GetStorage();
+      if (!storage.IsNode(id))
+      {
+        LOG(LWARNING, ("CountryId =", id, "not found in m_countries."));
+        return;
+      }
+      storage.GetNodeAttrs(id, attrs);
 
       using SLR = jni::TScopedLocalRef;
       SLR const item(env, ciBuilder.Create(env, SLR(env, jni::ToJavaString(env, id))));
@@ -366,8 +378,16 @@ JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeGetAttribute
   auto const & ciBuilder = CountryItemBuilder::Instance(env);
   jstring id = static_cast<jstring>(env->GetObjectField(item, ciBuilder.m_Id));
 
+  auto const & storage = GetStorage();
+  auto const countryId = jni::ToNativeString(env, id);
+  if (!storage.IsNode(countryId))
+  {
+    LOG(LWARNING, ("CountryId =", countryId, "not found in m_countries."));
+    return;
+  }
+
   storage::NodeAttrs attrs;
-  GetStorage().GetNodeAttrs(jni::ToNativeString(env, id), attrs);
+  storage.GetNodeAttrs(countryId, attrs);
 
   UpdateItem(env, item, attrs);
 }
@@ -610,26 +630,27 @@ JNIEXPORT jint Java_app_organicmaps_sdk_downloader_MapManager_nativeGetOverallPr
 // static boolean nativeIsAutoretryFailed();
 JNIEXPORT jboolean Java_app_organicmaps_sdk_downloader_MapManager_nativeIsAutoretryFailed(JNIEnv * env, jclass clazz)
 {
-  return g_framework->IsAutoRetryDownloadFailed();
+  return g_framework ? g_framework->IsAutoRetryDownloadFailed() : false;
 }
 
 // static boolean nativeIsDownloadOn3gEnabled();
 JNIEXPORT jboolean Java_app_organicmaps_sdk_downloader_MapManager_nativeIsDownloadOn3gEnabled(JNIEnv * env,
                                                                                               jclass clazz)
 {
-  return g_framework->IsDownloadOn3gEnabled();
+  return g_framework ? g_framework->IsDownloadOn3gEnabled() : false;
 }
 
 // static void nativeEnableDownloadOn3g();
 JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeEnableDownloadOn3g(JNIEnv * env, jclass clazz)
 {
-  g_framework->EnableDownloadOn3g();
+  if (g_framework)
+    g_framework->EnableDownloadOn3g();
 }
 
 // static @Nullable String nativeGetSelectedCountry();
 JNIEXPORT jstring Java_app_organicmaps_sdk_downloader_MapManager_nativeGetSelectedCountry(JNIEnv * env, jclass clazz)
 {
-  if (!frm()->HasPlacePageInfo())
+  if (!g_framework || !frm()->HasPlacePageInfo())
     return nullptr;
 
   storage::CountryId const & res = g_framework->GetPlacePageInfo().GetCountryId();

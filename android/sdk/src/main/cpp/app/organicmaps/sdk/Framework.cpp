@@ -1102,15 +1102,12 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
   if (rect.IsValid())
   {
     int featuresCount = 0;
-    // DYNAMIC DETAIL STRATEGY: Higher limits at high zoom levels for maximum POI density
-    int maxFeatures = 1500;
-    if (scale >= 17) maxFeatures = 5000;
-    else if (scale >= 15) maxFeatures = 2500;
+    // SMART DETAIL STRATEGY: Respect zoom-level limits and keep watch performance stable
+    int maxFeatures = 500;
+    if (scale >= 18) maxFeatures = 4000;
+    else if (scale >= 16) maxFeatures = 2000;
+    else if (scale >= 14) maxFeatures = 1000;
 
-    // PRIORITY RENDERING: We perform multiple passes to ensure Roads are never dropped
-    // Pass 1: Highways (Roads)
-    // Pass 2: Areas (Water, Greenery, Buildings)
-    // Pass 3: Points (POIs)
     for (int pass = 1; pass <= 3; ++pass) {
       frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
           if (featuresCount >= maxFeatures) return;
@@ -1118,17 +1115,33 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
           feature::TypesHolder types(ft);
           auto geomType = ft.GetGeomType();
 
-          // Pass 1: Only Lines (Roads)
+          // Pass 1: Roads, Pass 2: Areas, Pass 3: POIs
           if (pass == 1 && geomType != feature::GeomType::Line) return;
-          // Pass 2: Only Areas
           if (pass == 2 && geomType != feature::GeomType::Area) return;
-          // Pass 3: Only Points
           if (pass == 3 && geomType != feature::GeomType::Point) return;
 
-          // Relaxed visibility check to ensure more features are extracted for the watch
-          if (feature::GetMinDrawableScaleClassifOnly(types) > (scale + 1)) return;
+          // STRICT VISIBILITY CHECK: Hide small details when zoomed out
+          int minScale = feature::GetMinDrawableScaleClassifOnly(types);
+          if (minScale > scale) return;
+
+          // DENSITY FILTER FOR POIs (Pass 3)
+          if (pass == 3) {
+              // Only high-priority POIs (stations, hotels, tourism) shown at mid-zoom
+              // Minor POIs (benches, fountains, shops) only shown at zoom 16+
+              if (scale < 16) {
+                  bool isHighPriority = ftypes::IsRailwayStationChecker::Instance()(types) ||
+                                       ftypes::IsSubwayStationChecker::Instance()(types) ||
+                                       ftypes::IsAirportChecker::Instance()(types) ||
+                                       ftypes::IsHotelChecker::Instance()(types) ||
+                                       ftypes::IsPeakChecker::Instance()(types);
+                  if (!isHighPriority) return;
+              }
+              // Even at 16+, we limit density if it's too crowded
+              if (featuresCount > (maxFeatures * 0.8)) return;
+          }
 
           uint8_t type = 0;
+          std::string iconName;
           using namespace ftypes;
 
           if (geomType == feature::GeomType::Line) {
@@ -1179,6 +1192,17 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
               else if (IsPoiChecker::Instance()(types)) type = 106;
 
               if (type == 0) return;
+
+              // Extract icon name for POI
+              uint32_t bestType = 0;
+              for (uint32_t t : types) {
+                  if (bestType == 0 || ftype::GetLevel(t) > ftype::GetLevel(bestType))
+                      bestType = t;
+              }
+              if (bestType != 0) {
+                  auto const path = classif().GetFullObjectNamePath(bestType);
+                  if (!path.empty()) iconName = path.back();
+              }
           }
 
           if (type == 0) return;
@@ -1197,7 +1221,23 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
           featuresCount++;
           buffer.push_back(static_cast<uint8_t>(type));
 
+          if (type >= 100) {
+              uint8_t iconLen = static_cast<uint8_t>(iconName.size());
+              buffer.push_back(iconLen);
+              if (iconLen > 0) buffer.insert(buffer.end(), iconName.begin(), iconName.end());
+          }
+
           std::string name(ft.GetName(0));
+
+          // EXTRA: Extract house numbers for buildings (Type 2)
+          if (type == 2) {
+              std::string houseNumber = ft.GetHouseNumber();
+              if (!houseNumber.empty()) {
+                  if (name.empty()) name = houseNumber;
+                  else name = name + " (" + houseNumber + ")";
+              }
+          }
+
           uint16_t nameLen = static_cast<uint16_t>(name.size());
           uint8_t * pNameLen = reinterpret_cast<uint8_t *>(&nameLen);
           buffer.insert(buffer.end(), pNameLen, pNameLen + sizeof(nameLen));
@@ -1596,7 +1636,8 @@ JNIEXPORT jobject Java_app_organicmaps_sdk_Framework_nativeGetTransitRouteInfo(J
 
 JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativeReloadWorldMaps(JNIEnv * env, jclass)
 {
-  g_framework->ReloadWorldMaps();
+  if (g_framework)
+    g_framework->ReloadWorldMaps();
 }
 
 JNIEXPORT jboolean Java_app_organicmaps_sdk_Framework_nativeIsDayTime(JNIEnv * env, jclass, jlong utcTimeSeconds,
@@ -1751,23 +1792,51 @@ JNIEXPORT jboolean Java_app_organicmaps_sdk_Framework_nativeIsDownloadedMapAtLoc
   return storage::IsPointCoveredByDownloadedMaps(mercator::FromLatLon(lat, lon), fr->GetStorage(), fr->GetCountryInfoGetter());
 }
 
+JNIEXPORT jboolean Java_app_organicmaps_sdk_Framework_nativeIsWorldMapDownloaded(JNIEnv * env, jclass)
+{
+  return frm()->GetStorage().IsNodeDownloaded(WORLD_FILE_NAME);
+}
+
 JNIEXPORT jobject Java_app_organicmaps_sdk_Framework_nativeGetMapObjectForLocation(JNIEnv * env, jclass, jdouble lat, jdouble lon)
 {
   m2::PointD const pt = mercator::FromLatLon(lat, lon);
   // Find feature at coordinates
-  // We use a small tolerance for tapping
-  double const tolerance = 0.0001; // Approx 10 meters
+  // Reduced tolerance for better accuracy (approx 20 meters)
+  double const tolerance = 0.0002;
   m2::RectD const rect(pt.x - tolerance, pt.y - tolerance, pt.x + tolerance, pt.y + tolerance);
 
   jobject result = nullptr;
-  frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
-    if (result != nullptr) return;
-    if (ft.GetGeomType() != feature::GeomType::Point) return;
 
-    place_page::Info info;
-    info.SetFromFeatureType(ft);
-    result = env->NewGlobalRef(CreateMapObject(env, info));
-  }, rect, 18);
+  // PASS 1: Named points (Cafe, Shop, etc.) - The most likely target
+  // PASS 2: Named areas (Building with name, Park, etc.)
+  // PASS 3: Unnamed buildings (often tapped for address)
+  // PASS 4: Technical POIs (Gate, Barrier, etc.)
+  // PASS 5: Roads/Lines
+  for (int pass = 1; pass <= 5; ++pass) {
+    for (int zoom = 19; zoom >= 13; --zoom) {
+      frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
+        if (result != nullptr) return;
+
+        auto geomType = ft.GetGeomType();
+        bool hasName = !ft.GetNames().IsEmpty() || !ft.GetHouseNumber().empty();
+
+        if (pass == 1 && (geomType != feature::GeomType::Point || !hasName)) return;
+        if (pass == 2 && (geomType != feature::GeomType::Area || !hasName)) return;
+        if (pass == 3 && (geomType != feature::GeomType::Area || hasName || !ftypes::IsBuildingChecker::Instance()(feature::TypesHolder(ft)))) return;
+        if (pass == 4 && (geomType != feature::GeomType::Point || hasName)) return;
+        if (pass == 5 && geomType != feature::GeomType::Line) return;
+
+        LOG(LINFO, ("Found feature: ", ft.GetDefaultName(), " zoom: ", zoom, " pass: ", pass));
+
+        place_page::Info info;
+        info.SetFromFeatureType(ft);
+        info.SetMercator(pt);
+        result = env->NewGlobalRef(CreateMapObject(env, info));
+      }, rect, zoom);
+      if (result != nullptr) break;
+    }
+    if (result != nullptr) break;
+  }
 
   if (result == nullptr) return nullptr;
   jobject localResult = env->NewLocalRef(result);

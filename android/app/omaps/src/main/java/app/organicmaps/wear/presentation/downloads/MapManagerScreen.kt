@@ -45,13 +45,20 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 
 @Composable
-fun MapManagerScreen() {
+fun MapManagerScreen(isVisible: Boolean = true) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val navState by NavigationStateHolder.state.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
     
-    val centerLat = if (navState.lat != 0.0) navState.lat else 48.2082
-    val centerLon = if (navState.lon != 0.0) navState.lon else 16.3738
+    // Throttled location to avoid excessive re-polling on every tiny movement (approx 1km resolution)
+    val centerLat = remember(navState.lat) { 
+        val raw = if (navState.lat != 0.0) navState.lat else 48.2082
+        kotlin.math.round(raw * 100.0) / 100.0
+    }
+    val centerLon = remember(navState.lon) { 
+        val raw = if (navState.lon != 0.0) navState.lon else 16.3738
+        kotlin.math.round(raw * 100.0) / 100.0
+    }
 
     var pathStack by remember { mutableStateOf(listOf<String>()) }
     val currentRoot = pathStack.lastOrNull()
@@ -62,8 +69,10 @@ fun MapManagerScreen() {
 
     val listState = rememberScalingLazyListState()
 
-    LaunchedEffect(currentRoot, centerLat, centerLon, searchQuery) {
-        withContext(Dispatchers.Main) {
+    LaunchedEffect(currentRoot, centerLat, centerLon, searchQuery, isVisible) {
+        if (!isVisible) return@LaunchedEffect
+        
+        withContext(Dispatchers.Default) {
             try {
                 System.loadLibrary("organicmaps")
                 val wearApp = context.applicationContext as app.organicmaps.wear.WearApplication
@@ -71,14 +80,16 @@ fun MapManagerScreen() {
                 
                 while (true) {
                     val result = ArrayList<CountryItem>()
-                    if (searchQuery.isEmpty()) {
-                        MapManager.nativeListItems(currentRoot, centerLat, centerLon, true, false, result)
-                    } else {
-                        MapManager.nativeSearchItems(searchQuery, result)
+                    withContext(Dispatchers.Main) {
+                        if (searchQuery.isEmpty()) {
+                            MapManager.nativeListItems(currentRoot, centerLat, centerLon, true, false, result)
+                        } else {
+                            MapManager.nativeSearchItems(searchQuery, result)
+                        }
                     }
                     
                     // Improved sorting: downloading first, then done/partly, then category/name
-                    countries = result.filter { 
+                    val sorted = result.filter { 
                         (it.id != "World" && it.id != "WorldCoasts") || !it.present
                     }.sortedWith { a, b ->
                         val aDone = a.status == CountryItem.STATUS_DONE || a.status == CountryItem.STATUS_PARTLY || a.present
@@ -102,11 +113,15 @@ fun MapManagerScreen() {
 
                         a.name.compareTo(b.name)
                     }
-                    loading = false
-                    delay(800) // Faster polling for live feedback
+                    
+                    withContext(Dispatchers.Main) {
+                        countries = sorted
+                        loading = false
+                    }
+                    delay(500) // Increased frequency for better download status responsiveness
                 }
             } catch (_: Throwable) {
-                loading = false
+                withContext(Dispatchers.Main) { loading = false }
             }
         }
     }
@@ -117,6 +132,17 @@ fun MapManagerScreen() {
         contentPadding = PaddingValues(top = 32.dp, bottom = 32.dp, start = 10.dp, end = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (navState.backend == "GMS" && !navState.standaloneMode) {
+            item {
+                Text(
+                    "Syncing via Phone",
+                    style = MaterialTheme.typography.caption2,
+                    color = Color.LightGray,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+        }
+
         item {
             val title = if (searchQuery.isNotEmpty()) "Search Results" else if (currentRoot == null) "Map Manager" else MapManager.nativeGetName(currentRoot)
             Text(

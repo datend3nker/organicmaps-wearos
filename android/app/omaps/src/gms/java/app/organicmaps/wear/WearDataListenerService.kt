@@ -52,7 +52,8 @@ class WearDataListenerService : WearableListenerService() {
         scope.launch {
             try {
                 val nodes = Wearable.getNodeClient(this@WearDataListenerService).connectedNodes.await()
-                NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = nodes.isNotEmpty()))
+                // Do not update isPhoneConnected based only on nodes. 
+                // Wait for actual messages to confirm the app is alive.
                 if (nodes.isNotEmpty()) {
                     WearCommandService.requestPreferences(this@WearDataListenerService)
                 }
@@ -86,7 +87,7 @@ class WearDataListenerService : WearableListenerService() {
         (applicationContext as WearApplication).onPongReceived()
         if (messageEvent.path == PATH_START_NAVIGATION) {
             val currentState = NavigationStateHolder.state.value
-            NavigationStateHolder.update(currentState.copy(isActive = true))
+            NavigationStateHolder.update(currentState.copy(isActive = true, isMapUnlockedBeforeNav = currentState.isMapUnlocked, isMapUnlocked = false))
             launchOmaps()
         } else if (messageEvent.path == PATH_MAP_DOWNLOAD_REQUEST) {
             val countryId = String(messageEvent.data)
@@ -249,7 +250,10 @@ else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
                             } catch (_: Throwable) {}
                         }
 
-                        NavigationStateHolder.update(newState)
+                        val forceUpdate = !dataMap.getBoolean("active", true) && currentState.isActive
+                        NavigationStateHolder.update(newState.copy(
+                            isRouteBuilding = if (newState.isActive) false else newState.isRouteBuilding
+                        ), force = forceUpdate)
                         if (newState.isActive && !currentState.isActive) launchOmaps()
                     }
                     "/search/results" -> {
@@ -291,12 +295,18 @@ else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
                         val mapDownloadMode = dataMap.getString("mapDownloadMode", "BLUETOOTH_ONLY")
                         val backend = dataMap.getString("backend", "GMS")
                         val poiMask = dataMap.getInt("poiCategoriesMask", 0x3F)
+                        val locationSource = dataMap.getString("locationSource", "AUTO")
                         
                         val is3dEnabled = dataMap.getBoolean("is3dEnabled", true)
                         val is3dBuildingsEnabled = dataMap.getBoolean("is3dBuildingsEnabled", true)
                         val isAutoZoomEnabled = dataMap.getBoolean("isAutoZoomEnabled", true)
                         val mUnits = dataMap.getInt("measurementUnits", 0)
                         val mapStyle = dataMap.getString("mapStyle", "default")
+                        
+                        val transitEnabled = dataMap.getBoolean("transitEnabled", false)
+                        val bikingEnabled = dataMap.getBoolean("bikingEnabled", false)
+                        val hikingEnabled = dataMap.getBoolean("hikingEnabled", false)
+                        val isolinesEnabled = dataMap.getBoolean("isolinesEnabled", false)
                         
                         val avoidTolls = dataMap.getBoolean("avoidTolls", false)
                         val avoidMotorways = dataMap.getBoolean("avoidMotorways", false)
@@ -311,12 +321,18 @@ else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
                         val oldDownloadMode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY")
                         val oldBackend = prefs.getString("pref_wear_os_backend", "GMS")
                         val oldPoiMask = prefs.getInt("poiCategoriesMask", 0x3F)
+                        val oldLocationSource = prefs.getString("locationSource", "AUTO")
                         
                         val oldIs3d = prefs.getBoolean("pref_3d", true)
                         val oldIs3dBld = prefs.getBoolean("pref_3d_buildings", true)
                         val oldAutoZoom = prefs.getBoolean("pref_auto_zoom", true)
                         val oldUnits = prefs.getInt("pref_munits", 0)
                         val oldStyle = prefs.getString("pref_map_style", "default")
+                        
+                        val oldTransit = prefs.getBoolean("transit_enabled", false)
+                        val oldBiking = prefs.getBoolean("biking_enabled", false)
+                        val oldHiking = prefs.getBoolean("hiking_enabled", false)
+                        val oldIsolines = prefs.getBoolean("isolines_enabled", false)
                         
                         val oldAvoidTolls = prefs.getBoolean("avoid_tolls", false)
                         val oldAvoidMotorways = prefs.getBoolean("avoid_motorways", false)
@@ -330,11 +346,16 @@ else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
                             oldDownloadMode == mapDownloadMode &&
                             oldBackend == backend &&
                             oldPoiMask == poiMask &&
+                            oldLocationSource == locationSource &&
                             oldIs3d == is3dEnabled &&
                             oldIs3dBld == is3dBuildingsEnabled &&
                             oldAutoZoom == isAutoZoomEnabled &&
                             oldUnits == mUnits &&
                             oldStyle == mapStyle &&
+                            oldTransit == transitEnabled &&
+                            oldBiking == bikingEnabled &&
+                            oldHiking == hikingEnabled &&
+                            oldIsolines == isolinesEnabled &&
                             oldAvoidTolls == avoidTolls &&
                             oldAvoidMotorways == avoidMotorways &&
                             oldAvoidFerries == avoidFerries &&
@@ -356,6 +377,7 @@ else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
                             .putString("mapDownloadMode", mapDownloadMode)
                             .putString("pref_wear_os_backend", backend)
                             .putInt("poiCategoriesMask", poiMask)
+                            .putString("locationSource", locationSource)
                             .putBoolean("pref_3d", is3dEnabled)
                             .putBoolean("pref_3d_buildings", is3dBuildingsEnabled)
                             .putBoolean("pref_auto_zoom", isAutoZoomEnabled)
@@ -365,6 +387,10 @@ else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
                             .putBoolean("avoid_motorways", avoidMotorways)
                             .putBoolean("avoid_ferries", avoidFerries)
                             .putBoolean("avoid_dirty_roads", avoidUnpaved)
+                            .putBoolean("transit_enabled", transitEnabled)
+                            .putBoolean("biking_enabled", bikingEnabled)
+                            .putBoolean("hiking_enabled", hikingEnabled)
+                            .putBoolean("isolines_enabled", isolinesEnabled)
                             .apply()
 
                         // Sync backend implementation
@@ -380,6 +406,10 @@ else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
                             System.loadLibrary("organicmaps")
                             app.organicmaps.sdk.Framework.nativeSet3dMode(is3dEnabled, is3dBuildingsEnabled)
                             app.organicmaps.sdk.Framework.nativeSetAutoZoomEnabled(isAutoZoomEnabled)
+                            app.organicmaps.sdk.Framework.nativeSetTransitSchemeEnabled(transitEnabled)
+                            app.organicmaps.sdk.Framework.nativeSetCyclingLayerEnabled(bikingEnabled)
+                            app.organicmaps.sdk.Framework.nativeSetHikingLayerEnabled(hikingEnabled)
+                            app.organicmaps.sdk.Framework.nativeSetIsolinesLayerEnabled(isolinesEnabled)
                             
                             if (avoidTolls) RoutingOptions.addOption(RoadType.Toll) else RoutingOptions.removeOption(RoadType.Toll)
                             if (avoidMotorways) RoutingOptions.addOption(RoadType.Motorway) else RoutingOptions.removeOption(RoadType.Motorway)
@@ -395,11 +425,13 @@ else if (messageEvent.path == PATH_MAP_TILE_RESPONSE) {
                             mapDownloadMode = mapDownloadMode,
                             backend = backend,
                             poiCategoriesMask = poiMask,
-                            is3dEnabled = is3dEnabled,
-                            is3dBuildingsEnabled = is3dBuildingsEnabled,
-                            isAutoZoomEnabled = isAutoZoomEnabled,
+                            locationSource = locationSource ?: "AUTO",
                             measurementUnits = mUnits,
                             mapStyle = mapStyle,
+                            transitEnabled = transitEnabled,
+                            bikingEnabled = bikingEnabled,
+                            hikingEnabled = hikingEnabled,
+                            isolinesEnabled = isolinesEnabled,
                             avoidTolls = avoidTolls,
                             avoidMotorways = avoidMotorways,
                             avoidFerries = avoidFerries,

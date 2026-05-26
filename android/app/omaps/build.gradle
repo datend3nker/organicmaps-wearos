@@ -66,6 +66,8 @@ android {
         include "types.txt"
         include "packed_polygons.bin"
         include "drules_proto*.bin"
+        include "World.mwm"
+        include "WorldCoasts.mwm"
         into "src/main/assets"
     }
 
@@ -144,6 +146,7 @@ dependencies {
     
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
     implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-process:2.8.7'
 
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'

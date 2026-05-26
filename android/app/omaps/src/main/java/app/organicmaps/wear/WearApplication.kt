@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import app.organicmaps.sdk.location.BaseLocationProvider
 import app.organicmaps.sdk.location.LocationProviderFactory
 import app.organicmaps.sdk.OrganicMaps
@@ -14,9 +16,7 @@ import app.organicmaps.sdk.Framework
 import app.organicmaps.wear.BluetoothWearDataListenerService
 import java.io.File
 import java.io.FileOutputStream
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.MainScope
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import kotlin.math.hypot
 
 class WearApplication : Application() {
@@ -31,15 +31,31 @@ class WearApplication : Application() {
     var initError: String? = null
         internal set
 
+    @Volatile
+    var isInitializing = false
+
     override fun onCreate() {
         super.onCreate()
+        if (isInitializing || isFullyInitialized) return
+        isInitializing = true
         
         System.loadLibrary("organicmaps")
         ConnectionState.INSTANCE.initialize(this)
         
         val nativeLocationFactory = object : LocationProviderFactory {
-            override fun isGoogleLocationAvailable(context: Context): Boolean = false
+            override fun isGoogleLocationAvailable(context: Context): Boolean {
+                return false
+            }
             override fun getProvider(context: Context, listener: BaseLocationProvider.Listener): BaseLocationProvider {
+                // Use GMS Fused location if available on the watch
+                if (isGoogleLocationAvailable(context)) {
+                    try {
+                        val cls = Class.forName("app.organicmaps.location.GoogleFusedLocationProvider")
+                        val ctor = cls.getDeclaredConstructor(Context::class.java, BaseLocationProvider.Listener::class.java)
+                        ctor.isAccessible = true
+                        return ctor.newInstance(context, listener) as BaseLocationProvider
+                    } catch (_: Exception) {}
+                }
                 return app.organicmaps.sdk.location.AndroidNativeProvider(context, listener)
             }
         }
@@ -48,7 +64,7 @@ class WearApplication : Application() {
             applicationContext, 
             BuildConfig.FLAVOR, 
             BuildConfig.APPLICATION_ID, 
-            1, 
+            251123, // Matches countries.txt version
             BuildConfig.VERSION_NAME, 
             BuildConfig.APPLICATION_ID + ".provider",
             nativeLocationFactory
@@ -61,14 +77,18 @@ class WearApplication : Application() {
         try {
             val asyncContinue = organicMaps.init { 
                 isFullyInitialized = true 
-                app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                if (NavigationStateHolder.state.value.allowMobileData) {
+                    app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                }
                 app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
                 organicMaps.locationHelper.onExitFromFirstRun()
                 setupLocalNavigationListener()
             }
             if (!asyncContinue) {
                 isFullyInitialized = true
-                app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                if (NavigationStateHolder.state.value.allowMobileData) {
+                    app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                }
                 app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
                 organicMaps.locationHelper.onExitFromFirstRun()
                 setupLocalNavigationListener()
@@ -81,6 +101,8 @@ class WearApplication : Application() {
         // Start appropriate communication backend
         WearCommandService.initBackend(this)
         
+        NavigationStateHolder.loadFromPrefs(this)
+        
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
         val selectedBackend = prefs.getString("pref_wear_os_backend", "GMS")
         if (BuildConfig.FLAVOR == "oss" || selectedBackend == "BLUETOOTH") {
@@ -88,12 +110,98 @@ class WearApplication : Application() {
         }
 
         startPingLoop()
+        setupLifecycleAwareUpdates()
+    }
+
+    private fun setupLifecycleAwareUpdates() {
+        val routingController = RoutingController.get()
+        ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.Default) {
+            while (true) {
+                yield()
+                
+                // POWER SAVING: Check lifecycle state
+                if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                    delay(5000)
+                    continue
+                }
+
+                val state = NavigationStateHolder.state.value
+                val isAmbient = state.isAmbient
+                
+                // POWER SAVING: Hardware management based on visibility and navigation state
+                if (state.isEffectivelyStandalone) {
+                    if (!organicMaps.locationHelper.isActive) {
+                        try { 
+                            if (app.organicmaps.sdk.util.LocationUtils.checkFineLocationPermission(this@WearApplication)) {
+                                withContext(Dispatchers.Main) { 
+                                    Log.d("WearApp", "Auto-starting local GPS (Standalone/Disconnected)")
+                                    organicMaps.locationHelper.start() 
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                } else if (state.locationSource == "PHONE_ONLY" || state.isActive) {
+                    // Disable local GPS when phone is providing location or we are actively navigating (companion mode)
+                    if (organicMaps.locationHelper.isActive) {
+                        withContext(Dispatchers.Main) { organicMaps.locationHelper.stop() }
+                    }
+                }
+
+                if (state.watchLocalMode && (routingController.isNavigating || routingController.isBuilt || routingController.isBuilding)) {
+                    val (info, routePoints) = withContext(Dispatchers.Main) {
+                        val info = Framework.nativeGetRouteFollowingInfo()
+                        val routeJunctions = Framework.nativeGetRouteJunctionPoints(if (isAmbient) 100.0 else 50.0)
+                        val points = routeJunctions?.map { it.mLat to it.mLon } ?: emptyList()
+                        info to points
+                    }
+                    
+                    if (info != null) {
+                        NavigationStateHolder.update { current ->
+                            current.copy(
+                                isActive = true,
+                                isNavigating = routingController.isNavigating,
+                                isRouteReady = routingController.isBuilt,
+                                isRouteBuilt = routingController.isBuilt,
+                                routePoints = routePoints,
+                                distToTurn = info.distToTurn?.toString(this@WearApplication) ?: "",
+                                nextStreet = info.nextStreet ?: "",
+                                carDirection = info.carDirection.ordinal,
+                                pedestrianDirection = info.pedestrianDirection.ordinal,
+                                exitNum = info.exitNum,
+                                distToTarget = info.distToTarget?.toString(this@WearApplication) ?: "",
+                                eta = info.totalTimeInSeconds,
+                                completionPercent = info.completionPercent,
+                                turnLat = info.turnLat,
+                                turnLon = info.turnLon,
+                                isRecalculating = false
+                            )
+                        }
+                    } else if (routingController.isNavigating) {
+                        NavigationStateHolder.update { current ->
+                            current.copy(
+                                distToTurn = "Recalculating...",
+                                nextStreet = "",
+                                routePoints = emptyList(),
+                                isRecalculating = true
+                            )
+                        }
+                    }
+                }
+                
+                // Adaptive delay to save battery
+                val delayMs = when {
+                    routingController.isNavigating -> 1000L
+                    isAmbient -> 10000L
+                    else -> 5000L
+                }
+                delay(delayMs)
+            }
+        }
     }
 
     private var lastPongTime = System.currentTimeMillis()
     private fun startPingLoop() {
         MainScope().launch {
-            // Initial delay to allow connection setup
             kotlinx.coroutines.delay(3000)
             while (true) {
                 try {
@@ -102,10 +210,8 @@ class WearApplication : Application() {
                     
                     if (!disconnected) {
                         WearCommandService.sendPing(this@WearApplication)
-                        // Trigger connection check via service
-                        WearCommandService.checkConnection(this@WearApplication) { connected ->
-                            if (connected) onPongReceived()
-                        }
+                        // No automatic connection update here - wait for actual Pong/Message
+                        WearCommandService.checkConnection(this@WearApplication) { /* node exists, but app might not be running */ }
                     } else {
                          val currentState = NavigationStateHolder.state.value
                          if (currentState.isPhoneConnected) {
@@ -115,23 +221,34 @@ class WearApplication : Application() {
                 } catch (e: Exception) {
                     Log.e("WearApp", "Failed to send ping", e)
                 }
-                kotlinx.coroutines.delay(10000)
+                kotlinx.coroutines.delay(5000) // Fast ping
                 
                 val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
                 val disconnected = prefs.getBoolean("disconnectFromPhone", false)
 
-                // If no pong for 35 seconds, mark as disconnected
-                if (disconnected || System.currentTimeMillis() - lastPongTime > 35000) {
+                if (disconnected || System.currentTimeMillis() - lastPongTime > 15000) { // Fast timeout
                     val currentState = NavigationStateHolder.state.value
                     if (currentState.isPhoneConnected) {
-                        NavigationStateHolder.update(currentState.copy(isPhoneConnected = false))
+                        Log.d("WearApp", "Phone connection timeout - marking as disconnected")
+                        var newState = currentState.copy(isPhoneConnected = false)
+                        
+                        // If we were navigating in companion mode, stop it
+                        if (newState.isActive && !newState.watchLocalMode && !newState.standaloneMode) {
+                            Log.d("WearApp", "Companion connection lost while navigating - resetting state")
+                            newState = newState.copy(
+                                isActive = false,
+                                isNavigating = false,
+                                isRouteBuilt = false,
+                                isRouteBuilding = false
+                            )
+                        }
+                        NavigationStateHolder.update(newState)
                     }
                 }
             }
         }
     }
     
-    // Called from listeners
     fun onPongReceived() {
         lastPongTime = System.currentTimeMillis()
         val currentState = NavigationStateHolder.state.value
@@ -144,188 +261,65 @@ class WearApplication : Application() {
         val routingController = RoutingController.get()
         routingController.initialize(organicMaps.locationHelper)
         routingController.attach(object : RoutingController.Container {
-            override fun showRoutePlan(show: Boolean, completionListener: Runnable?) {
-                if (show) {
-                    completionListener?.run()
-                }
-            }
-
+            override fun showRoutePlan(show: Boolean, completion: Runnable?) {}
             override fun onPlanningStarted() {
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    isActive = true,
-                    isRouteBuilding = true,
-                    isRouteReady = false,
-                    routeBuildProgress = 0,
-                    routePoints = emptyList(),
-                    distToTurn = "",
-                    nextStreet = "",
-                    distToTarget = "",
-                    eta = 0,
-                    completionPercent = 0.0,
-                    turnLat = 0.0,
-                    turnLon = 0.0
-                ))
+                NavigationStateHolder.update { it.copy(isRouteBuilding = true, isRouteReady = false) }
             }
-
             override fun onPlanningCancelled() {
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    isRouteBuilding = false,
-                    isRouteReady = false,
-                    routeBuildProgress = 0,
-                    routePoints = emptyList()
-                ))
+                Log.d("WearApp", "Routing: Planning cancelled")
+                NavigationStateHolder.update { it.copy(isRouteBuilding = false, isRouteReady = false, isRouteBuilt = false) }
             }
-
             override fun onBuiltRoute() {
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    isRouteBuilding = false,
-                    isRouteReady = true,
-                    routeBuildProgress = 100
-                ))
+                Log.d("WearApp", "Routing: Route built successfully")
+                NavigationStateHolder.update { it.copy(isRouteBuilding = false, isRouteReady = true, isRouteBuilt = true, isMapUnlocked = false) }
             }
-
             override fun onNavigationStarted() {
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    isActive = true,
-                    isNavigating = true,
-                    isRouteBuilding = false,
-                    isRouteReady = false,
-                    routeBuildProgress = 100
-                ))
+                Log.d("WearApp", "Routing: Navigation started")
+                NavigationStateHolder.update { it.copy(isNavigating = true, isRouteReady = false, isActive = true, isRouteBuilding = false, isMapUnlocked = false) }
             }
-
             override fun onNavigationCancelled() {
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    isNavigating = false,
-                    isRouteReady = false,
-                    routePoints = emptyList()
-                ))
+                Log.d("WearApp", "Routing: Navigation cancelled")
+                val state = NavigationStateHolder.state.value
+                NavigationStateHolder.update(state.copy(
+                    isNavigating = false, 
+                    isActive = false, 
+                    isRouteBuilt = false, 
+                    isRouteBuilding = false
+                ), force = true)
             }
-
             override fun updateBuildProgress(progress: Int, router: app.organicmaps.sdk.Router) {
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    routeBuildProgress = progress.coerceIn(0, 100),
-                    isRouteBuilding = progress in 0 until 100,
-                    isRouteReady = progress >= 100
-                ))
+                NavigationStateHolder.update { it.copy(routeBuildProgress = progress) }
             }
-
-            override fun onCommonBuildError(lastResultCode: Int, lastMissingMaps: Array<out String>) {
-                Log.e("WearApplication", "Route build error: code=$lastResultCode, missingMaps=${lastMissingMaps.contentToString()}")
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    isRouteBuilding = false,
-                    isRouteReady = false,
-                    routeBuildProgress = 0,
-                    lastRouteError = lastResultCode
-                ))
+            override fun onCommonBuildError(lastRouteError: Int, lastMissingMaps: Array<out String>) {
+                Log.e("WearApp", "Routing: Common build error: $lastRouteError")
+                NavigationStateHolder.update { it.copy(isRouteBuilding = false, lastRouteError = lastRouteError) }
             }
-
+            override fun onDrivingOptionsBuildError() {
+                Log.e("WearApp", "Routing: Driving options build error")
+                NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
+            }
+            override fun onDrivingOptionsWarning() {
+                Log.w("WearApp", "Routing: Driving options warning")
+                NavigationStateHolder.update { it.copy(isRouteBuilding = false, isRouteReady = true, isRouteBuilt = true) }
+            }
             override fun onStartRouteBuilding() {
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    isRouteBuilding = true,
-                    isRouteReady = false,
-                    routeBuildProgress = 0
-                ))
+                NavigationStateHolder.update { it.copy(isRouteBuilding = true) }
             }
         })
-        
+
         organicMaps.locationHelper.addListener(object : app.organicmaps.sdk.location.LocationListener {
-            private var lastValidLat = 0.0
-            private var lastValidLon = 0.0
-            private var lastFixTime = 0L
-            private var lastRebuildTime = 0L
-
             override fun onLocationUpdated(location: android.location.Location) {
-                // SANITY CHECK: Ignore "teleports" (Wild jumps > 1km in < 10s)
-                // This is physically impossible and usually happens in emulators or urban canyons.
-                if (lastFixTime != 0L) {
-                    val dist = hypot(location.latitude - lastValidLat, location.longitude - lastValidLon) * 111000.0
-                    val timeDelta = (System.currentTimeMillis() - lastFixTime) / 1000.0
-                    
-                    // If we jump more than 1km and we are moving slowly, it's likely a provider fallback glitch.
-                    if (dist > 1000.0 && timeDelta < 10.0 && location.speed < 1.0) {
-                        Log.w("WearApp", "Filtering teleport glitch: ${dist.toInt()}m jump via ${location.provider}")
-                        return
-                    }
+                val state = NavigationStateHolder.state.value
+                if (state.isEffectivelyStandalone) {
+                    NavigationStateHolder.update(state.copy(
+                        lat = location.latitude,
+                        lon = location.longitude,
+                        bearing = location.bearing,
+                        lastFixTime = System.currentTimeMillis()
+                    ))
                 }
-
-                // ACCURACY FILTER: Ignore very poor fixes if we already have a good one
-                if (location.hasAccuracy() && location.accuracy > 100.0 && lastFixTime != 0L && (System.currentTimeMillis() - lastFixTime < 5000)) {
-                    return
-                }
-
-                lastValidLat = location.latitude
-                lastValidLon = location.longitude
-                lastFixTime = System.currentTimeMillis()
-
-                // POWER SAVING: Ignore local GPS if we are in companion mode and phone is providing location
-                val navState = NavigationStateHolder.state.value
-                if (!navState.standaloneMode && navState.isPhoneConnected && navState.isActive) {
-                    // Phone is providing navigation data, push it to native core if valid
-                    if (navState.lat != 0.0) {
-                        try {
-                            app.organicmaps.sdk.location.LocationState.nativeLocationUpdated(
-                                System.currentTimeMillis(),
-                                navState.lat, navState.lon,
-                                5.0f, 0.0, navState.speedMps.toFloat(), navState.bearing
-                            )
-                        } catch (_: Throwable) {}
-                    }
-                    return
-                }
-
-                // Log for debugging standalone routing
-                val routing = RoutingController.get()
-                if (routing.isPlanning && routing.getStartPoint() == null) {
-                    val myPos = organicMaps.locationHelper.myPosition
-                    if (myPos != null) {
-                        Log.d("WearApplication", "Setting missing start point to My Position")
-                        routing.setStartPoint(myPos)
-                    }
-                } else if (routing.isPlanning && routing.isErrorEncountered) {
-                    val now = System.currentTimeMillis()
-                    // COOLDOWN: Only retry every 3 seconds
-                    if (now - lastRebuildTime > 3000) {
-                        // Only retry if we have a valid position and didn't just fail with the same one
-                        if (location.latitude != 0.0 && navState.lastRouteError != 0) {
-                            Log.d("WearApplication", "Routing is in error state (${navState.lastRouteError}), trying to rebuild with new position")
-                            
-                            // WORKAROUND: If error was NO_POSITION (2), try to set the start point explicitly 
-                            // using current coordinates as a POI instead of MY_POSITION.
-                            // This often bypasses native framework requirements for a "GPS fix" when snapping.
-                            if (navState.lastRouteError == 2) {
-                                Log.d("WearApplication", "Workaround: Setting explicit start point coordinates for NO_POSITION error")
-                                val explicitPos = app.organicmaps.sdk.bookmarks.data.MapObject.createMapObject(
-                                    app.organicmaps.sdk.bookmarks.data.MapObject.POI,
-                                    "My Position", "", location.latitude, location.longitude
-                                )
-                                routing.setStartPoint(explicitPos)
-                            }
-                            
-                            routing.checkAndBuildRoute()
-                            lastRebuildTime = now
-                        }
-                    }
-                }
-
-                val currentState = NavigationStateHolder.state.value
-                NavigationStateHolder.update(currentState.copy(
-                    lat = location.latitude,
-                    lon = location.longitude,
-                    speedMps = location.speed.toDouble(),
-                    bearing = location.bearing
-                ))
                 
-                // Persist last known location and bearing
-                getSharedPreferences("wear_prefs", MODE_PRIVATE).edit()
+                getSharedPreferences("wear_prefs", Context.MODE_PRIVATE).edit()
                     .putFloat("last_known_lat", location.latitude.toFloat())
                     .putFloat("last_known_lon", location.longitude.toFloat())
                     .putFloat("last_known_bearing", location.bearing)
@@ -339,66 +333,6 @@ class WearApplication : Application() {
             organicMaps.locationHelper.start()
         } catch (_: SecurityException) {
             Log.e("WearApplication", "Location permission missing at startup")
-        }
-
-        MainScope().launch(Dispatchers.Main) {
-            while (true) {
-                val state = NavigationStateHolder.state.value
-                val isAmbient = state.isAmbient
-                
-                // POWER SAVING: Dynamically start/stop local GPS provider based on mode
-                if (state.standaloneMode || !state.isPhoneConnected) {
-                    if (!organicMaps.locationHelper.isActive) {
-                        Log.d("WearApp", "Enabling Watch GPS (Standalone/Disconnected)")
-                        try { 
-                            if (app.organicmaps.sdk.util.LocationUtils.checkFineLocationPermission(this@WearApplication)) {
-                                organicMaps.locationHelper.start() 
-                            }
-                        } catch (e: Exception) { e.printStackTrace() }
-                    }
-                } else if (state.isActive) {
-                    if (organicMaps.locationHelper.isActive) {
-                        Log.d("WearApp", "Disabling Watch GPS (Companion Mode Active)")
-                        organicMaps.locationHelper.stop()
-                    }
-                }
-
-                if (state.watchLocalMode && (routingController.isNavigating || routingController.isBuilt || routingController.isBuilding)) {
-                    val info = Framework.nativeGetRouteFollowingInfo()
-                    // Fetch fewer route points in ambient mode
-                    val routeJunctions = Framework.nativeGetRouteJunctionPoints(if (isAmbient) 100.0 else 50.0)
-                    val routePoints = routeJunctions?.map { it.mLat to it.mLon } ?: emptyList()
-                    if (info != null) {
-                        val currentState = NavigationStateHolder.state.value
-                        NavigationStateHolder.update(currentState.copy(
-                            isActive = true,
-                            isNavigating = routingController.isNavigating,
-                            routePoints = routePoints,
-                            distToTurn = info.distToTurn?.toString(this@WearApplication) ?: "",
-                            nextStreet = info.nextStreet ?: "",
-                            carDirection = info.carDirection.ordinal,
-                            pedestrianDirection = info.pedestrianDirection.ordinal,
-                            exitNum = info.exitNum,
-                            distToTarget = info.distToTarget?.toString(this@WearApplication) ?: "",
-                            eta = info.totalTimeInSeconds,
-                            completionPercent = info.completionPercent,
-                            turnLat = info.turnLat,
-                            turnLon = info.turnLon,
-                            isRecalculating = false
-                        ))
-                    } else if (routingController.isNavigating) {
-                        // If info is null but we are navigating, we are likely off-route or recalculating
-                        val currentState = NavigationStateHolder.state.value
-                        NavigationStateHolder.update(currentState.copy(
-                            distToTurn = "Recalculating...",
-                            nextStreet = "",
-                            routePoints = emptyList(),
-                            isRecalculating = true
-                        ))
-                    }
-                }
-                kotlinx.coroutines.delay(if (isAmbient) 10000L else 1000L) // 10s updates in ambient mode
-            }
         }
     }
     
@@ -425,35 +359,58 @@ class WearApplication : Application() {
     private fun copyCountriesFileToWritableStorage() {
         try {
             val storagePath = StoragePathManager.findMapsStorage(this)
-            val filesToCopy = listOf(
-                "countries.txt",
-                "classificator.txt",
-                "types.txt",
-                "categories.txt",
-                "packed_polygons.bin",
-                "drules_proto.bin",
-                "drules_proto_dark.bin"
+            val versionedPath = File(storagePath, "251123")
+            if (!versionedPath.exists()) versionedPath.mkdirs()
+
+            val filesToCopyRoot = listOf(
+                "countries.txt", "classificator.txt", "types.txt", "categories.txt", "packed_polygons.bin",
+                "drules_proto.bin", "drules_proto_default_dark.bin", "drules_proto_default_light.bin",
+                "drules_proto_vehicle_dark.bin", "drules_proto_vehicle_light.bin",
+                "drules_proto_outdoors_dark.bin", "drules_proto_outdoors_light.bin"
             )
-            for (fileName in filesToCopy) {
-                val targetFile = File(storagePath, fileName)
-                if (targetFile.exists() && targetFile.length() > 0) {
-                    // Skip if already exists and not empty
-                    // In a real app we might want to check versions, but for now this is a good optimization
-                    continue
-                }
-                try {
-                    assets.open(fileName).use { input ->
-                        FileOutputStream(targetFile, false).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    Log.d("WearApplication", "Copied $fileName to $storagePath")
-                } catch (e: Exception) {
-                    Log.w("WearApplication", "Failed to copy $fileName: ${e.message}")
-                }
+            val filesToCopyVersioned = listOf(
+                "World.mwm", "WorldCoasts.mwm"
+            )
+            
+            val assetList = assets.list("")?.toSet() ?: emptySet()
+            Log.d("WearApplication", "Assets present: $assetList")
+
+            for (fileName in filesToCopyRoot) {
+                copySingleAsset(fileName, storagePath, assetList)
+            }
+            for (fileName in filesToCopyVersioned) {
+                copySingleAsset(fileName, versionedPath.absolutePath, assetList)
+            }
+            
+            // Critical for routing: native core needs these registered
+            if (isFullyInitialized) {
+                Framework.nativeReloadWorldMaps()
             }
         } catch (e: Throwable) {
             Log.w("WearApplication", "Couldn't pre-copy resources to writable storage", e)
+        }
+    }
+
+    private fun copySingleAsset(fileName: String, targetDir: String, assetList: Set<String>) {
+        if (!assetList.contains(fileName)) {
+            Log.w("WearApplication", "Asset $fileName missing from APK!")
+            return
+        }
+
+        val targetFile = File(targetDir, fileName)
+        if (targetFile.exists() && targetFile.length() > 0) return
+        
+        try {
+            Log.d("WearApplication", "Copying $fileName to $targetDir...")
+            assets.open(fileName).use { input ->
+                FileOutputStream(targetFile, false).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            Log.d("WearApplication", "Successfully copied $fileName")
+        } catch (e: Exception) {
+            Log.w("WearApplication", "Failed to copy $fileName: ${e.message}")
+            if (targetFile.exists() && targetFile.length() == 0L) targetFile.delete()
         }
     }
 }

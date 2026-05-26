@@ -22,11 +22,13 @@
     <androidx.preference.SwitchPreferenceCompat
       android:key="@string/pref_3d"
       android:title="@string/pref_3d"
+      android:summary="@string/pref_map_3d_summary"
       android:defaultValue="true"
       android:order="4" />
     <androidx.preference.SwitchPreferenceCompat
       android:key="@string/pref_3d_buildings"
       android:title="@string/pref_3d_buildings"
+      android:summary="@string/pref_map_3d_buildings_summary"
       android:defaultValue="true"
       android:dependency="@string/pref_3d"
       android:order="5" />
@@ -172,47 +174,11 @@
   </androidx.preference.PreferenceCategory>
 
   <androidx.preference.PreferenceCategory
-    android:key="@string/pref_wear_os"
     android:title="@string/prefs_group_wear_os"
     android:order="8">
-    <androidx.preference.ListPreference
-      android:key="@string/pref_wear_os_backend"
-      android:title="@string/pref_wear_os_backend_title"
-      android:summary="@string/pref_wear_os_backend_summary"
-      app:singleLineTitle="false"
-      android:entries="@array/wear_backend"
-      android:entryValues="@array/wear_backend_values"
-      android:defaultValue="GMS"
-      android:order="1" />
-    <androidx.preference.SwitchPreferenceCompat
-      android:key="@string/pref_wear_os_map_enabled"
-      android:title="@string/pref_wear_map_enabled_title"
-      android:summary="@string/pref_wear_map_enabled_summary"
-      app:singleLineTitle="false"
-      android:defaultValue="false"
-      android:order="2" />
-    <androidx.preference.SwitchPreferenceCompat
-      android:key="@string/pref_wear_os_standalone_mode"
-      android:title="@string/pref_wear_os_standalone_mode_title"
-      android:summary="@string/pref_wear_os_standalone_mode_summary"
-      app:singleLineTitle="false"
-      android:defaultValue="false"
-      android:order="3" />
-    <androidx.preference.SwitchPreferenceCompat
-      android:key="@string/pref_wear_os_watch_local_mode"
-      android:title="@string/pref_wear_os_watch_local_mode_title"
-      android:summary="@string/pref_wear_os_watch_local_mode_summary"
-      app:singleLineTitle="false"
-      android:dependency="@string/pref_wear_os_map_enabled"
-      android:order="4" />
-    <androidx.preference.ListPreference
-      android:key="@string/pref_wear_os_map_download_mode"
-      android:title="@string/pref_wear_map_download_mode_title"
-      app:singleLineTitle="false"
-      android:entries="@array/wear_map_download_mode"
-      android:entryValues="@array/wear_map_download_mode_values"
-      android:defaultValue="BLUETOOTH_ONLY"
-
-      android:order="5" />
+    <androidx.preference.Preference
+      android:key="@string/pref_wear_os"
+      android:title="@string/prefs_group_wear_os"
+      android:summary="Communication, maps, and navigation settings" />
   </androidx.preference.PreferenceCategory>
 </androidx.preference.PreferenceScreen>

@@ -33,7 +33,6 @@
         <activity
             android:name="app.organicmaps.wear.presentation.Omaps"
             android:exported="true"
-            android:taskAffinity=""
             android:theme="@style/OmapsTheme.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

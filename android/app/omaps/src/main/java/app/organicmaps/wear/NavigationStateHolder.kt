@@ -1,5 +1,6 @@
 package app.organicmaps.wear
 
+import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
@@ -19,7 +20,11 @@ data class SearchResultItem(
     val openingHours: String = "",
     val website: String = "",
     val phone: String = "",
-    val address: String = ""
+    val address: String = "",
+    val cuisine: String = "",
+    val operator: String = "",
+    val brand: String = "",
+    val stars: String = ""
 )
 
 data class NavigationState(
@@ -57,7 +62,8 @@ data class NavigationState(
     val manualCenterLat: Double = 0.0,
     val manualCenterLon: Double = 0.0,
     val manualViewSpan: Float = 0.003f,
-    val isExploreMode: Boolean = false,
+    val isMapUnlocked: Boolean = false,
+    val isMapUnlockedBeforeNav: Boolean = false,
     val isNavigating: Boolean = false,
     val routeBuildProgress: Int = 0,
     val isRouteBuilding: Boolean = false,
@@ -67,10 +73,6 @@ data class NavigationState(
     val lastSettingsInteractionTime: Long = 0L,
     val lastRouteError: Int = 0,
     val isRecalculating: Boolean = false,
-    // Core Map Settings
-    val is3dEnabled: Boolean = true,
-    val is3dBuildingsEnabled: Boolean = true,
-    val isAutoZoomEnabled: Boolean = true,
     val measurementUnits: Int = 0, // 0: Metric, 1: Imperial
     val mapStyle: String = "default", // default, night, auto, nav_auto
     // Routing Options
@@ -85,8 +87,15 @@ data class NavigationState(
     val hikingEnabled: Boolean = false,
     val allowMobileData: Boolean = false,
     val hasPhysicalButtons: Boolean = false,
-    val forceGuiButtons: Boolean = false
-)
+    val forceGuiButtons: Boolean = false,
+    val locationSource: String = "AUTO", // AUTO, PHONE_ONLY
+    val isRouteBuilt: Boolean = false,
+    val showOnLockScreen: Boolean = true,
+    val lastFixTime: Long = 0L
+) {
+    val isEffectivelyStandalone: Boolean
+        get() = standaloneMode || !isPhoneConnected
+}
 
 object NavigationStateHolder {
     private val _state = MutableStateFlow(NavigationState())
@@ -116,6 +125,11 @@ object NavigationStateHolder {
         // Skip if nothing important changed to prevent ripple recompositions
         if (!force && oldState == newState) return
 
+        // LOGGING FOR DEBUGGING MAP UNLOCK
+        if (newState.isMapUnlocked != oldState.isMapUnlocked) {
+            android.util.Log.d("NavState", "Map Unlocked transition: ${oldState.isMapUnlocked} -> ${newState.isMapUnlocked}")
+        }
+
         // GRACE PERIOD LOGIC
         if (!force && oldState.isActive && !newState.isActive) {
             // Navigation trying to stop - start grace period
@@ -130,7 +144,10 @@ object NavigationStateHolder {
             _state.value = newState.copy(
                 isActive = true, 
                 isNavigating = true,
-                isExploreMode = oldState.isExploreMode // Preserve explore mode during grace period
+                isMapUnlocked = oldState.isMapUnlocked,
+                manualCenterLat = oldState.manualCenterLat,
+                manualCenterLon = oldState.manualCenterLon,
+                manualViewSpan = oldState.manualViewSpan
             )
             return
         }
@@ -141,11 +158,30 @@ object NavigationStateHolder {
             pendingStopJob = null
         }
 
-        // Preserve isExploreMode when updating from phone if it wasn't explicitly changed
-        val finalState = if (!force && newState.isActive && oldState.isActive) {
-            newState.copy(isExploreMode = oldState.isExploreMode)
+        // AUTO-RESET MAP STATE ON NAVIGATION TRANSITIONS
+        var finalState = newState
+        if (newState.isActive && !oldState.isActive) {
+            // Navigation or Preview starting, remember if we were unlocked
+            finalState = finalState.copy(isMapUnlockedBeforeNav = oldState.isMapUnlocked, isMapUnlocked = false)
+        } else if (newState.isNavigating && !oldState.isNavigating) {
+            // Navigation starting from preview, force lock
+            finalState = finalState.copy(isMapUnlocked = false)
+        } else if (!newState.isActive && oldState.isActive) {
+            // Navigation stopping, restore state
+            finalState = finalState.copy(isMapUnlocked = oldState.isMapUnlockedBeforeNav)
+        }
+
+        // PRESERVE WATCH-LOCAL STATE
+        // These fields are strictly watch-local and should never be overwritten by remote updates.
+        finalState = if (!force) {
+            finalState.copy(
+                isMapUnlocked = finalState.isMapUnlocked,
+                manualCenterLat = if (finalState.manualCenterLat == 0.0 && oldState.manualCenterLat != 0.0) oldState.manualCenterLat else finalState.manualCenterLat,
+                manualCenterLon = if (finalState.manualCenterLon == 0.0 && oldState.manualCenterLon != 0.0) oldState.manualCenterLon else finalState.manualCenterLon,
+                manualViewSpan = if (finalState.manualViewSpan <= 0.0f && oldState.manualViewSpan > 0.0f) oldState.manualViewSpan else finalState.manualViewSpan
+            )
         } else {
-            newState
+            finalState
         }
 
         _state.value = finalState
@@ -157,5 +193,33 @@ object NavigationStateHolder {
 
     fun updateTimestamp(timestamp: Long) {
         lastMessageTimestamp = timestamp
+    }
+
+    fun loadFromPrefs(context: Context) {
+        val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
+        update { current ->
+            current.copy(
+                mapEnabled = prefs.getBoolean("mapEnabled", true),
+                watchLocalMode = prefs.getBoolean("watchLocalMode", false),
+                standaloneMode = prefs.getBoolean("disconnectFromPhone", false),
+                autoDownloadRouteMaps = prefs.getBoolean("autoDownloadRouteMaps", true),
+                mapDownloadMode = prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC",
+                backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS",
+                locationSource = prefs.getString("locationSource", "AUTO") ?: "AUTO",
+                measurementUnits = prefs.getInt("pref_munits", 0),
+                mapStyle = prefs.getString("pref_map_style", "default") ?: "default",
+                avoidTolls = prefs.getBoolean("avoid_tolls", false),
+                avoidMotorways = prefs.getBoolean("avoid_motorways", false),
+                avoidFerries = prefs.getBoolean("avoid_ferries", false),
+                avoidUnpaved = prefs.getBoolean("avoid_dirty_roads", false),
+                transitEnabled = prefs.getBoolean("layer_transit", false),
+                isolinesEnabled = prefs.getBoolean("layer_isolines", false),
+                bikingEnabled = prefs.getBoolean("layer_biking", false),
+                hikingEnabled = prefs.getBoolean("layer_hiking", false),
+                allowMobileData = prefs.getBoolean("pref_mobile_data", false),
+                forceGuiButtons = prefs.getBoolean("pref_force_gui_buttons", false),
+                showOnLockScreen = prefs.getBoolean("pref_show_on_lock_screen", true)
+            )
+        }
     }
 }
