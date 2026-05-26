@@ -387,6 +387,11 @@ uint32_t Classificator::GetTypeByPathSafe(std::vector<std::string_view> const & 
   return GetTypeByPathImpl(path.begin(), path.end());
 }
 
+uint32_t Classificator::GetTypeByPathSafe(base::StringIL const & lst) const
+{
+  return GetTypeByPathImpl(lst.begin(), lst.end());
+}
+
 uint32_t Classificator::GetTypeByPath(std::vector<std::string> const & path) const
 {
   uint32_t const type = GetTypeByPathImpl(path.cbegin(), path.cend());

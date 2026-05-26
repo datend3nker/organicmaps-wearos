@@ -3,6 +3,8 @@ package app.organicmaps.wear
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import java.nio.ByteBuffer
@@ -32,8 +34,8 @@ object Mercator {
     }
 }
 
-data class MapFeaturePath(val path: Path, val name: String, val labelPos: Offset? = null)
-data class MapFeaturePoint(val point: Offset, val name: String, val iconName: String = "")
+data class MapFeaturePath(val path: Path, val name: String, val labelPos: Offset? = null, val color: Int = 0, val width: Float = 0f, val casingColor: Int = 0, val casingWidth: Float = 0f, val layer: Int = 0, val priority: Int = 0)
+data class MapFeaturePoint(val x: Float, val y: Float, val name: String, val iconName: String = "", val priority: Int = 0)
 
 data class ParsedMapTile(
     val pathsByType: Map<Int, List<MapFeaturePath>>,
@@ -47,7 +49,7 @@ data class ParsedMapTile(
 data class MapTile(val requestId: Long, val features: ByteArray, val key: MapTileKey? = null)
 
 object MapTileStateHolder {
-    private const val MAX_CACHE_SIZE = 100
+    private const val MAX_CACHE_SIZE = 120
     
     // Simple LRU cache for tiles based on grid coordinates
     private val cache = object : LinkedHashMap<MapTileKey, ParsedMapTile>(MAX_CACHE_SIZE, 0.75f, true) {
@@ -56,8 +58,8 @@ object MapTileStateHolder {
         }
     }
 
-    private val _mapTile = MutableStateFlow<MapTile?>(null)
-    val mapTile = _mapTile.asStateFlow()
+    private val _mapTileChannel = Channel<MapTile>(Channel.BUFFERED)
+    val mapTileFlow = _mapTileChannel.receiveAsFlow()
 
     private val _cachedTilesFlow = MutableStateFlow<List<ParsedMapTile>>(emptyList())
     val cachedTilesFlow: StateFlow<List<ParsedMapTile>> = _cachedTilesFlow.asStateFlow()
@@ -81,12 +83,31 @@ object MapTileStateHolder {
     }
 
     fun update(requestId: Long, features: ByteArray, key: MapTileKey? = null) {
-        _mapTile.value = MapTile(requestId, features, key)
+        _mapTileChannel.trySend(MapTile(requestId, features, key))
     }
 
     fun updateCache(key: MapTileKey, parsedTile: ParsedMapTile) {
         synchronized(cache) {
             cache[key] = parsedTile
+            
+            // PERFORMANCE: Prune tiles that are too far from the current zoom or center
+            val currentZoom = key.zoom
+            val toRemove = mutableListOf<MapTileKey>()
+            
+            for (cachedKey in cache.keys) {
+                // Remove tiles from other zoom levels immediately if they are not the current one
+                // (keeps only the most relevant LOD)
+                if (abs(cachedKey.zoom - currentZoom) > 1) {
+                    toRemove.add(cachedKey)
+                }
+                
+                // Remove tiles that are more than 4 tiles away in any direction (approx 2 screens)
+                if (abs(cachedKey.x - key.x) > 4 || abs(cachedKey.y - key.y) > 4) {
+                    toRemove.add(cachedKey)
+                }
+            }
+            
+            toRemove.forEach { cache.remove(it) }
             _cachedTilesFlow.value = cache.values.toList()
         }
     }
@@ -99,15 +120,11 @@ object MapTileStateHolder {
     }
 
     fun parseTile(features: ByteArray, key: MapTileKey, width: Float, height: Float): ParsedMapTile {
-        val centerLat = Mercator.tileYToLat(key.y, key.zoom)
-        val centerLon = Mercator.tileXToLon(key.x, key.zoom)
-        
-        // At zoom 16, a tile's span is exactly 1/(2^16) in mercator space
+        // In Mercator space, the full map (360 degrees) is 1.0 unit.
+        // A tile at zoom Z has a span of 1.0 / (2^Z).
         val mercSpan = 1.0 / (1 shl key.zoom)
-        val mercCenterX = Mercator.lonToX(centerLon) + mercSpan / 2.0
-        val mercCenterY = Mercator.latToY(centerLat) // This is top, but we need center
         
-        // Recalculate properly for the tile
+        // Mercator coordinates for the tile
         val tileLeftLon = Mercator.tileXToLon(key.x, key.zoom)
         val tileTopLat = Mercator.tileYToLat(key.y, key.zoom)
         val tileRightLon = Mercator.tileXToLon(key.x + 1, key.zoom)
@@ -134,6 +151,16 @@ object MapTileStateHolder {
             if (buffer.remaining() < 1) break
             val type = buffer.get().toInt() and 0xFF
             
+            if (buffer.remaining() < 4) break
+            val priorityValue = buffer.int
+
+            if (buffer.remaining() < 17) break
+            var roadColor = buffer.int
+            var roadWidthValue = buffer.float
+            var roadCasingColor = buffer.int
+            var roadCasingWidthValue = buffer.float
+            var layerValue = (buffer.get().toInt() and 0xFF) - 128
+
             val iconName = if (type >= 100) {
                 if (buffer.remaining() < 1) break
                 val iconLen = buffer.get().toInt() and 0xFF
@@ -155,7 +182,7 @@ object MapTileStateHolder {
 
             if (buffer.remaining() < 4) break
             val count = buffer.getInt()
-            if (buffer.remaining() < count * 16) break
+            if (count < 0 || buffer.remaining().toLong() < count.toLong() * 16L) break
             
             if (type >= 100) {
                 val list = pointsByType.getOrPut(type) { mutableListOf() }
@@ -165,16 +192,15 @@ object MapTileStateHolder {
                     
                     val x = ((Mercator.lonToX(lon) - (actualMercCenterX - actualMercSpan / 2.0)) / actualMercSpan * width).toFloat()
                     val y = ((Mercator.latToY(lat) - (actualMercCenterY - actualMercSpan / 2.0)) / actualMercSpan * height).toFloat()
-                    list.add(MapFeaturePoint(Offset(x, y), name, iconName))
+                    list.add(MapFeaturePoint(x, y, name, iconName, priorityValue))
                 }
             } else {
                 val isRoad = type in 4..8 || type == 1
-                
                 // For roads in the SAME tile, we try to merge them to ensure StrokeJoin works.
                 // We use a looser key (just type) for unnamed roads to group them, 
                 // but keep named roads separate if they have different names.
                 val mergeKey = if (isRoad) {
-                    if (name.isNotEmpty()) "$type-$name" else "$type-unnamed"
+                    if (name.isNotEmpty()) "$type-$name-$roadColor" else "$type-unnamed-$roadColor"
                 } else null
                 
                 val mapPath = if (mergeKey != null) mergedPaths.getOrPut(mergeKey) { Path() } else Path()
@@ -184,23 +210,36 @@ object MapTileStateHolder {
                     val lon = buffer.getDouble()
                     val lat = buffer.getDouble()
                     
-                    val x = ((Mercator.lonToX(lon) - (actualMercCenterX - actualMercSpan / 2.0)) / actualMercSpan * width).toFloat()
-                    val y = ((Mercator.latToY(lat) - (actualMercCenterY - actualMercSpan / 2.0)) / actualMercSpan * height).toFloat()
+                    // COORDINATE STABILIZATION: Use double precision until the very end
+                    val px = (Mercator.lonToX(lon) - (actualMercCenterX - actualMercSpan / 2.0)) / actualMercSpan * width
+                    val py = (Mercator.latToY(lat) - (actualMercCenterY - actualMercSpan / 2.0)) / actualMercSpan * height
                     
-                    if (i == 0) {
-                        val lastP = if (mergeKey != null) lastPoints[mergeKey] else null
-                        // Relaxed matching for stitching (1.0 units)
-                        if (lastP != null && abs(lastP.x - x) < 1.0f && abs(lastP.y - y) < 1.0f) {
-                            // Continue from last point to enable StrokeJoin and fix stitching
-                        } else {
-                            mapPath.moveTo(x, y)
-                        }
+                    val x = px.toFloat()
+                    val y = py.toFloat()
+                    
+                    if (type == 2 || type == 3 || type == 9) {
+                        // Triangle based area
+                        if (i % 3 == 0) mapPath.moveTo(x, y)
+                        else mapPath.lineTo(x, y)
+                        if (i % 3 == 2) mapPath.close()
+                        
+                        // Set label pos to first triangle's first point as approximate center
+                        if (labelPos == null) labelPos = Offset(x, y)
                     } else {
-                        mapPath.lineTo(x, y)
+                        if (i == 0) {
+                            val lastP = if (mergeKey != null) lastPoints[mergeKey] else null
+                            // Relaxed matching for stitching (1.0 units)
+                            if (lastP != null && abs(lastP.x - x) < 1.0f && abs(lastP.y - y) < 1.0f) {
+                                // Continue from last point to enable StrokeJoin and fix stitching
+                            } else {
+                                mapPath.moveTo(x, y)
+                            }
+                        } else {
+                            mapPath.lineTo(x, y)
+                        }
+                        if (i == count / 2) labelPos = Offset(x, y)
                     }
-                    if (i == count / 2) labelPos = Offset(x, y)
                     if (i == count - 1) {
-                        if (type in listOf(2, 3, 9)) mapPath.close()
                         if (mergeKey != null) lastPoints[mergeKey] = Offset(x, y)
                     }
                 }
@@ -210,7 +249,7 @@ object MapTileStateHolder {
                     if (mergeKey != null && name.isEmpty() && pathsByType.getOrPut(type) { mutableListOf() }.any { it.name.isEmpty() }) {
                         // Already added the "unnamed" path for this type
                     } else {
-                        pathsByType.getOrPut(type) { mutableListOf() }.add(MapFeaturePath(mapPath, name, labelPos))
+                        pathsByType.getOrPut(type) { mutableListOf() }.add(MapFeaturePath(mapPath, name, labelPos, roadColor, roadWidthValue, roadCasingColor, roadCasingWidthValue, layerValue, priorityValue))
                     }
                 }
             }

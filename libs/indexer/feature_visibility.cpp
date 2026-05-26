@@ -255,17 +255,20 @@ bool IsDrawableForIndexClassifOnly(TypesHolder const & types, int level)
 
 bool IsDrawableForIndex(FeatureType & ft, int level)
 {
-  return IsDrawableForIndexGeometryOnly(ft, level) && IsDrawableForIndexClassifOnly(TypesHolder(ft), level);
+  return IsDrawableForIndexClassifOnly(TypesHolder(ft), level) && IsDrawableForIndexGeometryOnly(ft, level);
 }
 
 bool IsDrawableForIndex(TypesHolder const & types, m2::RectD const & limitRect, int level)
 {
-  return IsDrawableForIndexGeometryOnly(types, limitRect, level) && IsDrawableForIndexClassifOnly(types, level);
+  return IsDrawableForIndexClassifOnly(types, level) && IsDrawableForIndexGeometryOnly(types, limitRect, level);
 }
 
 bool IsDrawableForIndexGeometryOnly(FeatureType & ft, int level)
 {
-  return IsDrawableForIndexGeometryOnly(TypesHolder(ft), ft.GetLimitRectChecked(), level);
+  if (ft.GetGeomType() != GeomType::Area)
+    return true;
+
+  return IsDrawableForIndexGeometryOnly(TypesHolder(ft), ft.GetLimitRect(level), level);
 }
 
 bool IsUsefulType(uint32_t t, GeomType geomType, bool emptyName)
@@ -298,7 +301,7 @@ bool RemoveUselessTypes(vector<uint32_t> & types, GeomType geomType, bool emptyN
 
 int GetMinDrawableScale(FeatureType & ft)
 {
-  return GetMinDrawableScale(TypesHolder(ft), ft.GetLimitRectChecked());
+  return GetMinDrawableScale(TypesHolder(ft), ft.GetLimitRect(FeatureType::BEST_GEOMETRY));
 }
 
 int GetMinDrawableScale(TypesHolder const & types, m2::RectD const & limitRect)

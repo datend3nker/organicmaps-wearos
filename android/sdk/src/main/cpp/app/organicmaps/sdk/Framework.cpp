@@ -49,6 +49,11 @@
 #include "platform/localization.hpp"
 #include "platform/location.hpp"
 
+#include "indexer/classificator.hpp"
+#include "indexer/drawing_rules.hpp"
+#include "indexer/drules_struct.pb.h"
+#include "indexer/feature_visibility.hpp"
+
 #include "indexer/feature_visibility.hpp"
 #include "platform/measurement_utils.hpp"
 #include "platform/network_policy.hpp"
@@ -1095,6 +1100,9 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
 {
   std::vector<uint8_t> buffer;
   
+  // SCALE CAPPING: Native core only has drawing rules up to Z19
+  int const cappedScale = std::min(static_cast<int>(scale), 19);
+
   m2::RectD rect;
   rect.Add(mercator::FromLatLon(minLat, minLon));
   rect.Add(mercator::FromLatLon(maxLat, maxLon));
@@ -1103,160 +1111,200 @@ JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMap
   {
     int featuresCount = 0;
     // SMART DETAIL STRATEGY: Respect zoom-level limits and keep watch performance stable
-    int maxFeatures = 500;
-    if (scale >= 18) maxFeatures = 4000;
-    else if (scale >= 16) maxFeatures = 2000;
-    else if (scale >= 14) maxFeatures = 1000;
+    int maxFeatures = 2000;
+    if (cappedScale >= 18) maxFeatures = 20000;
+    else if (cappedScale >= 16) maxFeatures = 10000;
+    else if (cappedScale >= 14) maxFeatures = 5000;
 
-    for (int pass = 1; pass <= 3; ++pass) {
-      frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
-          if (featuresCount >= maxFeatures) return;
+    // Decluttering grid for POIs
+    std::set<std::pair<int, int>> occupiedCells;
+    double const cellSize = (maxLat - minLat) / 10.0;
 
-          feature::TypesHolder types(ft);
-          auto geomType = ft.GetGeomType();
+    frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
+        if (featuresCount >= maxFeatures) return;
 
-          // Pass 1: Roads, Pass 2: Areas, Pass 3: POIs
-          if (pass == 1 && geomType != feature::GeomType::Line) return;
-          if (pass == 2 && geomType != feature::GeomType::Area) return;
-          if (pass == 3 && geomType != feature::GeomType::Point) return;
+        feature::TypesHolder types(ft);
+        auto geomType = ft.GetGeomType();
 
-          // STRICT VISIBILITY CHECK: Hide small details when zoomed out
-          int minScale = feature::GetMinDrawableScaleClassifOnly(types);
-          if (minScale > scale) return;
+        // STRICT VISIBILITY SYNC: Use phone's native visibility logic
+        if (!feature::IsDrawableForIndex(ft, cappedScale)) return;
 
-          // DENSITY FILTER FOR POIs (Pass 3)
-          if (pass == 3) {
-              // Only high-priority POIs (stations, hotels, tourism) shown at mid-zoom
-              // Minor POIs (benches, fountains, shops) only shown at zoom 16+
-              if (scale < 16) {
-                  bool isHighPriority = ftypes::IsRailwayStationChecker::Instance()(types) ||
-                                       ftypes::IsSubwayStationChecker::Instance()(types) ||
-                                       ftypes::IsAirportChecker::Instance()(types) ||
-                                       ftypes::IsHotelChecker::Instance()(types) ||
-                                       ftypes::IsPeakChecker::Instance()(types);
-                  if (!isHighPriority) return;
-              }
-              // Even at 16+, we limit density if it's too crowded
-              if (featuresCount > (maxFeatures * 0.8)) return;
-          }
+        // DENSITY FILTER FOR POIs
+        if (geomType == feature::GeomType::Point) {
+            using namespace ftypes;
+            bool isHighPriority = IsRailwayStationChecker::Instance()(types) ||
+                                 IsSubwayStationChecker::Instance()(types) ||
+                                 IsAirportChecker::Instance()(types) ||
+                                 IsHotelChecker::Instance()(types) ||
+                                 IsPeakChecker::Instance()(types);
 
-          uint8_t type = 0;
-          std::string iconName;
-          using namespace ftypes;
+            m2::PointD center = ft.GetCenter();
+            double lat = mercator::YToLat(center.y);
+            double lon = mercator::XToLon(center.x);
+            int cellX = static_cast<int>((lon - minLon) / cellSize);
+            int cellY = static_cast<int>((lat - minLat) / cellSize);
 
-          if (geomType == feature::GeomType::Line) {
-              HighwayClass hw = GetHighwayClass(types);
-              if (routerType == 0 && hw == HighwayClass::Pedestrian) return;
+            if (occupiedCells.count({cellX, cellY})) return;
 
-              if (hw == HighwayClass::Trunk) type = 4;
-              else if (hw == HighwayClass::Primary) type = 5;
-              else if (hw == HighwayClass::Secondary) type = 6;
-              else if (hw == HighwayClass::Tertiary) type = 7;
-              else if (hw == HighwayClass::LivingStreet) type = 1;
-              else if (hw == HighwayClass::Service || hw == HighwayClass::ServiceMinor) type = 8;
-              else type = 1;
-          } else if (geomType == feature::GeomType::Area) {
-              if (IsBuildingChecker::Instance()(types)) type = 2;
-              else {
-                  bool isWater = false;
-                  bool isGreen = false;
-                  auto const & c = classif();
-                  static uint32_t const water = c.GetTypeByPath({"natural", "water"});
-                  static uint32_t const forest = c.GetTypeByPath({"landuse", "forest"});
-                  static uint32_t const park = c.GetTypeByPath({"leisure", "park"});
-                  static uint32_t const grass = c.GetTypeByPath({"landuse", "grass"});
-                  static uint32_t const meadow = c.GetTypeByPath({"landuse", "meadow"});
+            // Minor POIs only shown at high zoom
+            if (cappedScale < 17 && !isHighPriority && !IsEatChecker::Instance()(types) && !IsATMChecker::Instance()(types))
+                return;
 
-                  for (uint32_t t : types) {
-                      uint32_t t2 = t;
-                      ftype::TruncValue(t2, 2);
-                      if (t2 == water) isWater = true;
-                      else if (t2 == forest || t2 == park || t2 == grass || t2 == meadow) isGreen = true;
-                  }
+            occupiedCells.insert({cellX, cellY});
+        }
 
-                  if (isWater) type = 3;
-                  else if (isGreen) type = 9;
-                  else return;
-              }
-          } else if (geomType == feature::GeomType::Point) {
-              if (poiCategoriesMask == 0) return;
-              if ((poiCategoriesMask & (1 << 0)) && IsEatChecker::Instance()(types)) type = 100;
-              else if ((poiCategoriesMask & (1 << 1)) && IsHotelChecker::Instance()(types)) type = 102;
-              else if ((poiCategoriesMask & (1 << 2)) && IsATMChecker::Instance()(types)) type = 103;
-              else if ((poiCategoriesMask & (1 << 3)) && IsParkingChecker::Instance()(types)) type = 107;
-              else if ((poiCategoriesMask & (1 << 4)) && IsPeakChecker::Instance()(types)) type = 108;
-              else if ((poiCategoriesMask & (1 << 5)) && IsCampPitchChecker::Instance()(types)) type = 109;
-              else if ((poiCategoriesMask & (1 << 7)) && IsRailwayStationChecker::Instance()(types)) type = 111;
-              else if ((poiCategoriesMask & (1 << 8)) && IsSubwayStationChecker::Instance()(types)) type = 112;
-              else if ((poiCategoriesMask & (1 << 9)) && IsAirportChecker::Instance()(types)) type = 113;
-              else if (IsPoiChecker::Instance()(types)) type = 106;
+        // EXTRACT ALL SUITABLE RULES (casing + fill, etc.)
+        drule::KeysT keys;
+        feature::GetDrawRule(types, cappedScale, keys);
 
-              if (type == 0) return;
+        if (keys.empty()) return;
 
-              // Extract icon name for POI
-              uint32_t bestType = 0;
-              for (uint32_t t : types) {
-                  if (bestType == 0 || ftype::GetLevel(t) > ftype::GetLevel(bestType))
-                      bestType = t;
-              }
-              if (bestType != 0) {
-                  auto const path = classif().GetFullObjectNamePath(bestType);
-                  if (!path.empty()) iconName = path.back();
-              }
-          }
+        std::vector<m2::PointD> points;
+        if (geomType == feature::GeomType::Point) {
+            points.push_back(ft.GetCenter());
+        } else if (geomType == feature::GeomType::Area) {
+            ft.ForEachTriangle([&](m2::PointD const & p1, m2::PointD const & p2, m2::PointD const & p3) {
+              points.push_back(p1);
+              points.push_back(p2);
+              points.push_back(p3);
+            }, cappedScale);
 
-          if (type == 0) return;
+            if (points.empty()) {
+                ft.ForEachPoint([&](m2::PointD const & p) {
+                  points.push_back(p);
+                }, cappedScale);
+            }
+        } else {
+            ft.ForEachPoint([&](m2::PointD const & p) {
+              points.push_back(p);
+            }, cappedScale);
+        }
 
-          std::vector<m2::PointD> points;
-          if (geomType == feature::GeomType::Point) {
-              points.push_back(ft.GetCenter());
-          } else {
-              ft.ForEachPoint([&](m2::PointD const & p) {
-                points.push_back(p);
-              }, scale);
-          }
+        if (points.empty() || (geomType != feature::GeomType::Point && points.size() < 2)) return;
 
-          if (points.empty() || (geomType != feature::GeomType::Point && points.size() < 2)) return;
+        std::string name(ft.GetName(0));
+        if (geomType == feature::GeomType::Area) {
+            std::string houseNumber = ft.GetHouseNumber();
+            if (!houseNumber.empty()) {
+                if (name.empty()) name = houseNumber;
+                else name = name + " (" + houseNumber + ")";
+            }
+        }
 
-          featuresCount++;
-          buffer.push_back(static_cast<uint8_t>(type));
+        int8_t layer = ft.GetLayer();
+        uint8_t type = 0;
+        uint32_t color = 0;
+        uint32_t casingColor = 0;
+        float roadWidth = 0.0f;
+        float roadCasingWidth = 0.0f;
+        int32_t priority = 0;
+        std::string iconName;
 
-          if (type >= 100) {
-              uint8_t iconLen = static_cast<uint8_t>(iconName.size());
-              buffer.push_back(iconLen);
-              if (iconLen > 0) buffer.insert(buffer.end(), iconName.begin(), iconName.end());
-          }
+        if (geomType == feature::GeomType::Line) {
+            using namespace ftypes;
+            HighwayClass hw = GetHighwayClass(types);
+            if (hw == HighwayClass::Trunk) type = 4;
+            else if (hw == HighwayClass::Primary) type = 5;
+            else if (hw == HighwayClass::Secondary) type = 6;
+            else if (hw == HighwayClass::Tertiary) type = 7;
+            else if (hw == HighwayClass::LivingStreet) type = 1;
+            else if (hw == HighwayClass::Service || hw == HighwayClass::ServiceMinor) type = 8;
+            else type = 1;
 
-          std::string name(ft.GetName(0));
+            // SMART ROAD AGGREGATION: Collect casing and fill from all rules
+            for (auto const & key : keys) {
+                if (key.m_type != drule::line) continue;
+                auto const * rule = drule::GetCurrentRules().Find(key);
+                if (!rule || !rule->GetLine()) continue;
+                auto const * lineRule = rule->GetLine();
 
-          // EXTRA: Extract house numbers for buildings (Type 2)
-          if (type == 2) {
-              std::string houseNumber = ft.GetHouseNumber();
-              if (!houseNumber.empty()) {
-                  if (name.empty()) name = houseNumber;
-                  else name = name + " (" + houseNumber + ")";
-              }
-          }
+                if (lineRule->width() > roadWidth) {
+                    // This is likely the casing (wider)
+                    roadCasingWidth = roadWidth;
+                    casingColor = color;
+                    roadWidth = static_cast<float>(lineRule->width());
+                    color = lineRule->color();
+                } else {
+                    roadCasingWidth = static_cast<float>(lineRule->width());
+                    casingColor = lineRule->color();
+                }
+                priority = std::max(priority, static_cast<int32_t>(lineRule->priority()));
+            }
+        } else if (geomType == feature::GeomType::Area) {
+            type = 2; // Generic Area
+            for (auto const & key : keys) {
+                if (key.m_type != drule::area) continue;
+                auto const * rule = drule::GetCurrentRules().Find(key);
+                if (!rule || !rule->GetArea()) continue;
+                color = rule->GetArea()->color();
+                priority = rule->GetArea()->priority();
+                break; // Just one fill
+            }
+        } else if (geomType == feature::GeomType::Point) {
+            if (poiCategoriesMask == 0) return;
+            type = 100;
+            for (auto const & key : keys) {
+                if (key.m_type != drule::symbol) continue;
+                auto const * rule = drule::GetCurrentRules().Find(key);
+                if (!rule || !rule->GetSymbol()) continue;
+                iconName = rule->GetSymbol()->name();
+                priority = rule->GetSymbol()->priority();
 
-          uint16_t nameLen = static_cast<uint16_t>(name.size());
-          uint8_t * pNameLen = reinterpret_cast<uint8_t *>(&nameLen);
-          buffer.insert(buffer.end(), pNameLen, pNameLen + sizeof(nameLen));
-          if (nameLen > 0) buffer.insert(buffer.end(), name.begin(), name.end());
+                // STRIP SUFFIXES: Convert "pharmacy-m" -> "pharmacy" for SDK parity
+                size_t dashPos = iconName.find_last_of('-');
+                if (dashPos != std::string::npos && (iconName.substr(dashPos) == "-m" || iconName.substr(dashPos) == "-s" || iconName.substr(dashPos) == "-l")) {
+                    iconName = iconName.substr(0, dashPos);
+                }
+                break;
+            }
+        }
 
-          uint32_t count = points.size();
-          uint8_t * pCount = reinterpret_cast<uint8_t *>(&count);
-          buffer.insert(buffer.end(), pCount, pCount + sizeof(count));
+        if (type == 0) return;
 
-          for (auto const & p : points) {
+        featuresCount++;
+        buffer.push_back(static_cast<uint8_t>(type));
+
+        // PRIORITY (int32)
+        uint8_t * pPrio = reinterpret_cast<uint8_t *>(&priority);
+        buffer.insert(buffer.end(), pPrio, pPrio + sizeof(priority));
+
+        // METADATA (color, width, casingColor, casingWidth, layer)
+        uint8_t * pColor = reinterpret_cast<uint8_t *>(&color);
+        buffer.insert(buffer.end(), pColor, pColor + sizeof(color));
+        uint8_t * pWidth = reinterpret_cast<uint8_t *>(&roadWidth);
+        buffer.insert(buffer.end(), pWidth, pWidth + sizeof(roadWidth));
+
+        uint8_t * pCasingColor = reinterpret_cast<uint8_t *>(&casingColor);
+        buffer.insert(buffer.end(), pCasingColor, pCasingColor + sizeof(casingColor));
+        uint8_t * pCasingWidth = reinterpret_cast<uint8_t *>(&roadCasingWidth);
+        buffer.insert(buffer.end(), pCasingWidth, pCasingWidth + sizeof(roadCasingWidth));
+
+        buffer.push_back(static_cast<uint8_t>(layer + 128));
+
+        if (type >= 100) {
+            uint8_t iconLen = static_cast<uint8_t>(iconName.size());
+            buffer.push_back(iconLen);
+            if (iconLen > 0) buffer.insert(buffer.end(), iconName.begin(), iconName.end());
+        }
+
+        uint16_t nameLen = static_cast<uint16_t>(name.size());
+        uint8_t * pNameLen = reinterpret_cast<uint8_t *>(&nameLen);
+        buffer.insert(buffer.end(), pNameLen, pNameLen + sizeof(nameLen));
+        if (nameLen > 0) buffer.insert(buffer.end(), name.begin(), name.end());
+
+        uint32_t count = points.size();
+        uint8_t * pCount = reinterpret_cast<uint8_t *>(&count);
+        buffer.insert(buffer.end(), pCount, pCount + sizeof(count));
+
+        for (auto const & p : points) {
             double lat = mercator::YToLat(p.y);
             double lon = mercator::XToLon(p.x);
             uint8_t * pLon = reinterpret_cast<uint8_t *>(&lon);
             uint8_t * pLat = reinterpret_cast<uint8_t *>(&lat);
             buffer.insert(buffer.end(), pLon, pLon + sizeof(lon));
             buffer.insert(buffer.end(), pLat, pLat + sizeof(lat));
-          }
-      }, rect, scale);
-    }
+        }
+    }, rect, cappedScale);
   }
 
   jbyteArray result = env->NewByteArray(buffer.size());
@@ -1801,36 +1849,48 @@ JNIEXPORT jobject Java_app_organicmaps_sdk_Framework_nativeGetMapObjectForLocati
 {
   m2::PointD const pt = mercator::FromLatLon(lat, lon);
   // Find feature at coordinates
-  // Reduced tolerance for better accuracy (approx 20 meters)
-  double const tolerance = 0.0002;
+  // Multi-pass refined hit testing
+  double const tolerance = 0.00015; // ~15 meters
   m2::RectD const rect(pt.x - tolerance, pt.y - tolerance, pt.x + tolerance, pt.y + tolerance);
 
   jobject result = nullptr;
 
-  // PASS 1: Named points (Cafe, Shop, etc.) - The most likely target
-  // PASS 2: Named areas (Building with name, Park, etc.)
-  // PASS 3: Unnamed buildings (often tapped for address)
-  // PASS 4: Technical POIs (Gate, Barrier, etc.)
-  // PASS 5: Roads/Lines
-  for (int pass = 1; pass <= 5; ++pass) {
-    for (int zoom = 19; zoom >= 13; --zoom) {
+  // PASS 1: Named specific POIs (Cafe, Shop, etc.)
+  // PASS 2: Named buildings/areas
+  // PASS 3: Unnamed buildings (for address)
+  // PASS 4: Roads/Technical markers
+  for (int pass = 1; pass <= 4; ++pass) {
+    for (int zoom = 19; zoom >= 14; --zoom) {
       frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
         if (result != nullptr) return;
 
         auto geomType = ft.GetGeomType();
         bool hasName = !ft.GetNames().IsEmpty() || !ft.GetHouseNumber().empty();
+        feature::TypesHolder types(ft);
 
-        if (pass == 1 && (geomType != feature::GeomType::Point || !hasName)) return;
+        if (pass == 1) {
+            if (geomType != feature::GeomType::Point || !hasName) return;
+            if (!ftypes::IsPoiChecker::Instance()(types) && !ftypes::IsEatChecker::Instance()(types)) return;
+        }
         if (pass == 2 && (geomType != feature::GeomType::Area || !hasName)) return;
-        if (pass == 3 && (geomType != feature::GeomType::Area || hasName || !ftypes::IsBuildingChecker::Instance()(feature::TypesHolder(ft)))) return;
-        if (pass == 4 && (geomType != feature::GeomType::Point || hasName)) return;
-        if (pass == 5 && geomType != feature::GeomType::Line) return;
+        if (pass == 3 && (geomType != feature::GeomType::Area || hasName || !ftypes::IsBuildingChecker::Instance()(types))) return;
+        if (pass == 4 && geomType == feature::GeomType::Undefined) return;
 
         LOG(LINFO, ("Found feature: ", ft.GetDefaultName(), " zoom: ", zoom, " pass: ", pass));
 
         place_page::Info info;
         info.SetFromFeatureType(ft);
         info.SetMercator(pt);
+
+        // Manual address resolution if missing
+        if (info.GetAddress().empty()) {
+            search::ReverseGeocoder const coder(frm()->GetDataSource());
+            search::ReverseGeocoder::Address addr;
+            coder.GetNearbyAddress(pt, 0.5 /* maxDistanceM */, addr, true /* placeAsStreet */);
+            std::string formattedAddr = addr.FormatAddress();
+            if (!formattedAddr.empty()) info.SetAddress(std::move(formattedAddr));
+        }
+
         result = env->NewGlobalRef(CreateMapObject(env, info));
       }, rect, zoom);
       if (result != nullptr) break;

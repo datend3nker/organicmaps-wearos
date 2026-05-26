@@ -198,6 +198,7 @@ public:
   ///@{
   /// @return INVALID_TYPE in case of nonexisting type
   uint32_t GetTypeByPathSafe(std::vector<std::string_view> const & path) const;
+  uint32_t GetTypeByPathSafe(base::StringIL const & lst) const;
   /// Invokes ASSERT in case of nonexisting type
   uint32_t GetTypeByPath(std::vector<std::string> const & path) const;
   uint32_t GetTypeByPath(std::vector<std::string_view> const & path) const;

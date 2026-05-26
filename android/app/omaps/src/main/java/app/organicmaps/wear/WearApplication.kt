@@ -82,6 +82,7 @@ class WearApplication : Application() {
                 }
                 app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
                 organicMaps.locationHelper.onExitFromFirstRun()
+                Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
                 setupLocalNavigationListener()
             }
             if (!asyncContinue) {
@@ -91,6 +92,7 @@ class WearApplication : Application() {
                 }
                 app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
                 organicMaps.locationHelper.onExitFromFirstRun()
+                Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
                 setupLocalNavigationListener()
             }
         } catch (e: Throwable) {
