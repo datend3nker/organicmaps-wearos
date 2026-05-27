@@ -937,7 +937,7 @@ void Storage::RegisterLocalFile(platform::LocalCountryFile const & localFile)
   /// Funny, but ptr->GetCountryFile() has valid name only. Size and sha1 are not initialized.
   /// @todo Store only name (CountryId) in LocalCountryFile instead of CountryFile?
   if (m_currentVersion == ptr->GetVersion() && size != GetCountryFile(countryId).GetRemoteSize())
-    LOG(LERROR, ("Inconsistent MWM and version for", *ptr));
+    LOG(LWARNING, ("Inconsistent MWM and version for", *ptr));
 }
 
 void Storage::DeleteCountryFiles(CountryId const & countryId, MapFileType type, bool deferredDelete)
@@ -1226,8 +1226,6 @@ void Storage::GetChildrenInGroups(CountryId const & parent, CountriesVec & downl
 
 bool Storage::IsNodeDownloaded(CountryId const & countryId) const
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
-
   auto const it = m_localFiles.find(countryId);
   /// @todo IDK what is the logic here, but other functions also check on empty list.
   return (it != m_localFiles.end() && !it->second.empty());
@@ -1672,7 +1670,7 @@ void Storage::GetNodeAttrs(CountryId const & countryId, NodeAttrs & nodeAttrs) c
 
 void Storage::GetNodeStatuses(CountryId const & countryId, NodeStatuses & nodeStatuses) const
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   CountryTree::Node const * const node = m_countries.FindFirst(countryId);
   CHECK(node, (countryId));

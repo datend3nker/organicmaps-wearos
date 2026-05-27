@@ -92,6 +92,10 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                     val sorted = result.filter { 
                         (it.id != "World" && it.id != "WorldCoasts") || !it.present
                     }.sortedWith { a, b ->
+                        // HIGHLIGHT: Prioritize Near Me items for the current view
+                        if (a.category == CountryItem.CATEGORY_NEAR_ME && b.category != CountryItem.CATEGORY_NEAR_ME) return@sortedWith -1
+                        if (b.category == CountryItem.CATEGORY_NEAR_ME && a.category != CountryItem.CATEGORY_NEAR_ME) return@sortedWith 1
+
                         val aDone = a.status == CountryItem.STATUS_DONE || a.status == CountryItem.STATUS_PARTLY || a.present
                         val bDone = b.status == CountryItem.STATUS_DONE || b.status == CountryItem.STATUS_PARTLY || b.present
                         

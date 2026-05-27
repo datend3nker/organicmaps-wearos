@@ -242,7 +242,8 @@ double GetDrawTileScale(double baseScale)
 
 int GetDrawTileScale(double baseScale, uint32_t tileSize, double visualScale)
 {
-  return math::iround(baseScale + GetTileScaleIncrement(tileSize, visualScale));
+  int const drawScale = math::iround(baseScale + GetTileScaleIncrement(tileSize, visualScale));
+  return math::Clamp(drawScale, 1, scales::GetUpperStyleScale() + 1);
 }
 }  // namespace
 

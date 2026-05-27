@@ -196,10 +196,8 @@ bool Framework::CreateDrapeEngine(JNIEnv * env, jobject jSurface, int densityDpi
   int constexpr kMinSdkVersionForVulkan = 26;
   int const sdkVersion = android_get_device_api_level();
   LOG(LINFO, ("Android SDK version in the Drape Engine:", sdkVersion));
-  auto const vulkanForbidden =
-      sdkVersion < kMinSdkVersionForVulkan || dp::SupportManager::Instance().IsVulkanForbidden();
-  if (vulkanForbidden)
-    LOG(LWARNING, ("Vulkan API is forbidden on this device."));
+  auto const vulkanForbidden = true;
+  LOG(LINFO, ("Vulkan API is forbidden on this device (forced)."));
 
   m_vulkanContextFactory.reset();
   m_oglContextFactory.reset();
@@ -905,6 +903,12 @@ JNIEXPORT jdoubleArray Java_app_organicmaps_sdk_Framework_nativeGetParsedCenterL
 JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativePlacePageActivationListener(JNIEnv * env, jclass,
                                                                                     jobject jListener)
 {
+  if (!g_framework)
+  {
+    LOG(LWARNING, ("nativePlacePageActivationListener: framework is not initialized"));
+    return;
+  }
+
   LOG(LINFO, ("Set global map object listener"));
   g_placePageActivationListener = env->NewGlobalRef(jListener);
   // void onPlacePageActivated(MapObject object);
@@ -918,6 +922,8 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativePlacePageActivationListe
   auto const fillPlacePage = [activatedId]()
   {
     JNIEnv * env = jni::GetEnv();
+    if (!g_framework)
+      return;
     auto const & info = frm()->GetCurrentPlacePageInfo();
     jni::TScopedLocalRef placePageDataRef(env, nullptr);
     placePageDataRef.reset(CreateMapObject(env, info));
@@ -946,7 +952,9 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativeRemovePlacePageActivatio
   if (!env->IsSameObject(g_placePageActivationListener, jListener))
     return;
 
-  frm()->SetPlacePageListeners({} /* onOpen */, {} /* onClose */, {} /* onUpdate */, {} /* onSwitchFullScreen */);
+  if (g_framework)
+    frm()->SetPlacePageListeners({} /* onOpen */, {} /* onClose */, {} /* onUpdate */, {} /* onSwitchFullScreen */);
+
   LOG(LINFO, ("Remove global map object listener"));
   env->DeleteGlobalRef(g_placePageActivationListener);
   g_placePageActivationListener = nullptr;

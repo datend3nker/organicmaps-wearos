@@ -21,3 +21,5 @@ include ':app'
 include ':sdk'
 include ':sdk:maps:world'
 include ':app:omaps'
+include ':baselineprofile'
+

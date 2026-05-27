@@ -139,14 +139,6 @@ class Omaps : ComponentActivity() {
             lon = lastLon
         ), force = true)
 
-        // Apply native settings
-        try {
-            app.organicmaps.sdk.Framework.nativeSetTransitSchemeEnabled(transitEnabled)
-            app.organicmaps.sdk.Framework.nativeSetCyclingLayerEnabled(bikingEnabled)
-            app.organicmaps.sdk.Framework.nativeSetHikingLayerEnabled(hikingEnabled)
-            app.organicmaps.sdk.Framework.nativeSetIsolinesLayerEnabled(isolinesEnabled)
-        } catch (_: Throwable) {}
-        
         setContent {
             WearApp()
         }

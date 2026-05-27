@@ -31,15 +31,17 @@ Organic Maps is the ultimate companion app for travellers, tourists, hikers, and
 - Dark Mode to protect your eyes
 - Countries and regions don't take a lot of space
 - Free and open-source
-- **Full-featured Wear OS Companion**:
-  - **Standalone & Companion Modes**: Use it independently or paired with your phone
-  - **Bluetooth Sync**: Uses "Nearby Devices" permission for zero-config syncing between watch and phone
-  - **Offline Maps**: Download regions directly to your watch or stream them from your phone
-  - **Energy Saving**: "Phone Only" location mode to save watch battery in companion mode
-  - **Live Sync**: All map and routing settings sync bidirectionally between devices
-  - **Hardware Support**: Rotary crown zoom, physical button shortcuts, and stabilized compass rotation
-  - **Search & Nav**: Independent offline search and turn-by-turn navigation with local GPS support
-  - **Lock Screen**: Navigation instructions appear even when the watch is locked (configurable)
+- **Full-featured Wear OS Application**:
+  - **Native Rendering Engine**: High-performance 60 FPS rendering using the core Organic Maps C++ engine (OpenGL/Vulkan), eliminating UI hangs and providing fluid map interaction.
+  - **Baseline Profiles**: Pre-compiled critical execution paths for near-instant startup and silky-smooth performance from the first run.
+  - **Standalone & Companion Modes**: Use it as a completely independent GPS navigator or as a powerful extension of your phone.
+  - **Bluetooth & GMS Sync**: Zero-config bidirectional syncing of routes and settings between devices.
+  - **True Offline Maps**: Download map regions directly to your watch for total independence from the phone and internet.
+  - **Power Efficiency**: Intelligent hardware management, adaptive update rates, and "Phone Only" location mode to maximize wearable battery life.
+  - **Hardware Integration**: Full support for rotary crown zoom, physical button shortcuts, and stabilized compass-driven rotation.
+  - **Advanced Navigation**: Independent turn-by-turn guidance for walking, cycling, and driving with local GPS support.
+  - **Lock Screen & Ambient Mode**: Glanceable navigation instructions always visible, even in low-power ambient states.
+  - **Privacy First**: Just like the mobile app—no tracking, no ads, no data collection.
 
 ## Why Organic?
 

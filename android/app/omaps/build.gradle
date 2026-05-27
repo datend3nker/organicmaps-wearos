@@ -2,6 +2,7 @@ plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.plugin.compose'
+    id 'androidx.baselineprofile'
 }
 
 android {
@@ -66,8 +67,15 @@ android {
         include "types.txt"
         include "packed_polygons.bin"
         include "drules_proto*.bin"
+        include "resources-*.bin"
         include "World.mwm"
         include "WorldCoasts.mwm"
+        include "symbols/**"
+        include "vulkan_shaders/**"
+        include "fonts/**"
+        include "styles/**"
+        include "transit_colors.txt"
+        include "colors.txt"
         into "src/main/assets"
     }
 
@@ -150,4 +158,11 @@ dependencies {
 
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+
+    baselineProfile project(':baselineprofile')
+    implementation 'androidx.profileinstaller:profileinstaller:1.4.1'
+}
+
+baselineProfile {
+    saveInSrc = true
 }

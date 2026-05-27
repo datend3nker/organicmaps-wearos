@@ -70,34 +70,54 @@ class WearApplication : Application() {
             nativeLocationFactory
         )
 
-        copyCountriesFileToWritableStorage()
-        
         organicMaps.locationHelper.onEnteredIntoFirstRun()
 
-        try {
-            val asyncContinue = organicMaps.init { 
-                isFullyInitialized = true 
-                if (NavigationStateHolder.state.value.allowMobileData) {
-                    app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+        // OPTIMIZATION: Move heavy asset copying and native reloading to a background thread
+        CoroutineScope(Dispatchers.IO).launch {
+            copyCountriesFileToWritableStorage()
+            withContext(Dispatchers.Main) {
+                try {
+                    val asyncContinue = organicMaps.init { 
+                        isFullyInitialized = true 
+                        val state = NavigationStateHolder.state.value
+                        if (state.allowMobileData) {
+                            app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                        }
+                        app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
+                        organicMaps.locationHelper.onExitFromFirstRun()
+                        Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
+
+                        // Apply native settings from state
+                        Framework.nativeSetTransitSchemeEnabled(state.transitEnabled)
+                        Framework.nativeSetCyclingLayerEnabled(state.bikingEnabled)
+                        Framework.nativeSetHikingLayerEnabled(state.hikingEnabled)
+                        Framework.nativeSetIsolinesLayerEnabled(state.isolinesEnabled)
+
+                        setupLocalNavigationListener()
+                    }
+                    if (!asyncContinue) {
+                        isFullyInitialized = true
+                        val state = NavigationStateHolder.state.value
+                        if (state.allowMobileData) {
+                            app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                        }
+                        app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
+                        organicMaps.locationHelper.onExitFromFirstRun()
+                        Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
+
+                        // Apply native settings from state
+                        Framework.nativeSetTransitSchemeEnabled(state.transitEnabled)
+                        Framework.nativeSetCyclingLayerEnabled(state.bikingEnabled)
+                        Framework.nativeSetHikingLayerEnabled(state.hikingEnabled)
+                        Framework.nativeSetIsolinesLayerEnabled(state.isolinesEnabled)
+
+                        setupLocalNavigationListener()
+                    }
+                } catch (e: Throwable) {
+                    initError = e.stackTraceToString()
+                    e.printStackTrace()
                 }
-                app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
-                organicMaps.locationHelper.onExitFromFirstRun()
-                Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
-                setupLocalNavigationListener()
             }
-            if (!asyncContinue) {
-                isFullyInitialized = true
-                if (NavigationStateHolder.state.value.allowMobileData) {
-                    app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
-                }
-                app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
-                organicMaps.locationHelper.onExitFromFirstRun()
-                Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
-                setupLocalNavigationListener()
-            }
-        } catch (e: Throwable) {
-            initError = e.stackTraceToString()
-            e.printStackTrace()
         }
 
         // Start appropriate communication backend
@@ -190,11 +210,11 @@ class WearApplication : Application() {
                     }
                 }
                 
-                // Adaptive delay to save battery
+        // POWER SAVING: Adaptive delay to save battery
                 val delayMs = when {
-                    routingController.isNavigating -> 1000L
-                    isAmbient -> 10000L
-                    else -> 5000L
+                    routingController.isNavigating -> if (isAmbient) 5000L else 1000L
+                    isAmbient -> 30000L // Longer delay in ambient when not navigating
+                    else -> 10000L // Longer delay in foreground when idle
                 }
                 delay(delayMs)
             }
@@ -364,26 +384,20 @@ class WearApplication : Application() {
             val versionedPath = File(storagePath, "251123")
             if (!versionedPath.exists()) versionedPath.mkdirs()
 
-            val filesToCopyRoot = listOf(
-                "countries.txt", "classificator.txt", "types.txt", "categories.txt", "packed_polygons.bin",
-                "drules_proto.bin", "drules_proto_default_dark.bin", "drules_proto_default_light.bin",
-                "drules_proto_vehicle_dark.bin", "drules_proto_vehicle_light.bin",
-                "drules_proto_outdoors_dark.bin", "drules_proto_outdoors_light.bin"
-            )
-            val filesToCopyVersioned = listOf(
-                "World.mwm", "WorldCoasts.mwm"
-            )
+            // Recursively copy ALL assets to the writable storage
+            // This ensures all styles, textures, and shaders are available to the native engine
+            copyAssetsRecursively("", storagePath)
             
-            val assetList = assets.list("")?.toSet() ?: emptySet()
-            Log.d("WearApplication", "Assets present: $assetList")
+            // Move World maps to the versioned directory if they were copied to root
+            val worldMwm = File(storagePath, "World.mwm")
+            if (worldMwm.exists()) {
+                worldMwm.renameTo(File(versionedPath, "World.mwm"))
+            }
+            val worldCoastsMwm = File(storagePath, "WorldCoasts.mwm")
+            if (worldCoastsMwm.exists()) {
+                worldCoastsMwm.renameTo(File(versionedPath, "WorldCoasts.mwm"))
+            }
 
-            for (fileName in filesToCopyRoot) {
-                copySingleAsset(fileName, storagePath, assetList)
-            }
-            for (fileName in filesToCopyVersioned) {
-                copySingleAsset(fileName, versionedPath.absolutePath, assetList)
-            }
-            
             // Critical for routing: native core needs these registered
             if (isFullyInitialized) {
                 Framework.nativeReloadWorldMaps()
@@ -393,26 +407,39 @@ class WearApplication : Application() {
         }
     }
 
-    private fun copySingleAsset(fileName: String, targetDir: String, assetList: Set<String>) {
-        if (!assetList.contains(fileName)) {
-            Log.w("WearApplication", "Asset $fileName missing from APK!")
-            return
+    private fun copyAssetsRecursively(path: String, targetDir: String) {
+        val assetList = assets.list(path) ?: return
+        if (assetList.isEmpty()) {
+            // It's a file
+            copySingleAsset(path, targetDir)
+        } else {
+            // It's a directory
+            val newTargetDir = if (path.isEmpty()) targetDir else File(targetDir, path).absolutePath
+            val dirFile = File(newTargetDir)
+            if (!dirFile.exists()) dirFile.mkdirs()
+            
+            for (asset in assetList) {
+                val subPath = if (path.isEmpty()) asset else "$path/$asset"
+                copyAssetsRecursively(subPath, targetDir)
+            }
         }
+    }
 
+    private fun copySingleAsset(fileName: String, targetDir: String) {
         val targetFile = File(targetDir, fileName)
         if (targetFile.exists() && targetFile.length() > 0) return
         
+        // Ensure parent directories exist
+        targetFile.parentFile?.mkdirs()
+        
         try {
-            Log.d("WearApplication", "Copying $fileName to $targetDir...")
             assets.open(fileName).use { input ->
                 FileOutputStream(targetFile, false).use { output ->
                     input.copyTo(output)
                 }
             }
-            Log.d("WearApplication", "Successfully copied $fileName")
         } catch (e: Exception) {
-            Log.w("WearApplication", "Failed to copy $fileName: ${e.message}")
-            if (targetFile.exists() && targetFile.length() == 0L) targetFile.delete()
+            // Might be a directory that assets.list returned but can't be opened as a file
         }
     }
 }

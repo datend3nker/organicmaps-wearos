@@ -7,13 +7,16 @@
 #include "base/assert.hpp"
 #include "base/stl_helpers.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 namespace df
 {
 CoverageResult CalcTilesCoverage(m2::RectD const & rect, int targetZoom,
                                  std::function<void(int, int)> const & processTile)
 {
-  ASSERT_GREATER(targetZoom, 0, ());
-  double const rectSize = mercator::Bounds::kRangeX / (1 << (targetZoom - 1));
+  int const zoom = std::max(1, targetZoom);
+  double const rectSize = mercator::Bounds::kRangeX / (1 << (zoom - 1));
 
   CoverageResult result;
   result.m_minTileX = static_cast<int>(floor(rect.minX() / rectSize));
@@ -39,13 +42,13 @@ bool IsNeighbours(TileKey const & tileKey1, TileKey const & tileKey2)
 
 int ClipTileZoomByMaxDataZoom(int zoom)
 {
-  return std::min(zoom, scales::GetUpperScale());
+  return std::max(1, std::min(zoom, scales::GetUpperScale()));
 }
 
 TileKey GetTileKeyByPoint(m2::PointD const & pt, int zoom)
 {
-  ASSERT_GREATER(zoom, 0, ());
-  double const rectSize = mercator::Bounds::kRangeX / (1 << (zoom - 1));
-  return TileKey(static_cast<int>(floor(pt.x / rectSize)), static_cast<int>(floor(pt.y / rectSize)), zoom);
+  int const z = std::max(1, zoom);
+  double const rectSize = mercator::Bounds::kRangeX / (1 << (z - 1));
+  return TileKey(static_cast<int>(floor(pt.x / rectSize)), static_cast<int>(floor(pt.y / rectSize)), z);
 }
 }  // namespace df

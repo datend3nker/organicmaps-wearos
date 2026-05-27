@@ -128,7 +128,7 @@ public class MapView extends SurfaceView
   }
 
   @NonNull
-  Map getMap()
+  public Map getMap()
   {
     return mMap;
   }

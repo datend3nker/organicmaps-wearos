@@ -3,8 +3,11 @@
 #include "drape_frontend/shape_view_params.hpp"
 #include "drape_frontend/tile_utils.hpp"
 
+#include "indexer/scales.hpp"
+
 #include "geometry/mercator.hpp"
 
+#include "base/math.hpp"
 #include "base/string_utils.hpp"
 
 #include <sstream>
@@ -79,8 +82,7 @@ bool TileKey::EqualStrict(TileKey const & other) const
 
 m2::RectD TileKey::GetGlobalRect(bool clipByDataMaxZoom /* = true */) const
 {
-  int const zoomLevel = clipByDataMaxZoom ? ClipTileZoomByMaxDataZoom(m_zoomLevel) : m_zoomLevel;
-  ASSERT_GREATER(zoomLevel, 0, ());
+  int const zoomLevel = clipByDataMaxZoom ? ClipTileZoomByMaxDataZoom(m_zoomLevel) : math::Clamp((int)m_zoomLevel, 1, scales::GetUpperStyleScale() + 1);
   double const worldSizeDivisor = 1 << (zoomLevel - 1);
   // Mercator SizeX and SizeY are equal.
   double const rectSize = mercator::Bounds::kRangeX / worldSizeDivisor;

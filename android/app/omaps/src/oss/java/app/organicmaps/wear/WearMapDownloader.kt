@@ -31,12 +31,18 @@ object WearMapDownloader {
     private val _currentMap = MutableStateFlow<String?>(null)
     val currentMap: StateFlow<String?> = _currentMap.asStateFlow()
 
-    suspend fun downloadOrStreamMap(context: Context, mapId: String, downloadUrl: String) {
+    suspend fun downloadOrStreamMap(context: Context, mapId: String, downloadUrl: String = "") {
         _currentMap.value = mapId
+        
+        val finalUrl = if (downloadUrl.isEmpty()) {
+            "https://direct.organicmaps.app/251123/$mapId.mwm"
+        } else {
+            downloadUrl
+        }
         
         if (hasHighBandwidthConnection(context)) {
             _downloadState.value = DownloadState.DOWNLOADING
-            downloadOverWifi(context, mapId, downloadUrl)
+            downloadOverWifi(context, mapId, finalUrl)
         } else {
             Log.e(TAG, "F-Droid: Maps require Wi-Fi on the watch. No connection found.")
             _downloadState.value = DownloadState.FAILED

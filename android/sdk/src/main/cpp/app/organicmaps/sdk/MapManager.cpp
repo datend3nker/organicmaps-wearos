@@ -395,23 +395,56 @@ JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeGetAttribute
 // static void nativeGetStatus(String root);
 JNIEXPORT jint Java_app_organicmaps_sdk_downloader_MapManager_nativeGetStatus(JNIEnv * env, jclass clazz, jstring root)
 {
+  if (!g_framework)
+    return static_cast<jint>(storage::NodeStatus::Undefined);
+
+  auto const countryId = jni::ToNativeString(env, root);
+  if (countryId.empty())
+    return static_cast<jint>(storage::NodeStatus::Undefined);
+
+  auto & storage = GetStorage();
+  if (!storage.IsNode(countryId))
+    return static_cast<jint>(storage::NodeStatus::Undefined);
+
   storage::NodeStatuses ns;
-  GetStorage().GetNodeStatuses(jni::ToNativeString(env, root), ns);
+  storage.GetNodeStatuses(countryId, ns);
   return static_cast<jint>(ns.m_status);
 }
 
 // static void nativeGetError(String root);
 JNIEXPORT jint Java_app_organicmaps_sdk_downloader_MapManager_nativeGetError(JNIEnv * env, jclass clazz, jstring root)
 {
+  if (!g_framework)
+    return static_cast<jint>(storage::NodeErrorCode::NoError);
+
+  auto const countryId = jni::ToNativeString(env, root);
+  if (countryId.empty())
+    return static_cast<jint>(storage::NodeErrorCode::NoError);
+
+  auto & storage = GetStorage();
+  if (!storage.IsNode(countryId))
+    return static_cast<jint>(storage::NodeErrorCode::NoError);
+
   storage::NodeStatuses ns;
-  GetStorage().GetNodeStatuses(jni::ToNativeString(env, root), ns);
+  storage.GetNodeStatuses(countryId, ns);
   return static_cast<jint>(ns.m_error);
 }
 
 // static String nativeGetName(String root);
 JNIEXPORT jstring Java_app_organicmaps_sdk_downloader_MapManager_nativeGetName(JNIEnv * env, jclass clazz, jstring root)
 {
-  return jni::ToJavaString(env, GetStorage().GetNodeLocalName(jni::ToNativeString(env, root)));
+  if (!g_framework)
+    return jni::ToJavaString(env, "");
+
+  auto const countryId = jni::ToNativeString(env, root);
+  if (countryId.empty())
+    return jni::ToJavaString(env, "");
+
+  auto & storage = GetStorage();
+  if (!storage.IsNode(countryId))
+    return jni::ToJavaString(env, "");
+
+  return jni::ToJavaString(env, storage.GetNodeLocalName(countryId));
 }
 
 // static @Nullable String nativeFindCountry(double lat, double lon);

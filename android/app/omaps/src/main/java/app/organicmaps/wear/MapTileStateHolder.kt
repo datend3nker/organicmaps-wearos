@@ -43,7 +43,11 @@ data class ParsedMapTile(
     val key: MapTileKey,
     val mercatorX: Double,
     val mercatorY: Double,
-    val mercatorSpan: Double
+    val mercatorSpan: Double,
+    // PRE-CALCULATED FOR PERFORMANCE
+    val sortedAreas: List<MapFeaturePath>,
+    val sortedRoads: List<MapFeaturePath>,
+    val sortedPois: List<MapFeaturePoint>
 )
 
 data class MapTile(val requestId: Long, val features: ByteArray, val key: MapTileKey? = null)
@@ -254,6 +258,15 @@ object MapTileStateHolder {
                 }
             }
         }
-        return ParsedMapTile(pathsByType, pointsByType, key, actualMercCenterX, actualMercCenterY, actualMercSpan)
+        val areas = (pathsByType[2] ?: emptyList()) + (pathsByType[3] ?: emptyList()) + (pathsByType[9] ?: emptyList())
+        val roads = listOf(4, 5, 6, 7, 1, 8).flatMap { pathsByType[it] ?: emptyList() }
+        val pois = pointsByType.flatMap { it.value }
+
+        return ParsedMapTile(
+            pathsByType, pointsByType, key, actualMercCenterX, actualMercCenterY, actualMercSpan,
+            sortedAreas = areas.sortedBy { it.priority },
+            sortedRoads = roads.sortedWith(compareBy({ it.layer }, { it.priority })),
+            sortedPois = pois.sortedByDescending { it.priority }
+        )
     }
 }

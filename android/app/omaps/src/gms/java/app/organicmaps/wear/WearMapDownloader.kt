@@ -29,9 +29,15 @@ object WearMapDownloader {
     private val _currentMap = MutableStateFlow<String?>(null)
     val currentMap: StateFlow<String?> = _currentMap.asStateFlow()
 
-    suspend fun downloadOrStreamMap(context: Context, mapId: String, downloadUrl: String) {
+    suspend fun downloadOrStreamMap(context: Context, mapId: String, downloadUrl: String = "") {
         _currentMap.value = mapId
         
+        val finalUrl = if (downloadUrl.isEmpty()) {
+            "https://direct.organicmaps.app/251123/$mapId.mwm"
+        } else {
+            downloadUrl
+        }
+
         // Read the user setting for download mode on the watch.
         // It defaults to BLUETOOTH_ONLY if not set, otherwise AUTO or WIFI_ONLY.
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
@@ -48,7 +54,7 @@ object WearMapDownloader {
             "WIFI_ONLY" -> {
                 if (hasWifi) {
                     _downloadState.value = DownloadState.DOWNLOADING
-                    downloadOverWifi(context, mapId, downloadUrl)
+                    downloadOverWifi(context, mapId, finalUrl)
                 } else {
                     Log.e(TAG, "WIFI_ONLY is set but no Wi-Fi. Failing download.")
                     _downloadState.value = DownloadState.FAILED
@@ -57,7 +63,7 @@ object WearMapDownloader {
             "AUTO" -> {
                 if (hasWifi) {
                     _downloadState.value = DownloadState.DOWNLOADING
-                    downloadOverWifi(context, mapId, downloadUrl)
+                    downloadOverWifi(context, mapId, finalUrl)
                 } else {
                     _downloadState.value = DownloadState.STREAMING_FROM_PHONE
                     streamFromPhone(context, mapId)

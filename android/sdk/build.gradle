@@ -81,6 +81,12 @@ android {
   compileOptions {
     coreLibraryDesugaringEnabled = true
   }
+    buildTypes {
+        benchmarkRelease {
+        }
+        nonMinifiedRelease {
+        }
+    }
 }
 
 dependencies {
