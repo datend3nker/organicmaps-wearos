@@ -20,6 +20,11 @@ import kotlinx.coroutines.*
 import kotlin.math.hypot
 
 class WearApplication : Application() {
+    companion object {
+        lateinit var instance: WearApplication
+            private set
+    }
+
     lateinit var organicMaps: OrganicMaps
         private set
         
@@ -36,6 +41,7 @@ class WearApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         if (isInitializing || isFullyInitialized) return
         isInitializing = true
         
@@ -133,6 +139,7 @@ class WearApplication : Application() {
 
         startPingLoop()
         setupLifecycleAwareUpdates()
+        WearNotificationManager.createNotificationChannel(this)
     }
 
     private fun setupLifecycleAwareUpdates() {

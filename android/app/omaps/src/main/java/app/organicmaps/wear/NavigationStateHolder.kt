@@ -91,7 +91,8 @@ data class NavigationState(
     val locationSource: String = "AUTO", // AUTO, PHONE_ONLY
     val isRouteBuilt: Boolean = false,
     val showOnLockScreen: Boolean = true,
-    val lastFixTime: Long = 0L
+    val lastFixTime: Long = 0L,
+    val syncNotificationsEnabled: Boolean = true
 ) {
     val isEffectivelyStandalone: Boolean
         get() = standaloneMode || !isPhoneConnected
@@ -218,7 +219,8 @@ object NavigationStateHolder {
                 hikingEnabled = prefs.getBoolean("layer_hiking", false),
                 allowMobileData = prefs.getBoolean("pref_mobile_data", false),
                 forceGuiButtons = prefs.getBoolean("pref_force_gui_buttons", false),
-                showOnLockScreen = prefs.getBoolean("pref_show_on_lock_screen", true)
+                showOnLockScreen = prefs.getBoolean("pref_show_on_lock_screen", true),
+                syncNotificationsEnabled = prefs.getBoolean("pref_sync_notifications", true)
             )
         }
     }

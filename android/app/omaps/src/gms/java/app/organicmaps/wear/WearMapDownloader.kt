@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 object WearMapDownloader {
     private const val TAG = "WearMapDownloader"
 
-    enum class DownloadState { IDLE, DOWNLOADING, STREAMING_FROM_PHONE, COMPLETED, FAILED }
+    enum class DownloadState { IDLE, DOWNLOADING, STREAMING_FROM_PHONE, COMPLETED, FAILED, CANCELLED }
 
     private val _downloadState = MutableStateFlow(DownloadState.IDLE)
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
@@ -29,7 +29,46 @@ object WearMapDownloader {
     private val _currentMap = MutableStateFlow<String?>(null)
     val currentMap: StateFlow<String?> = _currentMap.asStateFlow()
 
+    private var currentDownloadJob: kotlinx.coroutines.Job? = null
+
+    fun setStreamingProgress(progress: Float) {
+        _downloadProgress.value = progress
+        if (_downloadState.value != DownloadState.DOWNLOADING) {
+            _downloadState.value = DownloadState.STREAMING_FROM_PHONE
+        }
+        _currentMap.value?.let { 
+            WearNotificationManager.updateSyncNotification(WearApplication.instance, it, progress, true)
+        }
+    }
+
+    fun setStreamingMap(mapId: String) {
+        _currentMap.value = mapId
+        _downloadState.value = DownloadState.STREAMING_FROM_PHONE
+        _downloadProgress.value = 0f
+        WearNotificationManager.updateSyncNotification(WearApplication.instance, mapId, 0f, true)
+    }
+
+    fun onDownloadCompleted() {
+        _downloadState.value = DownloadState.COMPLETED
+        _downloadProgress.value = 1.0f
+        currentDownloadJob = null
+        WearNotificationManager.hideSyncNotification(WearApplication.instance)
+    }
+
+    fun cancel(context: Context) {
+        currentDownloadJob?.cancel()
+        currentDownloadJob = null
+        if (_downloadState.value == DownloadState.STREAMING_FROM_PHONE) {
+            WearCommandService.cancelMapSync(context)
+        }
+        _downloadState.value = DownloadState.CANCELLED
+        WearNotificationManager.hideSyncNotification(context)
+    }
+
     suspend fun downloadOrStreamMap(context: Context, mapId: String, downloadUrl: String = "") {
+        currentDownloadJob?.cancel()
+        currentDownloadJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+
         _currentMap.value = mapId
         
         val finalUrl = if (downloadUrl.isEmpty()) {
@@ -38,57 +77,41 @@ object WearMapDownloader {
             downloadUrl
         }
 
-        // Read the user setting for download mode on the watch.
-        // It defaults to BLUETOOTH_ONLY if not set, otherwise AUTO or WIFI_ONLY.
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val mode = prefs.getString("mapDownloadMode", "BLUETOOTH_ONLY") ?: "BLUETOOTH_ONLY"
+        val mode = prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC"
         
         Log.d(TAG, "Configured mapDownloadMode is $mode")
         
-        // Note on persistence: We are saving map files into context.filesDir inside `downloadOverWifi`.
-        // Files in this directory persist natively across app updates, honoring the requirement 
-        // to only redownload if the user uninstalls the app or if map metadata points to a newer version.
-        val hasWifi = hasHighBandwidthConnection(context)
+        val hasInternet = hasInternetAccess(context)
 
         when (mode) {
-            "WIFI_ONLY" -> {
-                if (hasWifi) {
+            "INTERNET" -> {
+                if (hasInternet) {
                     _downloadState.value = DownloadState.DOWNLOADING
-                    downloadOverWifi(context, mapId, finalUrl)
+                    downloadOverInternet(context, mapId, finalUrl)
                 } else {
-                    Log.e(TAG, "WIFI_ONLY is set but no Wi-Fi. Failing download.")
-                    _downloadState.value = DownloadState.FAILED
-                }
-            }
-            "AUTO" -> {
-                if (hasWifi) {
-                    _downloadState.value = DownloadState.DOWNLOADING
-                    downloadOverWifi(context, mapId, finalUrl)
-                } else {
+                    Log.e(TAG, "INTERNET mode set but no internet access. Falling back to phone sync.")
                     _downloadState.value = DownloadState.STREAMING_FROM_PHONE
                     streamFromPhone(context, mapId)
                 }
             }
-            else -> { // Default is BLUETOOTH_ONLY
+            else -> { // Default is PHONE_SYNC
                 _downloadState.value = DownloadState.STREAMING_FROM_PHONE
                 streamFromPhone(context, mapId)
             }
         }
     }
 
-    private fun hasHighBandwidthConnection(context: Context): Boolean {
+    private fun hasInternetAccess(context: Context): Boolean {
         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val network = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
         
-        val allowMobile = NavigationStateHolder.state.value.allowMobileData
-        
-        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || 
-               capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
-               (allowMobile && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR))
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+               capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
-    private suspend fun downloadOverWifi(context: Context, mapId: String, downloadUrl: String) = withContext(Dispatchers.IO) {
+    private suspend fun downloadOverInternet(context: Context, mapId: String, downloadUrl: String) = withContext(Dispatchers.IO) {
         try {
             val url = URL(downloadUrl)
             val connection = url.openConnection()
@@ -105,18 +128,25 @@ object WearMapDownloader {
                         if (count == -1) break
                         total += count.toLong()
                         if (fileLength > 0) {
-                            _downloadProgress.value = (total.toFloat() / fileLength.toFloat())
+                            val progress = total.toFloat() / fileLength.toFloat()
+                            _downloadProgress.value = progress
+                            _currentMap.value?.let { 
+                                WearNotificationManager.updateSyncNotification(context, it, progress, false)
+                            }
                         }
                         output.write(data, 0, count)
                     }
                 }
             }
-            Log.d(TAG, "Successfully downloaded $mapId over Wi-Fi")
+            Log.d(TAG, "Successfully downloaded $mapId over internet")
             _downloadState.value = DownloadState.COMPLETED
             _downloadProgress.value = 1.0f
+            currentDownloadJob = null
+            WearNotificationManager.hideSyncNotification(context)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed downloading via Wi-Fi. Falling back to Bluetooth...", e)
-            _downloadState.value = DownloadState.FAILED
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.e(TAG, "Failed downloading via internet. Falling back to phone sync...", e)
+            _downloadState.value = DownloadState.STREAMING_FROM_PHONE
             streamFromPhone(context, mapId)
         }
     }

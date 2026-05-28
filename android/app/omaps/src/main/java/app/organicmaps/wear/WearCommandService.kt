@@ -122,4 +122,5 @@ object WearCommandService {
     fun checkConnection(context: Context, callback: (Boolean) -> Unit) = getBackend(context).checkConnection(context, callback)
     fun startNavigation(context: Context) = getBackend(context).startNavigation(context)
     fun showOnPhone(context: Context, result: SearchResultItem) = getBackend(context).showOnPhone(context, result)
+    fun cancelMapSync(context: Context) = getBackend(context).cancelMapSync(context)
 }

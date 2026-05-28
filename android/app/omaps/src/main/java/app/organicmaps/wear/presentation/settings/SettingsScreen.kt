@@ -253,6 +253,51 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
             }
 
             item {
+                val modeLabels = listOf("Phone Sync", "Direct (Internet)")
+                val modeValues = listOf("PHONE_SYNC", "INTERNET")
+                Chip(
+                    onClick = {
+                        NavigationStateHolder.update { current ->
+                            val currentIdx = modeValues.indexOf(current.mapDownloadMode).coerceAtLeast(0)
+                            val nextIdx = (currentIdx + 1) % modeValues.size
+                            val nextMode = modeValues[nextIdx]
+                            prefs.edit().putString("mapDownloadMode", nextMode).apply()
+                            app.organicmaps.wear.WearCommandService.syncPreferences(context)
+                            current.copy(
+                                mapDownloadMode = nextMode,
+                                lastSettingsInteractionTime = System.currentTimeMillis()
+                            )
+                        }
+                    },
+                    label = { Text("Map Sync Mode") },
+                    secondaryLabel = { Text(modeLabels[modeValues.indexOf(mapDownloadMode).coerceAtLeast(0)]) },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    colors = ChipDefaults.secondaryChipColors()
+                )
+            }
+
+            item {
+                ToggleChip(
+                    checked = navState.syncNotificationsEnabled,
+                    onCheckedChange = { newVal ->
+                        NavigationStateHolder.update { current ->
+                            prefs.edit().putBoolean("pref_sync_notifications", newVal).apply()
+                            current.copy(
+                                syncNotificationsEnabled = newVal,
+                                lastSettingsInteractionTime = System.currentTimeMillis()
+                            )
+                        }
+                    },
+                    label = { Text("Sync Notifications") },
+                    secondaryLabel = { Text("Show progress in status bar") },
+                    toggleControl = {
+                        Switch(checked = navState.syncNotificationsEnabled, enabled = true)
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                )
+            }
+
+            item {
                 val sourceLabels = listOf("Auto (Fused)", "Phone Only")
                 val sourceValues = listOf("AUTO", "PHONE_ONLY")
                 Chip(

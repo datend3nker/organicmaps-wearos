@@ -25,6 +25,7 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         private const val PATH_PREFERENCES_REQUEST = "/preferences/request"
         private const val PATH_START_NAVIGATION_REQUEST = "/navigation/start/request"
         private const val PATH_POI_SHOW = "/poi/show"
+        private const val PATH_MAP_DOWNLOAD_CANCEL = "/map/download/cancel"
 
         private const val MSG_TYPE_COMMAND = 10.toByte()
     }
@@ -33,6 +34,10 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
 
     override fun stopNavigation(context: Context) {
         sendMessage(context, PATH_STOP_NAVIGATION, byteArrayOf())
+    }
+
+    override fun cancelMapSync(context: Context) {
+        sendMessage(context, PATH_MAP_DOWNLOAD_CANCEL, byteArrayOf())
     }
 
     override fun search(context: Context, query: String) {
