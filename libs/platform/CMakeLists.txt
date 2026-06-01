@@ -94,6 +94,8 @@ elseif(${PLATFORM_ANDROID})
     platform_unix_impl.cpp
     platform_unix_impl.hpp
     trace_android.cpp
+    virtual_mwm_core.cpp
+    virtual_model_reader.cpp
   )
 else() # neither iPhone nor Android
   # Find bash first, on Windows it can be either in Git or in WSL

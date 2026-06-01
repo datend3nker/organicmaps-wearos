@@ -146,6 +146,13 @@ public class MwmApplication extends Application implements Application.ActivityL
 
     registerActivityLifecycleCallbacks(this);
     mDisplayManager = new DisplayManager();
+
+    // Initialize Wear OS sync layer early so it can respond to background messages from the watch.
+    // Native framework initialization happens later in initOrganicMaps().
+    android.util.Log.i(TAG, "Initializing WearSyncService");
+    app.organicmaps.wear.WearSyncService.initSyncLayer(this);
+    
+    Logger.i(TAG, "Application created");
   }
 
   public boolean initOrganicMaps(@NonNull Runnable onComplete) throws IOException
@@ -155,19 +162,11 @@ public class MwmApplication extends Application implements Application.ActivityL
       ThemeSwitcher.INSTANCE.restart(false);
       ProcessLifecycleOwner.get().getLifecycle().addObserver(mProcessLifecycleObserver);
       
-      // OSS flavor: Start Bluetooth Sync Service after framework init
-      if (BuildConfig.FLAVOR.equals("oss")) {
-          startService(new Intent(this, app.organicmaps.wear.BluetoothMessageListenerService.class));
-      }
-
+      // Re-init sync layer after framework is ready to sync dynamic data (bookmarks, history).
       app.organicmaps.wear.WearSyncService.initSyncLayer(this);
+      app.organicmaps.wear.WearSyncService.syncPreferences(this);
       app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize();
       
-      // Start Bluetooth service if selected in settings (for non-OSS flavors)
-      if (!BuildConfig.FLAVOR.equals("oss") && "BLUETOOTH".equals(PreferenceManager.getDefaultSharedPreferences(this).getString("pref_wear_os_backend", "GMS"))) {
-          startService(new Intent(this, app.organicmaps.wear.BluetoothMessageListenerService.class));
-      }
-
       onComplete.run();
     });
   }

@@ -1,6 +1,7 @@
 package app.organicmaps.sdk.bookmarks.data;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import java.util.List;
 
 public interface BookmarkCategoriesDataProvider
@@ -10,6 +11,6 @@ public interface BookmarkCategoriesDataProvider
   int getCategoriesCount();
   @NonNull
   List<BookmarkCategory> getChildrenCategories(long parentId);
-  @NonNull
+  @Nullable
   BookmarkCategory getCategoryById(long categoryId);
 }

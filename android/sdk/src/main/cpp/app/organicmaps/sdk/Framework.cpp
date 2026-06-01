@@ -100,6 +100,11 @@ static_assert(sizeof(int) >= 4, "Size of jint is less than 4 bytes.");
 
 ::Framework * frm()
 {
+  if (!g_framework)
+  {
+    LOG(LWARNING, ("Native framework is not initialized yet. Returning nullptr."));
+    return nullptr;
+  }
   return g_framework->NativeFramework();
 }
 
@@ -1098,227 +1103,25 @@ JNIEXPORT jint Java_app_organicmaps_sdk_Framework_nativeGetDrawScale(JNIEnv * en
   return static_cast<jint>(frm()->GetDrawScale());
 }
 
+JNIEXPORT jdoubleArray Java_app_organicmaps_sdk_Framework_nativeGetViewportRect(JNIEnv * env, jclass)
+{
+  ::Framework * f = frm();
+  if (!f) return nullptr;
+
+  m2::RectD const rect = f->GetCurrentViewport();
+  double coords[] = {mercator::YToLat(rect.minY()), mercator::XToLon(rect.minX()),
+                     mercator::YToLat(rect.maxY()), mercator::XToLon(rect.maxX())};
+  jdoubleArray jCoords = env->NewDoubleArray(4);
+  env->SetDoubleArrayRegion(jCoords, 0, 4, coords);
+
+  return jCoords;
+}
+
 JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativePokeSearchInViewport(JNIEnv * env, jclass)
 {
   frm()->GetSearchAPI().PokeSearchInViewport();
 }
 
-JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetWearMapFeatures(
-    JNIEnv * env, jclass, jdouble minLat, jdouble minLon, jdouble maxLat, jdouble maxLon, jint scale, jint routerType, jint poiCategoriesMask)
-{
-  std::vector<uint8_t> buffer;
-  
-  // SCALE CAPPING: Native core only has drawing rules up to Z19
-  int const cappedScale = std::min(static_cast<int>(scale), 19);
-
-  m2::RectD rect;
-  rect.Add(mercator::FromLatLon(minLat, minLon));
-  rect.Add(mercator::FromLatLon(maxLat, maxLon));
-
-  if (rect.IsValid())
-  {
-    int featuresCount = 0;
-    // SMART DETAIL STRATEGY: Respect zoom-level limits and keep watch performance stable
-    int maxFeatures = 2000;
-    if (cappedScale >= 18) maxFeatures = 20000;
-    else if (cappedScale >= 16) maxFeatures = 10000;
-    else if (cappedScale >= 14) maxFeatures = 5000;
-
-    // Decluttering grid for POIs
-    std::set<std::pair<int, int>> occupiedCells;
-    double const cellSize = (maxLat - minLat) / 10.0;
-
-    frm()->GetDataSource().ForEachInRect([&](FeatureType & ft) {
-        if (featuresCount >= maxFeatures) return;
-
-        feature::TypesHolder types(ft);
-        auto geomType = ft.GetGeomType();
-
-        // STRICT VISIBILITY SYNC: Use phone's native visibility logic
-        if (!feature::IsDrawableForIndex(ft, cappedScale)) return;
-
-        // DENSITY FILTER FOR POIs
-        if (geomType == feature::GeomType::Point) {
-            using namespace ftypes;
-            bool isHighPriority = IsRailwayStationChecker::Instance()(types) ||
-                                 IsSubwayStationChecker::Instance()(types) ||
-                                 IsAirportChecker::Instance()(types) ||
-                                 IsHotelChecker::Instance()(types) ||
-                                 IsPeakChecker::Instance()(types);
-
-            m2::PointD center = ft.GetCenter();
-            double lat = mercator::YToLat(center.y);
-            double lon = mercator::XToLon(center.x);
-            int cellX = static_cast<int>((lon - minLon) / cellSize);
-            int cellY = static_cast<int>((lat - minLat) / cellSize);
-
-            if (occupiedCells.count({cellX, cellY})) return;
-
-            // Minor POIs only shown at high zoom
-            if (cappedScale < 17 && !isHighPriority && !IsEatChecker::Instance()(types) && !IsATMChecker::Instance()(types))
-                return;
-
-            occupiedCells.insert({cellX, cellY});
-        }
-
-        // EXTRACT ALL SUITABLE RULES (casing + fill, etc.)
-        drule::KeysT keys;
-        feature::GetDrawRule(types, cappedScale, keys);
-
-        if (keys.empty()) return;
-
-        std::vector<m2::PointD> points;
-        if (geomType == feature::GeomType::Point) {
-            points.push_back(ft.GetCenter());
-        } else if (geomType == feature::GeomType::Area) {
-            ft.ForEachTriangle([&](m2::PointD const & p1, m2::PointD const & p2, m2::PointD const & p3) {
-              points.push_back(p1);
-              points.push_back(p2);
-              points.push_back(p3);
-            }, cappedScale);
-
-            if (points.empty()) {
-                ft.ForEachPoint([&](m2::PointD const & p) {
-                  points.push_back(p);
-                }, cappedScale);
-            }
-        } else {
-            ft.ForEachPoint([&](m2::PointD const & p) {
-              points.push_back(p);
-            }, cappedScale);
-        }
-
-        if (points.empty() || (geomType != feature::GeomType::Point && points.size() < 2)) return;
-
-        std::string name(ft.GetName(0));
-        if (geomType == feature::GeomType::Area) {
-            std::string houseNumber = ft.GetHouseNumber();
-            if (!houseNumber.empty()) {
-                if (name.empty()) name = houseNumber;
-                else name = name + " (" + houseNumber + ")";
-            }
-        }
-
-        int8_t layer = ft.GetLayer();
-        uint8_t type = 0;
-        uint32_t color = 0;
-        uint32_t casingColor = 0;
-        float roadWidth = 0.0f;
-        float roadCasingWidth = 0.0f;
-        int32_t priority = 0;
-        std::string iconName;
-
-        if (geomType == feature::GeomType::Line) {
-            using namespace ftypes;
-            HighwayClass hw = GetHighwayClass(types);
-            if (hw == HighwayClass::Trunk) type = 4;
-            else if (hw == HighwayClass::Primary) type = 5;
-            else if (hw == HighwayClass::Secondary) type = 6;
-            else if (hw == HighwayClass::Tertiary) type = 7;
-            else if (hw == HighwayClass::LivingStreet) type = 1;
-            else if (hw == HighwayClass::Service || hw == HighwayClass::ServiceMinor) type = 8;
-            else type = 1;
-
-            // SMART ROAD AGGREGATION: Collect casing and fill from all rules
-            for (auto const & key : keys) {
-                if (key.m_type != drule::line) continue;
-                auto const * rule = drule::GetCurrentRules().Find(key);
-                if (!rule || !rule->GetLine()) continue;
-                auto const * lineRule = rule->GetLine();
-
-                if (lineRule->width() > roadWidth) {
-                    // This is likely the casing (wider)
-                    roadCasingWidth = roadWidth;
-                    casingColor = color;
-                    roadWidth = static_cast<float>(lineRule->width());
-                    color = lineRule->color();
-                } else {
-                    roadCasingWidth = static_cast<float>(lineRule->width());
-                    casingColor = lineRule->color();
-                }
-                priority = std::max(priority, static_cast<int32_t>(lineRule->priority()));
-            }
-        } else if (geomType == feature::GeomType::Area) {
-            type = 2; // Generic Area
-            for (auto const & key : keys) {
-                if (key.m_type != drule::area) continue;
-                auto const * rule = drule::GetCurrentRules().Find(key);
-                if (!rule || !rule->GetArea()) continue;
-                color = rule->GetArea()->color();
-                priority = rule->GetArea()->priority();
-                break; // Just one fill
-            }
-        } else if (geomType == feature::GeomType::Point) {
-            if (poiCategoriesMask == 0) return;
-            type = 100;
-            for (auto const & key : keys) {
-                if (key.m_type != drule::symbol) continue;
-                auto const * rule = drule::GetCurrentRules().Find(key);
-                if (!rule || !rule->GetSymbol()) continue;
-                iconName = rule->GetSymbol()->name();
-                priority = rule->GetSymbol()->priority();
-
-                // STRIP SUFFIXES: Convert "pharmacy-m" -> "pharmacy" for SDK parity
-                size_t dashPos = iconName.find_last_of('-');
-                if (dashPos != std::string::npos && (iconName.substr(dashPos) == "-m" || iconName.substr(dashPos) == "-s" || iconName.substr(dashPos) == "-l")) {
-                    iconName = iconName.substr(0, dashPos);
-                }
-                break;
-            }
-        }
-
-        if (type == 0) return;
-
-        featuresCount++;
-        buffer.push_back(static_cast<uint8_t>(type));
-
-        // PRIORITY (int32)
-        uint8_t * pPrio = reinterpret_cast<uint8_t *>(&priority);
-        buffer.insert(buffer.end(), pPrio, pPrio + sizeof(priority));
-
-        // METADATA (color, width, casingColor, casingWidth, layer)
-        uint8_t * pColor = reinterpret_cast<uint8_t *>(&color);
-        buffer.insert(buffer.end(), pColor, pColor + sizeof(color));
-        uint8_t * pWidth = reinterpret_cast<uint8_t *>(&roadWidth);
-        buffer.insert(buffer.end(), pWidth, pWidth + sizeof(roadWidth));
-
-        uint8_t * pCasingColor = reinterpret_cast<uint8_t *>(&casingColor);
-        buffer.insert(buffer.end(), pCasingColor, pCasingColor + sizeof(casingColor));
-        uint8_t * pCasingWidth = reinterpret_cast<uint8_t *>(&roadCasingWidth);
-        buffer.insert(buffer.end(), pCasingWidth, pCasingWidth + sizeof(roadCasingWidth));
-
-        buffer.push_back(static_cast<uint8_t>(layer + 128));
-
-        if (type >= 100) {
-            uint8_t iconLen = static_cast<uint8_t>(iconName.size());
-            buffer.push_back(iconLen);
-            if (iconLen > 0) buffer.insert(buffer.end(), iconName.begin(), iconName.end());
-        }
-
-        uint16_t nameLen = static_cast<uint16_t>(name.size());
-        uint8_t * pNameLen = reinterpret_cast<uint8_t *>(&nameLen);
-        buffer.insert(buffer.end(), pNameLen, pNameLen + sizeof(nameLen));
-        if (nameLen > 0) buffer.insert(buffer.end(), name.begin(), name.end());
-
-        uint32_t count = points.size();
-        uint8_t * pCount = reinterpret_cast<uint8_t *>(&count);
-        buffer.insert(buffer.end(), pCount, pCount + sizeof(count));
-
-        for (auto const & p : points) {
-            double lat = mercator::YToLat(p.y);
-            double lon = mercator::XToLon(p.x);
-            uint8_t * pLon = reinterpret_cast<uint8_t *>(&lon);
-            uint8_t * pLat = reinterpret_cast<uint8_t *>(&lat);
-            buffer.insert(buffer.end(), pLon, pLon + sizeof(lon));
-            buffer.insert(buffer.end(), pLat, pLat + sizeof(lat));
-        }
-    }, rect, cappedScale);
-  }
-
-  jbyteArray result = env->NewByteArray(buffer.size());
-  if (!buffer.empty()) env->SetByteArrayRegion(result, 0, buffer.size(), reinterpret_cast<const jbyte*>(buffer.data()));
-  return result;
-}
 
 JNIEXPORT jdoubleArray Java_app_organicmaps_sdk_Framework_nativeGetScreenRectCenter(JNIEnv * env, jclass)
 {
@@ -1344,6 +1147,38 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativeShowTrackRect(JNIEnv * e
 JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativeSaveRoute(JNIEnv *, jclass)
 {
   frm()->SaveRoute();
+}
+
+JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativeDrawRouteLine(JNIEnv * env, jclass, jdoubleArray lats,
+                                                                      jdoubleArray lons, jfloat width, jint argbColor)
+{
+  size_t const count = env->GetArrayLength(lats);
+  if (count == 0 || count != env->GetArrayLength(lons))
+    return;
+
+  jdouble * pLats = env->GetDoubleArrayElements(lats, 0);
+  jdouble * pLons = env->GetDoubleArrayElements(lons, 0);
+
+  vector<m2::PointD> points;
+  points.reserve(count);
+  for (size_t i = 0; i < count; ++i)
+    points.push_back(mercator::FromLatLon(pLats[i], pLons[i]));
+
+  env->ReleaseDoubleArrayElements(lats, pLats, 0);
+  env->ReleaseDoubleArrayElements(lons, pLons, 0);
+
+  df::DrapeApiLineData data(points, dp::Color::FromARGB(static_cast<uint32_t>(argbColor)));
+  data.Width(width);
+  ::Framework * f = frm();
+  if (f)
+    f->GetDrapeApi().AddLine("route", data);
+}
+
+JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativeRemoveRouteLine(JNIEnv *, jclass)
+{
+  ::Framework * f = frm();
+  if (f)
+    f->GetDrapeApi().RemoveLine("route");
 }
 
 JNIEXPORT jstring Java_app_organicmaps_sdk_Framework_nativeGetBookmarkDir(JNIEnv * env, jclass)

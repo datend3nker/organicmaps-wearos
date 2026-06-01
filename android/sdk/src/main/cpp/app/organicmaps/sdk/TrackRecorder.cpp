@@ -27,6 +27,7 @@ JNIEXPORT jboolean Java_app_organicmaps_sdk_location_TrackRecorder_nativeIsEnabl
 
 JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeStartTrackRecording(JNIEnv * env, jclass clazz)
 {
+  LOG(LINFO, ("Native Start Track Recording"));
   frm()->StartTrackRecording();
 }
 
@@ -67,7 +68,13 @@ JNIEXPORT jobject Java_app_organicmaps_sdk_location_TrackRecorder_nativeGetEleva
 
 JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeStopTrackRecording(JNIEnv * env, jclass clazz)
 {
+  LOG(LINFO, ("Native Stop Track Recording"));
   frm()->StopTrackRecording();
+}
+
+JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeClearTrackRecording(JNIEnv * env, jclass clazz)
+{
+  GpsTracker::Instance().Clear();
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeSaveTrackRecordingWithName(JNIEnv * env,

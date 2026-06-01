@@ -43,21 +43,7 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
 {
   private final SharedPreferences.OnSharedPreferenceChangeListener mSharedPreferenceChangeListener = (sharedPreferences, key) -> {
     if (key == null) return;
-    if (key.startsWith("pref_wear_os_") || 
-        key.equals(getString(R.string.pref_3d)) || 
-        key.equals(getString(R.string.pref_3d_buildings)) || 
-        key.equals(getString(R.string.pref_auto_zoom)) || 
-        key.equals(getString(R.string.pref_munits)) || 
-        key.equals(getString(R.string.pref_map_style)) ||
-        key.equals("avoid_tolls") || 
-        key.equals("avoid_motorways") || 
-        key.equals("avoid_ferries") || 
-        key.equals("avoid_dirty_roads") ||
-        key.equals("transit_enabled") || 
-        key.equals("biking_enabled") || 
-        key.equals("hiking_enabled") || 
-        key.equals("isolines_enabled") ||
-        key.equals("locationSource")) {
+    if (key.startsWith("pref_wear_os_")) {
       new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
           refreshWearOsPrefs();
           syncWearOsPreferences();
@@ -353,7 +339,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
       if (isUpdatingFromSync) return true;
       Framework.nativeSetAutoZoomEnabled((boolean) newValue);
-      syncWearOsPreferences();
       return true;
     });
   }
@@ -456,7 +441,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       Framework.Params3dMode current = new Framework.Params3dMode();
       Framework.nativeGet3dMode(current);
       Framework.nativeSet3dMode(current.enabled, (Boolean) newValue);
-      syncWearOsPreferences();
       return true;
     });
   }
@@ -499,7 +483,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       Framework.Params3dMode current = new Framework.Params3dMode();
       Framework.nativeGet3dMode(current);
       Framework.nativeSet3dMode((Boolean) newValue, current.buildings);
-      syncWearOsPreferences();
       return true;
     });
   }
@@ -517,7 +500,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       if (value)
         OnmapDownloader.setAutodownloadLocked(false);
 
-      syncWearOsPreferences();
       return true;
     });
   }
@@ -540,7 +522,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       final ThemeMode mode = ThemeMode.getInstance(themeName);
       final CharSequence summary = pref.getEntries()[mode.ordinal()];
       pref.setSummary(summary);
-      syncWearOsPreferences();
       return true;
     });
   }
@@ -564,7 +545,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
     pref.setOnPreferenceChangeListener((preference, newValue) -> {
       if (isUpdatingFromSync) return true;
       UnitLocale.setUnits(Integer.parseInt((String) newValue));
-      syncWearOsPreferences();
       return true;
     });
   }
@@ -661,7 +641,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
           else if ("biking_enabled".equals(key)) Framework.nativeSetCyclingLayerEnabled(enabled);
           else if ("hiking_enabled".equals(key)) Framework.nativeSetHikingLayerEnabled(enabled);
           else if ("isolines_enabled".equals(key)) Framework.nativeSetIsolinesLayerEnabled(enabled);
-          syncWearOsPreferences();
           return true;
         });
       }
@@ -679,7 +658,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
               app.organicmaps.sdk.settings.RoadType.Toll : app.organicmaps.sdk.settings.RoadType.Motorway;
           if ((boolean) newValue) RoutingOptions.addOption(type);
           else RoutingOptions.removeOption(type);
-          syncWearOsPreferences();
           return true;
         });
       }

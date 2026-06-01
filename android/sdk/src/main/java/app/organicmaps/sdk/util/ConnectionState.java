@@ -125,25 +125,17 @@ public enum ConnectionState
         modeKey = "pref_wear_os_map_download_mode";
     }
     
-    String mode = prefs.getString(modeKey, "AUTO");
+    String mode = prefs.getString(modeKey, "PHONE_SYNC");
 
-    // "Standalone Mode" on watch overrides everything to NONE if we want to save data/power
-    // or if we are strictly BLUETOOTH_ONLY and the system doesn't see it as BLUETOOTH type.
-    
+    // If we are in PHONE_SYNC mode, we return NONE to the native engine 
+    // so it doesn't try to use standard HTTP/Socket calls to download maps.
+    if (isWatch && "PHONE_SYNC".equals(mode))
+      return NONE;
+
     for (ConnectionState.Type each : ConnectionState.Type.values())
     {
       if (isNetworkConnected(each.getPlatformRepresentation()))
       {
-          if ("WIFI_ONLY".equals(mode) && each != Type.WIFI)
-              continue;
-          
-          if ("BLUETOOTH_ONLY".equals(mode)) {
-               // Bluetooth tethering often shows up as WWAN or WIFI on some Android versions.
-               // If we are strictly BLUETOOTH_ONLY, we ONLY allow the specific BLUETOOTH type.
-               // This effectively blocks internet usage if only Wi-Fi/Mobile are active.
-               if (each != Type.BLUETOOTH) continue;
-          }
-          
           return each;
       }
     }

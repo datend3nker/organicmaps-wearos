@@ -97,6 +97,9 @@ public final class Map
    */
   public void updateCompassOffset(final Context context, int offsetX, int offsetY, boolean forceRedraw)
   {
+    if (context.getPackageManager().hasSystemFeature("android.hardware.type.watch") && mDisplayType == DisplayType.Device)
+      return; // Ignore standard offsets on watch to keep our custom position
+
     final int x = offsetX < 0 ? mCurrentCompassOffsetX : offsetX;
     final int y = offsetY < 0 ? mCurrentCompassOffsetY : offsetY;
     final int navPadding = Utils.dimen(context, R.dimen.nav_frame_padding);
@@ -123,6 +126,9 @@ public final class Map
    */
   public void updateBottomWidgetsOffset(final Context context, int offsetX, int offsetY)
   {
+    if (context.getPackageManager().hasSystemFeature("android.hardware.type.watch") && mDisplayType == DisplayType.Device)
+      return; // Ignore phone offsets on watch
+
     final int x = offsetX < 0 ? mBottomWidgetOffsetX : offsetX;
     final int y = offsetY < 0 ? mBottomWidgetOffsetY : offsetY;
     updateRulerOffset(context, x, y);
@@ -340,18 +346,38 @@ public final class Map
     mWidth = width;
 
     nativeCleanWidgets();
-    updateBottomWidgetsOffset(context, mBottomWidgetOffsetX, mBottomWidgetOffsetY);
-    if (mDisplayType == DisplayType.Device)
+    
+    if (context.getPackageManager().hasSystemFeature("android.hardware.type.watch") && mDisplayType == DisplayType.Device)
     {
-      nativeSetupWidget(WIDGET_SCALE_FPS_LABEL, Utils.dimen(context, R.dimen.margin_base),
-                        Utils.dimen(context, R.dimen.margin_base) * 2, ANCHOR_LEFT_TOP);
-      updateCompassOffset(context, mCurrentCompassOffsetX, mCurrentCompassOffsetY, false);
+      float density = context.getResources().getDisplayMetrics().density;
+      // Wear OS: Position widgets for round screens
+      // Compass: Move further inward from top-right to be visible and not blocked by lock icon
+      // Positioned to the right edge, but lower than the lock icon (top:40dp)
+      // Lock icon is at approx top=40dp, end=25dp. 
+      nativeSetupWidget(WIDGET_COMPASS, mWidth - (25 * density), (160 * density), ANCHOR_CENTER);
+      
+      // Ruler (Scale Bar): Move to bottom center, in the gap below the Recenter button
+      // Positioned higher to ensure visibility on round screens
+      nativeSetupWidget(WIDGET_RULER, (float) mWidth / 2, mHeight - (55 * density), ANCHOR_CENTER);
+      
+      if (mSurfaceCreated)
+        nativeApplyWidgets();
     }
     else
     {
-      nativeSetupWidget(WIDGET_SCALE_FPS_LABEL, (float) mWidth / 2 + Utils.dimen(context, R.dimen.margin_base) * 2,
-                        Utils.dimen(context, R.dimen.margin_base), ANCHOR_LEFT_TOP);
-      updateCompassOffset(context, mWidth, mCurrentCompassOffsetY, true);
+      updateBottomWidgetsOffset(context, mBottomWidgetOffsetX, mBottomWidgetOffsetY);
+      if (mDisplayType == DisplayType.Device)
+      {
+        nativeSetupWidget(WIDGET_SCALE_FPS_LABEL, Utils.dimen(context, R.dimen.margin_debug_x),
+                          Utils.dimen(context, R.dimen.margin_debug_y), ANCHOR_LEFT_TOP);
+        updateCompassOffset(context, mCurrentCompassOffsetX, mCurrentCompassOffsetY, false);
+      }
+      else
+      {
+        nativeSetupWidget(WIDGET_SCALE_FPS_LABEL, (float) mWidth / 2 + Utils.dimen(context, R.dimen.margin_base) * 2,
+                          Utils.dimen(context, R.dimen.margin_base), ANCHOR_LEFT_TOP);
+        updateCompassOffset(context, mWidth, mCurrentCompassOffsetY, true);
+      }
     }
   }
 
@@ -365,8 +391,18 @@ public final class Map
 
   private void updateAttributionOffset(final Context context, int offsetX, int offsetY)
   {
-    nativeSetupWidget(WIDGET_COPYRIGHT, Utils.dimen(context, R.dimen.margin_ruler) + offsetX,
-                      mHeight - Utils.dimen(context, R.dimen.margin_ruler) - offsetY, ANCHOR_LEFT_BOTTOM);
+    // On Wear OS, hide copyright widget to save space
+    if (mDisplayType == DisplayType.Device && context.getPackageManager().hasSystemFeature("android.hardware.type.watch"))
+    {
+       // Offset far out of bounds
+       nativeSetupWidget(WIDGET_COPYRIGHT, -1000, -1000, ANCHOR_LEFT_BOTTOM);
+    }
+    else
+    {
+       nativeSetupWidget(WIDGET_COPYRIGHT, Utils.dimen(context, R.dimen.margin_ruler) + offsetX,
+                         mHeight - Utils.dimen(context, R.dimen.margin_ruler) - offsetY, ANCHOR_LEFT_BOTTOM);
+    }
+    
     if (mSurfaceCreated)
       nativeApplyWidgets();
   }
@@ -421,6 +457,6 @@ public final class Map
 
   private static native void nativeOnScale(double factor, double focusX, double focusY, boolean isAnim);
 
-  private static native void nativeOnTouch(int actionType, int id1, float x1, float y1, int id2, float x2, float y2,
-                                           int maskedPointer);
+  public static native void nativeOnTouch(int actionType, int id1, float x1, float y1, int id2, float x2, float y2,
+                                          int maskedPointer);
 }

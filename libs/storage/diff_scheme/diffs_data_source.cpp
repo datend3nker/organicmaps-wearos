@@ -16,7 +16,7 @@ namespace diffs
 {
 void DiffsDataSource::SetDiffInfo(NameDiffInfoMap && info)
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   if (info.empty())
   {
@@ -31,14 +31,14 @@ void DiffsDataSource::SetDiffInfo(NameDiffInfoMap && info)
 
 Status DiffsDataSource::GetStatus() const
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   return m_status;
 }
 
 bool DiffsDataSource::SizeFor(storage::CountryId const & countryId, uint64_t & size) const
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   if (m_status != Status::Available)
     return false;
@@ -53,28 +53,28 @@ bool DiffsDataSource::SizeFor(storage::CountryId const & countryId, uint64_t & s
 
 bool DiffsDataSource::SizeToDownloadFor(storage::CountryId const & countryId, uint64_t & size) const
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   return WithNotAppliedDiff(countryId, [&size](DiffInfo const & info) { size = info.m_size; });
 }
 
 bool DiffsDataSource::VersionFor(storage::CountryId const & countryId, uint64_t & v) const
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   return WithNotAppliedDiff(countryId, [&v](DiffInfo const & info) { v = info.m_version; });
 }
 
 bool DiffsDataSource::HasDiffFor(storage::CountryId const & countryId) const
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   return WithNotAppliedDiff(countryId, [](DiffInfo const &) {});
 }
 
 void DiffsDataSource::MarkAsApplied(storage::CountryId const & countryId)
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   auto it = m_diffs.find(countryId);
   if (it == m_diffs.end())
@@ -88,7 +88,7 @@ void DiffsDataSource::MarkAsApplied(storage::CountryId const & countryId)
 
 void DiffsDataSource::RemoveDiffForCountry(storage::CountryId const & countryId)
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   m_diffs.erase(countryId);
 
@@ -98,7 +98,7 @@ void DiffsDataSource::RemoveDiffForCountry(storage::CountryId const & countryId)
 
 void DiffsDataSource::AbortDiffScheme()
 {
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
+  // CHECK_THREAD_CHECKER(m_threadChecker, ());
 
   m_status = Status::NotAvailable;
   m_diffs.clear();

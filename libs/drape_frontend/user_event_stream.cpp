@@ -905,21 +905,25 @@ bool UserEventStream::TouchCancel(std::array<Touch, 2> const & touches)
     // Do nothing here.
     break;
   case STATE_FILTER:
-    ASSERT_EQUAL(touchCount, 1, ());
     CancelFilter(touches[0]);
     break;
   case STATE_TAP_DETECTION:
-    ASSERT_EQUAL(touchCount, 1, ());
     CancelTapDetector();
     isMapTouch = false;
     break;
   case STATE_DRAG:
-    ASSERT_EQUAL(touchCount, 1, ());
     isMapTouch = EndDrag(touches[0], true /* cancelled */);
     break;
   case STATE_SCALE:
-    ASSERT_EQUAL(touchCount, 2, ());
-    EndScale(touches[0], touches[1]);
+    if (touchCount < 2)
+    {
+      if (GetValidTouchesCount(m_touches) == 2)
+        EndScale(m_touches[0], m_touches[1]);
+    }
+    else
+    {
+      EndScale(touches[0], touches[1]);
+    }
     break;
   default: ASSERT(false, ()); break;
   }

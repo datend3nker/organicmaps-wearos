@@ -11,6 +11,9 @@
 #include "base/string_utils.hpp"
 #include "base/thread.hpp"
 
+#include "platform/virtual_mwm_core.hpp"
+#include "platform/virtual_model_reader.hpp"
+
 #include <memory>
 #include <regex>
 #include <string>
@@ -85,6 +88,10 @@ std::unique_ptr<ModelReader> Platform::GetReader(std::string const & file, std::
     {
     case 'w':
     {
+      std::string virtualPath = wear::GetVirtualMwmPath(file);
+      if (!virtualPath.empty())
+        return std::make_unique<VirtualModelReader>(file, virtualPath);
+
       auto const path = base::JoinPath(m_writableDir, file);
       if (IsFileExistsByFullPath(path))
         return std::make_unique<FileReader>(path, logPageSize, logPageCount);

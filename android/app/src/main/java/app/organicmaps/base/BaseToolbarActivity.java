@@ -99,6 +99,7 @@ public abstract class BaseToolbarActivity extends BaseMwmFragmentActivity
     return fragment;
   }
 
+  @SuppressWarnings("deprecation")
   @Override
   public void onBackPressed()
   {

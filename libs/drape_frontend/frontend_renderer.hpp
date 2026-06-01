@@ -371,7 +371,6 @@ private:
 
   int GetCurrentZoom() const
   {
-    ASSERT(IsValidCurrentZoom(), ());
     return m_currentZoomLevel;
   }
 

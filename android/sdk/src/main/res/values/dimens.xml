@@ -8,4 +8,6 @@
   <dimen name="margin_compass">24dp</dimen>
   <dimen name="margin_compass_top">26dp</dimen>
   <dimen name="margin_ruler">10dp</dimen>
+  <dimen name="margin_debug_x">@dimen/margin_base</dimen>
+  <dimen name="margin_debug_y">32dp</dimen>
 </resources>

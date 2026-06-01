@@ -1,10 +1,13 @@
 package app.organicmaps.bookmarks;
 
 import android.app.Activity;
-import android.app.ProgressDialog;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.TextView;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.FragmentActivity;
 import app.organicmaps.R;
 import app.organicmaps.sdk.bookmarks.data.BookmarkCategory;
@@ -24,7 +27,7 @@ public enum BookmarksSharingHelper
   private static final String TAG = BookmarksSharingHelper.class.getSimpleName();
 
   @Nullable
-  private ProgressDialog mProgressDialog;
+  private AlertDialog mProgressDialog;
 
   public void prepareBookmarkCategoryForSharing(@NonNull Activity context, long catId, KmlFileType kmlFileType)
   {
@@ -40,12 +43,14 @@ public enum BookmarksSharingHelper
 
   private void showProgressDialog(@NonNull Activity context)
   {
-    mProgressDialog = new ProgressDialog(context, R.style.MwmTheme_ProgressDialog);
-    mProgressDialog.setMessage(context.getString(R.string.please_wait));
-    mProgressDialog.setProgressStyle(ProgressDialog.STYLE_SPINNER);
-    mProgressDialog.setIndeterminate(true);
-    mProgressDialog.setCancelable(false);
-    mProgressDialog.show();
+    final View view = LayoutInflater.from(context).inflate(R.layout.dialog_progress, null);
+    final TextView tvMessage = view.findViewById(R.id.message);
+    tvMessage.setText(R.string.please_wait);
+
+    mProgressDialog = new MaterialAlertDialogBuilder(context, R.style.MwmTheme_AlertDialog)
+        .setView(view)
+        .setCancelable(false)
+        .show();
   }
 
   public void onPreparedFileForSharing(@NonNull FragmentActivity context,

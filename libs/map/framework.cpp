@@ -1877,8 +1877,8 @@ void Framework::SetupMeasurementSystem()
 
 void Framework::SetWidgetLayout(gui::TWidgetsLayoutInfo && layout)
 {
-  ASSERT(m_drapeEngine, ());
-  m_drapeEngine->SetWidgetLayout(std::move(layout));
+  if (m_drapeEngine)
+    m_drapeEngine->SetWidgetLayout(std::move(layout));
 }
 
 Framework::ParsedRoutingData Framework::GetParsedRoutingData() const

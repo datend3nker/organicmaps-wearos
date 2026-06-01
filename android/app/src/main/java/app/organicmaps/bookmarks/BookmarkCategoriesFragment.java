@@ -1,8 +1,6 @@
 package app.organicmaps.bookmarks;
 
 import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.ProgressDialog;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
@@ -11,7 +9,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.TextView;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -19,6 +19,7 @@ import androidx.annotation.CallSuper;
 import androidx.annotation.LayoutRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.recyclerview.widget.RecyclerView;
 import app.organicmaps.MwmApplication;
 import app.organicmaps.R;
@@ -40,6 +41,7 @@ import app.organicmaps.util.bottomsheet.MenuBottomSheetFragment;
 import app.organicmaps.util.bottomsheet.MenuBottomSheetItem;
 import app.organicmaps.widget.PlaceholderView;
 import app.organicmaps.widget.recycler.DividerItemDecorationWithPadding;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -265,7 +267,7 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
 
   private void showNoFileManagerError()
   {
-    new AlertDialog.Builder(requireActivity())
+    new MaterialAlertDialogBuilder(requireActivity(), R.style.MwmTheme_AlertDialog)
         .setMessage(R.string.error_no_file_manager_app)
         .setPositiveButton(android.R.string.ok, (dialog, which) -> dialog.dismiss())
         .show();
@@ -313,12 +315,17 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
 
     final Context context = requireActivity();
     final Uri rootUri = data.getData();
-    final ProgressDialog dialog = new ProgressDialog(context, R.style.MwmTheme_ProgressDialog);
-    dialog.setMessage(getString(R.string.wait_several_minutes));
-    dialog.setProgressStyle(ProgressDialog.STYLE_SPINNER);
-    dialog.setIndeterminate(true);
-    dialog.setCancelable(false);
+
+    final View view = LayoutInflater.from(context).inflate(R.layout.dialog_progress, null);
+    final TextView tvMessage = view.findViewById(R.id.message);
+    tvMessage.setText(R.string.wait_several_minutes);
+
+    final AlertDialog dialog = new MaterialAlertDialogBuilder(context, R.style.MwmTheme_AlertDialog)
+        .setView(view)
+        .setCancelable(false)
+        .create();
     dialog.show();
+
     Logger.d(TAG, "Importing bookmarks from " + rootUri);
     MwmApplication app = MwmApplication.from(context);
     final File tempDir = new File(StorageUtils.getTempPath(app));

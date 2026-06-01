@@ -28,14 +28,19 @@ object WearNotificationManager {
     }
 
     fun updateSyncNotification(context: Context, mapId: String, progress: Float, isStreaming: Boolean) {
-        if (!NavigationStateHolder.state.value.syncNotificationsEnabled) return
+        if (!NavigationStateHolder.state.value.syncNotificationsEnabled) {
+            android.util.Log.d("WearNotif", "Notifications disabled in state")
+            return
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                android.util.Log.w("WearNotif", "POST_NOTIFICATIONS permission missing")
                 return
             }
         }
 
+        android.util.Log.d("WearNotif", "Showing notification: $mapId ${progress * 100}%")
         val title = if (isStreaming) "Streaming Map from Phone" else "Downloading Map"
         val progressInt = (progress * 100).toInt()
         

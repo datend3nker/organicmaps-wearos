@@ -11,205 +11,60 @@
 [<img src="docs/badges/obtainium.png" alt="Obtainium" width="160">](https://github.com/organicmaps/organicmaps/wiki/Installing-Organic-Maps-from-GitHub-using-Obtainium)
 [<img src="docs/badges/fdroid.png" alt="F-Droid" width="160">](https://f-droid.org/en/packages/app.organicmaps/)
 
-<p float="left">
-  <img src="android/app/src/fdroid/play/listings/en-US/graphics/phone-screenshots/1.jpg" width="400" />
-  <img src="android/app/src/fdroid/play/listings/en-US/graphics/phone-screenshots/2.jpg" width="400" />
-  <img src="android/app/src/fdroid/play/listings/en-US/graphics/phone-screenshots/3.jpg" width="400" />
-  <img src="android/app/src/fdroid/play/listings/en-US/graphics/phone-screenshots/4.jpg" width="400" />
-</p>
+## Wear OS Features
 
-## Features
+Organic Maps brings high-performance, privacy-focused navigation to your wrist.
 
-Organic Maps is the ultimate companion app for travellers, tourists, hikers, and cyclists:
+### Key Capabilities
+- **Native Rendering Engine**: 60 FPS fluid map interaction using the core C++ engine.
+- **Standalone & Companion Modes**: Use local GPS/maps or stream everything from your phone to save watch battery.
+  - **Companion Mode**: Phone handles heavy lifting (route calculation, map data), watch acts as an extended screen.
+  - **Standalone Mode**: Watch works 100% independently with its own GPS and downloaded maps.
+- **Route & Track Recording**: Start, stop, and monitor route recording directly from your watch. Recording is synced with the phone in real-time with a visual recording indicator (red dot) on the watch face.
+- **Location Marker Sync**: Your current position, bearing, and movement are synchronized in real-time between devices, ensuring both the phone and watch show your exact location perfectly in sync.
+- **Bidirectional Bookmark Sync**: Access and toggle visibility of your bookmark lists from the watch. Changes are mirrored between phone and watch instantly.
+- **Unified Backend Switching**: Seamlessly toggle between Google Play Services (GMS) and raw Bluetooth (OSS) transport layers. Devices automatically coordinate the switch to maintain connectivity.
+- **Optimized for Round Screens**: Map UI elements and buttons are intelligently positioned to prevent clipping on circular displays, ensuring all controls remain visible and accessible.
+- **Unified Settings**: Configure map layers, routing options, and view data credits directly from the watch settings.
+- **Direct Sync**: Real-time mirroring of routes, search results, and settings. Changes on one device are immediately reflected on the other.
+- **Map Streaming & Sync**: 
+  - **Sync from Phone**: Watch pulls map regions directly from the phone's storage—no internet required on the watch.
+  - **Direct Download**: Watch uses its own internet connection (Wi-Fi or LTE) to download map data.
+- **Smart Power Management**: Automatically manages GPS and network based on connectivity and navigation state.
 
-- Detailed offline maps with places that don't exist on other maps, thanks to [OpenStreetMap](https://openstreetmap.org)
-- Cycling routes, hiking trails, and walking paths
-- Contour lines, elevation profiles, peaks, and slopes
-- Turn-by-turn walking, cycling, and car navigation with voice guidance
-- Fast offline search on the map
-- Bookmarks and tracks import and export in KML, KMZ & GPX formats
-- Dark Mode to protect your eyes
-- Countries and regions don't take a lot of space
-- Free and open-source
-- **Full-featured Wear OS Application**:
-  - **Native Rendering Engine**: High-performance 60 FPS rendering using the core Organic Maps C++ engine (OpenGL/Vulkan), eliminating UI hangs and providing fluid map interaction.
-  - **Baseline Profiles**: Pre-compiled critical execution paths for near-instant startup and silky-smooth performance from the first run.
-  - **Standalone & Companion Modes**: Use it as a completely independent GPS navigator or as a powerful extension of your phone.
-  - **Bluetooth & GMS Sync**: Zero-config bidirectional syncing of routes and settings between devices.
-  - **True Offline Maps**: Download map regions directly to your watch for total independence from the phone and internet.
-  - **Power Efficiency**: Intelligent hardware management, adaptive update rates, and "Phone Only" location mode to maximize wearable battery life.
-  - **Hardware Integration**: Full support for rotary crown zoom, physical button shortcuts, and stabilized compass-driven rotation.
-  - **Advanced Navigation**: Independent turn-by-turn guidance for walking, cycling, and driving with local GPS support.
-  - **Lock Screen & Ambient Mode**: Glanceable navigation instructions always visible, even in low-power ambient states.
-  - **Privacy First**: Just like the mobile app—no tracking, no ads, no data collection.
+### Phone Integration
+Organic Maps on the phone acts as a hub for the Wear OS experience:
+- **Connection Status**: A dedicated status indicator on the main map screen shows when a watch is connected and the specific connection type (Bluetooth or GSM/Cloud).
+- **Sync Notifications**: View map serving progress directly in the phone's notification shade.
+
+### Interface Guide
+#### Watch Status Icons (Top Bar)
+- **Lock Icon**: Map is locked to your current position. Gestures are disabled to prevent accidental clicks while swiping panels.
+- **Open Lock**: "Interactive Mode" enabled (via long-press or hardware button). You can pan and zoom freely. Tap **Recenter** to lock back.
+- **Cloud (Green)**: Successfully connected to phone via Google Play Services (GMS).
+- **Bluetooth (Green)**: Successfully connected to phone via direct Bluetooth (OSS).
+- **Red Icon**: Phone disconnected. App automatically switches to local GPS/Offline mode.
+- **SD Card**: "Local Maps" mode active. Using map data stored on the watch.
+- **Red Dot**: Track recording is currently active.
+
+#### Interaction
+- **Main Pager**: Swipe horizontally between Map, Search, Bookmarks, Map Manager, and Settings.
+- **Long Press Map**: Unlocks the map for free roaming and opens the Quick Menu.
+- **Recenter Button**: Re-locks the camera to your position and enables panel swiping.
+- **Quick Menu**: Toggle layers, zoom, or stop navigation directly from the map.
+- **Rotary Crown**: Zoom in and out of the map smoothly.
+- **Hardware Button 1**: Open Quick Menu.
+- **Hardware Button 2**: Toggle between Locked and Interactive modes.
+
+---
 
 ## Why Organic?
-
-Organic Maps is pure and organic, made with love:
-
-- Respects your privacy
-- Saves your battery
-- No unexpected mobile data charges
-
-Organic Maps is free from trackers and other bad stuff:
-
-- No ads
-- No tracking
-- No data collection
-- No phoning home
-- No annoying registration
-- No mandatory tutorials
-- No noisy email spam
-- No push notifications
-- No crapware
-- ~~No pesticides~~ Purely organic!
-
-The Android application is verified by the <a href="https://reports.exodus-privacy.eu.org/en/reports/app.organicmaps/latest/">Exodus Privacy Project:
-
-<img src="docs/privacy/exodus.png" width="400">
-</a>
-
-The iOS application is verified by <a href="https://ios.trackercontrol.org/analysis/app.organicmaps">TrackerControl for iOS:
-
-<img src="docs/privacy/trackercontrol-ios.png" width="400">
-</a>
-
-<br/>
-
-Organic Maps doesn't request excessive permissions to spy on you:
-
-<p float="left">
-  <img src="docs/privacy/om.jpg" width="400">
-  <img src="docs/privacy/mm.jpg" width="400">
-</p>
-
-At Organic Maps, we believe that privacy is a fundamental human right:
-
-- Organic Maps is an indie community-driven open-source project
-- We protect your privacy from Big Tech's prying eyes
-- Stay safe no matter where you are
-
-Reject surveillance - embrace your freedom.
+- **Privacy First**: No tracking, no ads, no data collection.
+- **Battery Efficient**: Intelligent hardware use.
+- **Truly Offline**: Maps work without any internet connection.
 
 [**Give Organic Maps a try!**](#install)
 
-## Who is paying for the development?
-
-The app is free for everyone, so we rely on donations. Please donate at [organicmaps.app/donate](https://organicmaps.app/donate) to support us!
-
-Beloved institutional sponsors below have provided targeted grants to cover some infrastructure costs and fund development of new selected features:
-
-<table>
-  <tr>
-    <td>
-      <a href="https://nlnet.nl/"><img src="docs/sponsors/nlnet.svg" alt="The NLnet Foundation" width="200px"></a>
-    </td>
-    <td>
-      <a href="https://github.com/organicmaps/organicmaps/milestone/7">The Search & Fonts improvement project</a> has been <a href="https://nlnet.nl/project/OrganicMaps/">funded</a> through NGI0 Entrust Fund. <a href="https://nlnet.nl/entrust/">NGI0 Entrust Fund</a> is established by the <a href="https://nlnet.nl/">NLnet Foundation</a> with financial support from the European Commission's <a href="https://www.ngi.eu/">Next Generation Internet programme</a>, under the aegis of DG Communications Networks, Content and Technology under grant agreement No 101069594.
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <a href="https://summerofcode.withgoogle.com/"><img src="docs/sponsors/gsoc.svg" alt="Google Summer of Code" width="200px"></a>
-    </td>
-    <td>
-      <a href="https://summerofcode.withgoogle.com/">Google</a> backed 5 student's projects in the Google Summer of Code program during <a href="https://summerofcode.withgoogle.com/programs/2022/organizations/organic-maps">2022</a> and <a href="https://summerofcode.withgoogle.com/programs/2023/organizations/organic-maps">2023</a> programs. Noteworthy projects included Android Auto and Wikipedia Dump Extractor.
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <a href="https://www.mythic-beasts.com/"><img src="docs/sponsors/mythic-beasts.png" alt="Mythic Beasts" width="200px"></a>
-    </td>
-    <td>
-      <a href="https://www.mythic-beasts.com/">Mythic Beasts</a> ISP <a href="https://www.mythic-beasts.com/blog/2021/10/06/improving-the-world-bit-by-expensive-bit/">provides us</a> two virtual servers with 400 TB/month of free bandwidth to host and serve maps downloads and updates.
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <a href="https://44plus.vn"><img src="docs/sponsors/44plus.svg" alt="44+ Technologies" width="200px"></a>
-    </td>
-    <td>
-      <a href="https://44plus.vn">44+ Technologies</a> is <a href="https://44plus.vn/organicmaps">providing us </a>with a free dedicated server worth around $12,000/year to serve maps across Vietnam & Southeast Asia.
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <a href="https://futo.org"><img src="docs/sponsors/futo.svg" alt="FUTO" width="200px"></a>
-    </td>
-    <td>
-      <a href="https://futo.org">FUTO</a> has <a href="https://www.youtube.com/watch?v=fJJclgBHrEw">awarded $1000 micro-grant</a> to Organic Maps in February 2023.
-    </td>
-  </tr>
-</table>
-
-The majority of all expenses have been funded by founders of the project since its inception. The project is far from achieving any sort of financial sustainability. The current level of voluntary donations falls significantly short of covering efforts needed to sustain the app. Any new developments of features are beyond the scope of possibility due to the absence of the necessary financial resources.
-
-Please consider [donating](https://organicmaps.app/donate) if you want to see this open-source project thriving, not dying. There are [other ways how to support the project](#contributing). No coding skills required.
-
-## Copyrights
-
-Licensed under the Apache License, Version 2.0. See
-[LICENSE](https://github.com/organicmaps/organicmaps/blob/master/LICENSE),
-[NOTICE](https://github.com/organicmaps/organicmaps/blob/master/NOTICE),
-[data/copyright.html](http://htmlpreview.github.io/?https://github.com/organicmaps/organicmaps/blob/master/data/copyright.html) and [.reuse/dep5](https://github.com/organicmaps/organicmaps/blob/master/.reuse/dep5),
-for more information.
-
-[![REUSE status](https://api.reuse.software/badge/github.com/organicmaps/organicmaps)](https://api.reuse.software/info/github.com/organicmaps/organicmaps)
-
-## Governance
-
-See [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
-
-<a name="contributing">
-
-## Contributing
-
-If you want to build the project, check [docs/INSTALL.md](docs/INSTALL.md). If you want to help the project,
-see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). You can [help in many ways](https://organicmaps.app/support-us/), the ability to code is not necessary.
-
-## Beta
-
-Please join our beta program, suggest your features, and report bugs:
-
-- [iOS Beta (TestFlight)](https://testflight.apple.com/join/lrKCl08I)
-- [Android Beta (Firebase)](https://appdistribution.firebase.dev/i/f3e918f9abc40c9c)
-
-## Feedback
-
-- **Rate us on the [App Store](https://apps.apple.com/app/organic-maps/id1567437057)
-and [Google Play](https://play.google.com/store/apps/details?id=app.organicmaps)**.
-- **Star us on Github**.
-- Report bugs or issues to [the issue tracker](https://github.com/organicmaps/organicmaps/issues).
-- Subscribe to our [Telegram Channel](https://t.me/OrganicMapsApp) or to the [[matrix] space](https://matrix.to/#/#organicmaps:matrix.org) for updates.
-- Join our [Telegram Group](https://t.me/OrganicMaps) to discuss with other users.
-  - Присоединяйтесь к нашей [русскоязычной группе в Telegram](https://t.me/OrganicMapsRu) для обратной связи и помощи.
-  - Diğer kullanıcılarla tartışmak için [Telegram Grubumuza](https://t.me/OrganicMapsTR) katılın.
-  - Rejoignez notre groupe [Telegram](https://t.me/OrganicMapsFR) pour obtenir de l'aide.
-- Contact us by [email](mailto:hello@organicmaps.app).
-- Follow our updates in
-[Mastodon](https://fosstodon.org/@organicmaps),
-[Facebook](https://facebook.com/OrganicMaps),
-[X (Twitter)](https://x.com/OrganicMapsApp),
-[Instagram](https://instagram.com/organicmaps.app/).
-  - Güncellemelerimizi [Instagram](https://instagram.com/organicmapstr/) üzerinden takip edin.
-
-The Organic Maps community abides by the CNCF [code of conduct](https://github.com/organicmaps/organicmaps/blob/master/docs/CODE_OF_CONDUCT.md).
-
 ## License
-
 Organic Maps is licensed under the [Apache License 2.0](LICENSE).
-
-Binary map data files (`.mwm`) are provided under a separate license.
-See `DATA_LICENSE.txt` for details.
-
-### Attribution for forks and derivative apps based on Organic Maps
-
-If you use Organic Maps source code or its user interface in your project, please include a visible, human-readable mention of the “Organic Maps Project” and a clickable link to https://organicmaps.app. To respect the work of all project contributors and to comply with license attribution terms, this notice should appear in user-visible locations, such as the product’s “About” and “Main Menu” screens.
-
-### 🤝 White-label
-
-For inquiries about white-labeling or using our servers for your products, please contact us in advance at:
-
-**legal@organicmaps.app**
-
-Thank you!
+Binary map data files (`.mwm`) are provided under a separate license. See `DATA_LICENSE.txt`.

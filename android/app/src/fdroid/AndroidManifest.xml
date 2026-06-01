@@ -11,6 +11,25 @@
             android:name="app.organicmaps.wear.WearMessageListenerService"
             android:exported="true">
             <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/navigation"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/search"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/preferences"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/map"
+                    android:scheme="wear" />
+            </intent-filter>
+            <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data
                     android:host="*"
@@ -23,6 +42,30 @@
                 <data
                     android:host="*"
                     android:pathPrefix="/map"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/preferences"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/bookmarks"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/track"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/bookmark"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/backend"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/poi"
                     android:scheme="wear" />
                 <data
                     android:host="*"

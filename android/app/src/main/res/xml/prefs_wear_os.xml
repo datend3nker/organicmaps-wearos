@@ -19,6 +19,25 @@
       app:singleLineTitle="false"
       android:defaultValue="false" />
     <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_3d"
+      android:title="@string/pref_wear_map_3d_title"
+      android:summary="@string/pref_map_3d_summary"
+      android:defaultValue="true" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_3d_buildings"
+      android:title="@string/pref_wear_map_3d_buildings_title"
+      android:summary="@string/pref_map_3d_buildings_summary"
+      android:defaultValue="true"
+      android:dependency="@string/pref_wear_os_3d" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_auto_zoom"
+      android:title="@string/pref_wear_map_auto_zoom_title"
+      android:defaultValue="true" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_auto_download_route_maps"
+      android:title="Auto-download maps for route"
+      android:defaultValue="true" />
+    <androidx.preference.SwitchPreferenceCompat
       android:key="@string/pref_wear_os_standalone_mode"
       android:title="@string/pref_wear_os_standalone_mode_title"
       android:summary="@string/pref_wear_os_standalone_mode_summary"
@@ -37,39 +56,67 @@
       app:singleLineTitle="false"
       android:entries="@array/wear_map_download_mode"
       android:entryValues="@array/wear_map_download_mode_values"
-      android:defaultValue="BLUETOOTH_ONLY" />
+      android:defaultValue="PHONE_SYNC" />
+    <androidx.preference.ListPreference
+      android:key="@string/pref_wear_os_map_style"
+      android:title="@string/pref_map_style_title"
+      android:entries="@array/map_style"
+      android:entryValues="@array/pref_map_style_values"
+      android:defaultValue="default" />
+    <androidx.preference.ListPreference
+      android:key="@string/pref_wear_os_munits"
+      android:title="@string/measurement_units"
+      android:entries="@array/measument_units"
+      android:entryValues="@array/measument_units_values"
+      android:defaultValue="0" />
   </androidx.preference.PreferenceCategory>
 
   <androidx.preference.PreferenceCategory
     android:title="@string/pref_map_layers">
     <androidx.preference.SwitchPreferenceCompat
-      android:key="transit_enabled"
+      android:key="@string/pref_wear_os_transit"
       android:title="@string/button_layer_subway"
       android:defaultValue="false" />
     <androidx.preference.SwitchPreferenceCompat
-      android:key="biking_enabled"
+      android:key="@string/pref_wear_os_biking"
       android:title="@string/button_layer_cycling"
       android:defaultValue="false" />
     <androidx.preference.SwitchPreferenceCompat
-      android:key="hiking_enabled"
+      android:key="@string/pref_wear_os_hiking"
       android:title="@string/button_layer_hiking"
       android:defaultValue="false" />
     <androidx.preference.SwitchPreferenceCompat
-      android:key="isolines_enabled"
+      android:key="@string/pref_wear_os_isolines"
       android:title="@string/button_layer_isolines"
       android:defaultValue="false" />
   </androidx.preference.PreferenceCategory>
 
   <androidx.preference.PreferenceCategory
-    android:title="@string/prefs_routing">
+    android:title="@string/driving_options_title">
     <androidx.preference.SwitchPreferenceCompat
-      android:key="avoid_tolls"
+      android:key="@string/pref_wear_os_avoid_tolls"
       android:title="@string/avoid_tolls"
       android:defaultValue="false" />
     <androidx.preference.SwitchPreferenceCompat
-      android:key="avoid_motorways"
+      android:key="@string/pref_wear_os_avoid_motorways"
       android:title="@string/avoid_motorways"
       android:defaultValue="false" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_avoid_ferries"
+      android:title="@string/avoid_ferry"
+      android:defaultValue="false" />
+    <androidx.preference.SwitchPreferenceCompat
+      android:key="@string/pref_wear_os_avoid_unpaved"
+      android:title="@string/avoid_unpaved"
+      android:defaultValue="false" />
+  </androidx.preference.PreferenceCategory>
+
+  <androidx.preference.PreferenceCategory
+    android:title="@string/about_menu_title">
+    <androidx.preference.Preference
+      android:key="osm_credits"
+      android:title="@string/osm_credits"
+      app:singleLineTitle="false" />
   </androidx.preference.PreferenceCategory>
 
 </androidx.preference.PreferenceScreen>

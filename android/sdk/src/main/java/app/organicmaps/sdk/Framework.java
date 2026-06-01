@@ -94,12 +94,10 @@ public class Framework
 
   public static native int nativeGetDrawScale();
 
+  public static native double[] nativeGetViewportRect();
+
   public static native void nativePokeSearchInViewport();
 
-  // Wear OS Headless Vector Extraction
-  // Fetches geometry for roads, buildings, water, and POIs based on a given bound box
-  @NonNull
-  public static native byte[] nativeGetWearMapFeatures(double minLat, double minLon, double maxLat, double maxLon, int scale, int routerType, int poiCategoriesMask);
 
   @Size(2)
   public static native double[] nativeGetScreenRectCenter();
@@ -141,7 +139,7 @@ public class Framework
   //
   //  public static native void nativeUpdateSavedDataVersion();
 
-  private static native long nativeGetDataVersion();
+  public static native long nativeGetDataVersion();
 
   public static Date getDataVersion()
   {
@@ -379,4 +377,12 @@ public class Framework
   public static native void nativeDidSelectProduct(String title, String link);
 
   public static native void nativeSaveRoute();
+
+  public static native void nativeDrawRouteLine(@NonNull double[] lats, @NonNull double[] lons, float width, int argbColor);
+
+  public static native void nativeRemoveRouteLine();
+
+  public static native byte[] nativeGetMwmBytes(String name, long offset, int size);
+
+  public static native long nativeGetMwmSize(String name);
 }

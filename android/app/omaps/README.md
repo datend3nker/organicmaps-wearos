@@ -12,6 +12,11 @@ This module contains the Wear OS application for Organic Maps. It provides a ric
     - **Zooming**: Use the **rotary crown** or physical **volume buttons** for smooth, responsive zooming.
     - **Interaction Lock**: A toggle to switch between swiping for tabs and panning the map, ensuring safe navigation.
     - **Re-center**: Quickly snap back to your current position with a dedicated "My Location" button.
+- **Location Marker Sync**: Real-time position and bearing synchronization between phone and watch, ensuring a unified map view.
+- **Route & Track Recording**:
+    - **Direct Control**: Start, stop, and pause route recording directly from the watch.
+    - **Real-time Status**: A visual "Red Dot" indicator and timer show recording progress at a glance.
+    - **Synced Persistence**: Tracks are automatically saved and synced to your bookmarks on both devices.
 - **Smart Filtering**: In Car/Vehicle mode, the map automatically hides pedestrian-only paths.
 - **POI Support**: Renders Points of Interest (Food, Fuel, ATMs, etc.) with high-contrast colored markers and official Organic Maps icons.
 - **Improved Labels**: Road names follow the path of the road for better legibility and a cleaner look.
@@ -47,8 +52,9 @@ Settings can be managed on both the phone and watch. They are designed to be int
 | **Map Enabled** | `Enable Map on Watch` | Toggle to save battery or simplify the watch UI. | Phone → Watch |
 | **Watch Local Mode** | `Watch Local Mode` | Use maps installed on the watch for speed and stability. | Bi-directional |
 | **Standalone Mode** | `Watch Standalone Mode` | Independent operation (e.g., hiking with only the watch). | Phone → Watch |
-| **Backend** | `Communication Backend` | Choice between GMS (Play Services) or raw Bluetooth. | Phone → Watch |
-| **Download Policy**| `Watch Download Policy` | Decide if watch maps download via Phone-Link or Wi-Fi. | Phone → Watch |
+| **Backend** | `Communication Backend` | Choice between GMS (Play Services) or raw Bluetooth. Syncs across devices. | Bi-directional (Coordinated) |
+| **Download Policy**| `Watch Download Policy` | Decide if watch pulls maps from phone memory or Wi-Fi. | Phone → Watch |
+| **Notifications** | `Sync Notifications` | Toggle "Serving Map" progress visibility on the phone. | Watch → Phone |
 
 ### Mode Hierarchy & Interactions
 - **Phone-Link (Streaming)**: The default behavior. The phone does the heavy lifting of extracting and compressing map data, then sends it to the watch.
@@ -59,11 +65,13 @@ Settings can be managed on both the phone and watch. They are designed to be int
 
 ## Connection States (Visual Indicators)
 
-The watch displays small, non-intrusive icons in the **top-right corner** of the map to communicate its current state:
+The app displays status icons in the **top-right corner** of the map (watch) and **top-center** (phone) to communicate connectivity:
 
-- **Red Bluetooth Icon**: The watch is currently disconnected from the phone. If not in Standalone mode, map streaming and search will be unavailable.
-- **Green SD Card Icon**: **Watch Local Mode** is active. The map is being rendered from local watch storage.
-- **Airplane Icon**: **Watch Standalone Mode** is active. The watch is operating independently of the phone.
+- **Green Cloud Icon**: Connected via Google Play Services (GMS).
+- **Green Bluetooth Icon**: Connected via direct Bluetooth RFCOMM (OSS).
+- **Red Disconnected Icon**: The watch is currently disconnected from the phone.
+- **Green SD Card Icon**: **Watch Local Mode** is active. Rendering from local watch storage.
+- **Airplane Icon**: **Watch Standalone Mode** is active. Using internal watch GPS.
 
 ---
 

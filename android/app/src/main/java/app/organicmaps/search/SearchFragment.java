@@ -403,7 +403,10 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
   {
     final String query = getQuery();
     if (Config.isSearchHistoryEnabled())
+    {
       SearchRecents.add(query, requireContext());
+      app.organicmaps.wear.WearSyncService.sendSearchHistory(requireContext());
+    }
     SearchEngine.INSTANCE.cancel();
     SearchEngine.INSTANCE.setQuery(query);
 
@@ -436,7 +439,10 @@ public class SearchFragment extends BaseMwmFragment implements SearchListener, C
 
     final String query = getQuery();
     if (Config.isSearchHistoryEnabled())
+    {
       SearchRecents.add(query, requireContext());
+      app.organicmaps.wear.WearSyncService.sendSearchHistory(requireContext());
+    }
     mLastQueryTimestamp = System.nanoTime();
 
     SearchEngine.INSTANCE.searchInteractive(

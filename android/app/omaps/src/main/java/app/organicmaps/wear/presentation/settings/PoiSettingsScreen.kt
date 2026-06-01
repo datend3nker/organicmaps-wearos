@@ -11,7 +11,6 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.WearCommandService
-import app.organicmaps.wear.MapTileStateHolder
 
 @Composable
 fun PoiSettingsScreen(onBack: () -> Unit) {
@@ -50,7 +49,6 @@ fun PoiSettingsScreen(onBack: () -> Unit) {
         mask = newMask
         prefs.edit().putInt("poiCategoriesMask", newMask).apply()
         NavigationStateHolder.update(navState.copy(poiCategoriesMask = newMask))
-        MapTileStateHolder.clearCache()
         WearCommandService.syncPreferences(context)
     }
 
@@ -77,7 +75,6 @@ fun PoiSettingsScreen(onBack: () -> Unit) {
                     mask = newMask
                     prefs.edit().putInt("poiCategoriesMask", newMask).apply()
                     NavigationStateHolder.update(navState.copy(poiCategoriesMask = newMask))
-                    MapTileStateHolder.clearCache()
                     WearCommandService.syncPreferences(context)
                 },
                 label = { Text("All POIs") },

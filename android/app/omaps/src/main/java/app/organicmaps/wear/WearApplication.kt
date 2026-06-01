@@ -42,29 +42,14 @@ class WearApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        Log.d("WearApp", "DEBUG_GMS: WearApplication onCreate")
         if (isInitializing || isFullyInitialized) return
         isInitializing = true
         
         System.loadLibrary("organicmaps")
         ConnectionState.INSTANCE.initialize(this)
         
-        val nativeLocationFactory = object : LocationProviderFactory {
-            override fun isGoogleLocationAvailable(context: Context): Boolean {
-                return false
-            }
-            override fun getProvider(context: Context, listener: BaseLocationProvider.Listener): BaseLocationProvider {
-                // Use GMS Fused location if available on the watch
-                if (isGoogleLocationAvailable(context)) {
-                    try {
-                        val cls = Class.forName("app.organicmaps.location.GoogleFusedLocationProvider")
-                        val ctor = cls.getDeclaredConstructor(Context::class.java, BaseLocationProvider.Listener::class.java)
-                        ctor.isAccessible = true
-                        return ctor.newInstance(context, listener) as BaseLocationProvider
-                    } catch (_: Exception) {}
-                }
-                return app.organicmaps.sdk.location.AndroidNativeProvider(context, listener)
-            }
-        }
+        val nativeLocationFactory = LocationProviderFactoryImpl.create()
         
         organicMaps = OrganicMaps(
             applicationContext, 
@@ -80,11 +65,16 @@ class WearApplication : Application() {
 
         // OPTIMIZATION: Move heavy asset copying and native reloading to a background thread
         CoroutineScope(Dispatchers.IO).launch {
-            copyCountriesFileToWritableStorage()
             withContext(Dispatchers.Main) {
                 try {
                     val asyncContinue = organicMaps.init { 
                         isFullyInitialized = true 
+                        copyCountriesFileToWritableStorage()
+                        
+                        // Start appropriate communication backend AFTER init
+                        WearCommandService.initBackend(this@WearApplication)
+                        WearCommandService.syncPreferences(this@WearApplication)
+
                         val state = NavigationStateHolder.state.value
                         if (state.allowMobileData) {
                             app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
@@ -94,15 +84,27 @@ class WearApplication : Application() {
                         Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
 
                         // Apply native settings from state
+                        Framework.nativeSet3dMode(state.is3dEnabled, state.is3dBuildingsEnabled)
+                        Framework.nativeSetAutoZoomEnabled(state.isAutoZoomEnabled)
                         Framework.nativeSetTransitSchemeEnabled(state.transitEnabled)
                         Framework.nativeSetCyclingLayerEnabled(state.bikingEnabled)
                         Framework.nativeSetHikingLayerEnabled(state.hikingEnabled)
                         Framework.nativeSetIsolinesLayerEnabled(state.isolinesEnabled)
+
+                        if (state.avoidTolls) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Toll)
+                        if (state.avoidMotorways) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Motorway)
+                        if (state.avoidFerries) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Ferry)
+                        if (state.avoidUnpaved) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Dirty)
 
                         setupLocalNavigationListener()
                     }
                     if (!asyncContinue) {
                         isFullyInitialized = true
+                        copyCountriesFileToWritableStorage()
+                        
+                        WearCommandService.initBackend(this@WearApplication)
+                        WearCommandService.syncPreferences(this@WearApplication)
+
                         val state = NavigationStateHolder.state.value
                         if (state.allowMobileData) {
                             app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
@@ -112,10 +114,17 @@ class WearApplication : Application() {
                         Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
 
                         // Apply native settings from state
+                        Framework.nativeSet3dMode(state.is3dEnabled, state.is3dBuildingsEnabled)
+                        Framework.nativeSetAutoZoomEnabled(state.isAutoZoomEnabled)
                         Framework.nativeSetTransitSchemeEnabled(state.transitEnabled)
                         Framework.nativeSetCyclingLayerEnabled(state.bikingEnabled)
                         Framework.nativeSetHikingLayerEnabled(state.hikingEnabled)
                         Framework.nativeSetIsolinesLayerEnabled(state.isolinesEnabled)
+
+                        if (state.avoidTolls) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Toll)
+                        if (state.avoidMotorways) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Motorway)
+                        if (state.avoidFerries) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Ferry)
+                        if (state.avoidUnpaved) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Dirty)
 
                         setupLocalNavigationListener()
                     }
@@ -126,9 +135,6 @@ class WearApplication : Application() {
             }
         }
 
-        // Start appropriate communication backend
-        WearCommandService.initBackend(this)
-        
         NavigationStateHolder.loadFromPrefs(this)
         
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
@@ -140,6 +146,8 @@ class WearApplication : Application() {
         startPingLoop()
         setupLifecycleAwareUpdates()
         WearNotificationManager.createNotificationChannel(this)
+
+        // Manual Message Listener is handled inside GmsWearSyncBackend if using GMS
     }
 
     private fun setupLifecycleAwareUpdates() {
@@ -228,63 +236,103 @@ class WearApplication : Application() {
         }
     }
 
-    private var lastPongTime = System.currentTimeMillis()
+    private var lastReceivedTime = 0L
+    private var lastSentTime = 0L
+    private var lastLaunchRequestTime = 0L
+    private var currentPingBackoffMs = 15000L
+
     private fun startPingLoop() {
-        MainScope().launch {
-            kotlinx.coroutines.delay(3000)
+        ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.Default) {
+            delay(3000)
             while (true) {
+                if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                    delay(10000)
+                    continue
+                }
+
+                val now = System.currentTimeMillis()
+                val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
+                val isStandaloneSetting = prefs.getBoolean("disconnectFromPhone", false)
+                val currentState = NavigationStateHolder.state.value
+                
+                if (isStandaloneSetting) {
+                    if (currentState.isPhoneConnected) {
+                        NavigationStateHolder.update(currentState.copy(isPhoneConnected = false))
+                    }
+                    delay(60000) // Low frequency check for settings change
+                    continue
+                }
+
                 try {
-                    val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
-                    val disconnected = prefs.getBoolean("disconnectFromPhone", false)
+                    val isConnected = currentState.isPhoneConnected
+                    val idleMs = now - lastReceivedTime
+                    val sinceSentMs = now - lastSentTime
+
+                    // EXPONENTIAL BACKOFF LOGIC
+                    val effectivePingInterval = if (isConnected) 15000L else currentPingBackoffMs
                     
-                    if (!disconnected) {
+                    if (idleMs > effectivePingInterval && sinceSentMs > effectivePingInterval) {
+                        if (!isConnected && !currentState.watchLocalMode && !currentState.standaloneMode) {
+                            // Try to wake up phone app less frequently during backoff
+                            if (now - lastLaunchRequestTime > currentPingBackoffMs.coerceAtLeast(30000L)) {
+                                Log.d("WearApp", "Backoff (${currentPingBackoffMs}ms): Trying to wake up phone app")
+                                lastLaunchRequestTime = now
+                                WearCommandService.launchPhoneApp(this@WearApplication)
+                            }
+                        }
+
+                        Log.d("WearApp", "Heartbeat (Connected=$isConnected, Interval=${effectivePingInterval}ms) - sending ping")
                         WearCommandService.sendPing(this@WearApplication)
-                        // No automatic connection update here - wait for actual Pong/Message
-                        WearCommandService.checkConnection(this@WearApplication) { /* node exists, but app might not be running */ }
-                    } else {
-                         val currentState = NavigationStateHolder.state.value
-                         if (currentState.isPhoneConnected) {
-                             NavigationStateHolder.update(currentState.copy(isPhoneConnected = false))
+                        lastSentTime = System.currentTimeMillis()
+                        
+                        // Increase backoff if we are still disconnected
+                        if (!isConnected) {
+                            currentPingBackoffMs = (currentPingBackoffMs * 1.5).toLong().coerceAtMost(300000L) // Cap at 5m
+                        }
+                    }
+
+                    // Periodically check if nodes exist physically
+                    WearCommandService.checkConnection(this@WearApplication) { isConnected ->
+                         if (isConnected && !NavigationStateHolder.state.value.isPhoneConnected) {
+                              Log.d("WearApp", "Physical node found - resetting backoff and checking app status")
+                              onActivityReceived()
                          }
                     }
-                } catch (e: Exception) {
-                    Log.e("WearApp", "Failed to send ping", e)
-                }
-                kotlinx.coroutines.delay(5000) // Fast ping
-                
-                val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
-                val disconnected = prefs.getBoolean("disconnectFromPhone", false)
-
-                if (disconnected || System.currentTimeMillis() - lastPongTime > 15000) { // Fast timeout
-                    val currentState = NavigationStateHolder.state.value
-                    if (currentState.isPhoneConnected) {
+                    
+                    // Timeout check to mark as disconnected
+                    if (idleMs > 40000 && isConnected) {
                         Log.d("WearApp", "Phone connection timeout - marking as disconnected")
                         var newState = currentState.copy(isPhoneConnected = false)
                         
-                        // If we were navigating in companion mode, stop it
-                        if (newState.isActive && !newState.watchLocalMode && !newState.standaloneMode) {
-                            Log.d("WearApp", "Companion connection lost while navigating - resetting state")
-                            newState = newState.copy(
-                                isActive = false,
-                                isNavigating = false,
-                                isRouteBuilt = false,
-                                isRouteBuilding = false
-                            )
+                        if (!newState.watchLocalMode && !newState.standaloneMode) {
+                            newState = newState.copy(watchLocalMode = true)
+                            withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(this@WearApplication, "Phone connection lost. Using Offline Maps.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }
                         NavigationStateHolder.update(newState)
                     }
+                } catch (e: Exception) {
+                    Log.e("WearApp", "Error in ping loop", e)
                 }
+
+                // Check again soon if connected, otherwise wait longer
+                delay(if (currentState.isPhoneConnected) 10000L else 15000L)
             }
         }
     }
     
-    fun onPongReceived() {
-        lastPongTime = System.currentTimeMillis()
+    fun onActivityReceived() {
+        lastReceivedTime = System.currentTimeMillis()
+        currentPingBackoffMs = 15000L // Reset exponential backoff
         val currentState = NavigationStateHolder.state.value
         if (!currentState.isPhoneConnected) {
             NavigationStateHolder.update(currentState.copy(isPhoneConnected = true))
         }
     }
+
+    @Deprecated("Use onActivityReceived", ReplaceWith("onActivityReceived()"))
+    fun onPongReceived() = onActivityReceived()
 
     private fun setupLocalNavigationListener() {
         val routingController = RoutingController.get()
@@ -296,7 +344,12 @@ class WearApplication : Application() {
             }
             override fun onPlanningCancelled() {
                 Log.d("WearApp", "Routing: Planning cancelled")
-                NavigationStateHolder.update { it.copy(isRouteBuilding = false, isRouteReady = false, isRouteBuilt = false) }
+                NavigationStateHolder.update { it.copy(
+                    isRouteBuilding = false, 
+                    isRouteReady = false, 
+                    isRouteBuilt = false,
+                    isActive = false
+                ) }
             }
             override fun onBuiltRoute() {
                 Log.d("WearApp", "Routing: Route built successfully")
@@ -313,6 +366,7 @@ class WearApplication : Application() {
                     isNavigating = false, 
                     isActive = false, 
                     isRouteBuilt = false, 
+                    isRouteReady = false,
                     isRouteBuilding = false
                 ), force = true)
             }
@@ -333,6 +387,15 @@ class WearApplication : Application() {
             }
             override fun onStartRouteBuilding() {
                 NavigationStateHolder.update { it.copy(isRouteBuilding = true) }
+            }
+        })
+
+        app.organicmaps.sdk.location.LocationState.nativeSetListener(object : app.organicmaps.sdk.location.LocationState.ModeChangeListener {
+            override fun onMyPositionModeChanged(newMode: Int) {
+                val isUnlocked = newMode == app.organicmaps.sdk.location.LocationState.NOT_FOLLOW || 
+                                newMode == app.organicmaps.sdk.location.LocationState.NOT_FOLLOW_NO_POSITION
+                Log.d("WearApp", "Native location mode changed: $newMode (isUnlocked=$isUnlocked)")
+                NavigationStateHolder.update { it.copy(isMapUnlocked = isUnlocked) }
             }
         })
 
@@ -388,24 +451,17 @@ class WearApplication : Application() {
     private fun copyCountriesFileToWritableStorage() {
         try {
             val storagePath = StoragePathManager.findMapsStorage(this)
-            val versionedPath = File(storagePath, "251123")
+            val dataVersion = Framework.nativeGetDataVersion()
+            val versionedPath = File(storagePath, dataVersion.toString())
             if (!versionedPath.exists()) versionedPath.mkdirs()
 
-            // Recursively copy ALL assets to the writable storage
-            // This ensures all styles, textures, and shaders are available to the native engine
-            copyAssetsRecursively("", storagePath)
+            // DO NOT copy assets recursively here. 
+            // The phone app and watch app share the same applicationId and storage directory.
+            // Copying assets from the watch APK into the shared storage can corrupt
+            // the phone app's map files and cause native crashes.
+            // The native core can read resources from the APK assets directly.
             
-            // Move World maps to the versioned directory if they were copied to root
-            val worldMwm = File(storagePath, "World.mwm")
-            if (worldMwm.exists()) {
-                worldMwm.renameTo(File(versionedPath, "World.mwm"))
-            }
-            val worldCoastsMwm = File(storagePath, "WorldCoasts.mwm")
-            if (worldCoastsMwm.exists()) {
-                worldCoastsMwm.renameTo(File(versionedPath, "WorldCoasts.mwm"))
-            }
-
-            // Critical for routing: native core needs these registered
+            // Critical for routing: native core needs registered maps
             if (isFullyInitialized) {
                 Framework.nativeReloadWorldMaps()
             }

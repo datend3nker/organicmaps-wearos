@@ -260,6 +260,7 @@ public:
   void PrepareForSearch(kml::MarkGroupId groupId);
 
   bool IsVisible(kml::MarkGroupId groupId) const;
+  bool IsVisibleSafe(kml::MarkGroupId groupId) const;
 
   kml::MarkGroupId CreateBookmarkCategory(kml::CategoryData && data, bool autoSave = true);
   kml::MarkGroupId CreateBookmarkCategory(std::string const & name, bool autoSave = true);
@@ -279,6 +280,13 @@ public:
   kml::GroupIdCollection GetSortedBmGroupIdList() const;
   size_t GetBmGroupsCount() const { return m_unsortedBmGroupsIdList.size(); }
   bool HasBmCategory(kml::MarkGroupId groupId) const;
+  BookmarkCategory * GetBmCategorySafe(kml::MarkGroupId categoryId) const;
+  BookmarkCategory * GetBmCategory(kml::MarkGroupId categoryId) const
+  {
+    auto * res = GetBmCategorySafe(categoryId);
+    CHECK(res, (categoryId));
+    return res;
+  }
   bool HasBookmark(kml::MarkId markId) const;
   bool HasTrack(kml::TrackId trackId) const;
   kml::MarkGroupId LastEditedBMCategory();
@@ -596,13 +604,6 @@ private:
   UserMark const * GetMark(kml::MarkId markId) const;
 
   UserMarkLayer * GetGroup(kml::MarkGroupId groupId) const;
-  BookmarkCategory * GetBmCategorySafe(kml::MarkGroupId categoryId) const;
-  BookmarkCategory * GetBmCategory(kml::MarkGroupId categoryId) const
-  {
-    auto * res = GetBmCategorySafe(categoryId);
-    CHECK(res, (categoryId));
-    return res;
-  }
 
   Bookmark * AddBookmark(std::unique_ptr<Bookmark> && bookmark);
   Track * AddTrack(std::unique_ptr<Track> && track);

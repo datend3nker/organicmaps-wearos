@@ -5,40 +5,14 @@
         <service
             android:name="app.organicmaps.wear.WearDataListenerService"
             android:exported="true"
-            tools:replace="android:exported">
+            android:permission="com.google.android.gms.permission.BIND_LISTENER">
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
-                <data
-                    android:host="*"
-                    android:pathPrefix="/navigation"
-                    android:scheme="wear" />
-                <data
-                    android:host="*"
-                    android:pathPrefix="/search"
-                    android:scheme="wear" />
-                <data
-                    android:host="*"
-                    android:pathPrefix="/preferences"
-                    android:scheme="wear" />
-                <data
-                    android:host="*"
-                    android:pathPrefix="/map"
-                    android:scheme="wear" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/" />
             </intent-filter>
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
-                <data
-                    android:host="*"
-                    android:pathPrefix="/navigation"
-                    android:scheme="wear" />
-                <data
-                    android:host="*"
-                    android:pathPrefix="/search"
-                    android:scheme="wear" />
-                <data
-                    android:host="*"
-                    android:pathPrefix="/map"
-                    android:scheme="wear" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/" />
             </intent-filter>
         </service>
     </application>

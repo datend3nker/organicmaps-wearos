@@ -16,6 +16,7 @@ import androidx.wear.compose.foundation.lazy.items
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import app.organicmaps.sdk.downloader.MapManager
 import app.organicmaps.sdk.downloader.CountryItem
 import app.organicmaps.wear.NavigationStateHolder
@@ -68,6 +69,10 @@ fun MapManagerScreen(isVisible: Boolean = true) {
     var searchQuery by remember { mutableStateOf("") }
 
     val listState = rememberScalingLazyListState()
+
+    val downloadState by app.organicmaps.wear.WearMapDownloader.downloadState.collectAsState()
+    val downloadProgress by app.organicmaps.wear.WearMapDownloader.downloadProgress.collectAsState()
+    val currentMap by app.organicmaps.wear.WearMapDownloader.currentMap.collectAsState()
 
     LaunchedEffect(currentRoot, centerLat, centerLon, searchQuery, isVisible) {
         if (!isVisible) return@LaunchedEffect
@@ -136,6 +141,27 @@ fun MapManagerScreen(isVisible: Boolean = true) {
         contentPadding = PaddingValues(top = 32.dp, bottom = 32.dp, start = 10.dp, end = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (navState.missingMapId != null) {
+            item {
+                Card(
+                    onClick = {
+                        val mapId = navState.missingMapId!!
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                            app.organicmaps.wear.WearMapDownloader.downloadOrStreamMap(context, mapId, forceInternet = true)
+                        }
+                    },
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    Column {
+                        Text("Not on Phone", style = MaterialTheme.typography.caption1, color = Color.Red)
+                        Text("Map '${navState.missingMapId}' missing. Download via Internet?", style = MaterialTheme.typography.body2)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Download via Internet", color = Color(0xFF00E5FF), style = MaterialTheme.typography.button)
+                    }
+                }
+            }
+        }
+
         if (navState.backend == "GMS" && !navState.standaloneMode) {
             item {
                 Text(
@@ -143,6 +169,20 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                     style = MaterialTheme.typography.caption2,
                     color = Color.LightGray,
                     modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+        }
+
+        if (downloadState == app.organicmaps.wear.WearMapDownloader.DownloadState.STREAMING_FROM_PHONE || 
+            downloadState == app.organicmaps.wear.WearMapDownloader.DownloadState.DOWNLOADING) {
+            item {
+                Chip(
+                    onClick = { app.organicmaps.wear.WearMapDownloader.cancel(context) },
+                    label = { Text("Cancel Sync: $currentMap") },
+                    secondaryLabel = { Text("${(downloadProgress * 100).toInt()}%") },
+                    colors = ChipDefaults.secondaryChipColors(),
+                    icon = { Icon(Icons.Default.Close, contentDescription = "Cancel") },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                 )
             }
         }
@@ -253,6 +293,7 @@ fun MapManagerScreen(isVisible: Boolean = true) {
 
 @Composable
 fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val isDownloading = item.status == CountryItem.STATUS_PROGRESS || item.status == CountryItem.STATUS_ENQUEUED || item.status == CountryItem.STATUS_APPLYING
     val isInstalled = item.status == CountryItem.STATUS_DONE || item.status == CountryItem.STATUS_PARTLY || item.present
     
@@ -270,7 +311,9 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
             if (item.isExpandable) {
                 onPathStackChanged(pathStack + item.id)
             } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED) {
-                MapManager.startDownload(item.id)
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                    app.organicmaps.wear.WearMapDownloader.downloadOrStreamMap(context, item.id)
+                }
             }
         },
         label = { Text(item.name, maxLines = 1) },

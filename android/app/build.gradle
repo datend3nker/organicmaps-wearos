@@ -44,12 +44,14 @@ android {
       assets.srcDirs = ['src/main/assets']
     }
     google {
-      java.srcDirs = ['src/google/java', 'src/gms/java']
+      java.srcDirs = ['src/gms/java']
+      res.srcDirs = ['src/gms/res']
       manifest.srcFile 'src/gms/AndroidManifest.xml'
     }
     fdroid {
-      java.srcDirs = ['src/fdroid/java']
-      manifest.srcFile 'src/fdroid/AndroidManifest.xml'
+      java.srcDirs = ['src/gms/java']
+      res.srcDirs = ['src/gms/res']
+      manifest.srcFile 'src/gms/AndroidManifest.xml'
     }
     web {
       java.srcDirs = ['src/google/java', 'src/gms/java']
@@ -70,17 +72,17 @@ android {
       buildConfigField 'String', 'SUPPORT_MAIL', '"google@organicmaps.app"'
     }
 
+    fdroid {
+      dimension 'default'
+      versionName = android.defaultConfig.versionName + '-FDroid'
+      buildConfigField 'String', 'SUPPORT_MAIL', '"fdroid@organicmaps.app"'
+    }
+
     web {
       dimension 'default'
       applicationIdSuffix '.web'
       versionName = android.defaultConfig.versionName + '-Web'
       buildConfigField 'String', 'SUPPORT_MAIL', '"web@organicmaps.app"'
-    }
-
-    fdroid {
-      dimension 'default'
-      versionName = android.defaultConfig.versionName + '-FDroid'
-      buildConfigField 'String', 'SUPPORT_MAIL', '"fdroid@organicmaps.app"'
     }
 
     oss {
@@ -176,6 +178,7 @@ dependencies {
   webImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
   huaweiImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
   fdroidImplementation 'com.google.android.gms:play-services-wearable:19.0.0'
+  fdroidImplementation 'com.google.android.gms:play-services-location:21.3.0'
 
   if (googleFirebaseServicesEnabled) {
     implementation platform('com.google.firebase:firebase-bom:33.11.0')

@@ -252,6 +252,7 @@ public class NavigationService extends Service implements LocationListener
     locationHelper.restartWithNewMode();
 
     WearSyncService.startNavigation(this);
+    WearSyncService.launchWatchApp(this);
 
     // Please make this service START_STICKY after fixing the issues at the beginning of the function.
     return START_NOT_STICKY;

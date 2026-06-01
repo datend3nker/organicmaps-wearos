@@ -1,7 +1,7 @@
 package app.organicmaps.settings;
 
 import android.app.Dialog;
-import android.app.ProgressDialog;
+import androidx.appcompat.app.AlertDialog;
 import android.os.Bundle;
 import android.text.format.Formatter;
 import android.view.LayoutInflater;
@@ -106,16 +106,16 @@ public class StoragePathFragment extends BaseSettingsFragment
         .show();
   }
 
-  @SuppressWarnings("deprecation") // https://github.com/organicmaps/organicmaps/issues/3629
-  private Dialog showProgressDialog()
+  private AlertDialog showProgressDialog()
   {
-    final ProgressDialog dialog = new ProgressDialog(requireActivity(), R.style.MwmTheme_ProgressDialog);
-    dialog.setMessage(getString(R.string.wait_several_minutes));
-    dialog.setProgressStyle(ProgressDialog.STYLE_SPINNER);
-    dialog.setIndeterminate(true);
-    dialog.setCancelable(false);
-    dialog.show();
-    return dialog;
+    final View view = LayoutInflater.from(requireActivity()).inflate(R.layout.dialog_progress, null);
+    final TextView tvMessage = view.findViewById(R.id.message);
+    tvMessage.setText(R.string.wait_several_minutes);
+
+    return new MaterialAlertDialogBuilder(requireActivity(), R.style.MwmTheme_AlertDialog)
+        .setView(view)
+        .setCancelable(false)
+        .show();
   }
 
   /**

@@ -12,7 +12,6 @@ import androidx.wear.compose.material.*
 import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.WearCommandService
 import app.organicmaps.sdk.Framework
-import app.organicmaps.wear.MapTileStateHolder
 
 @Composable
 fun LayerSettingsScreen(onBack: () -> Unit) {
@@ -23,7 +22,6 @@ fun LayerSettingsScreen(onBack: () -> Unit) {
     val updateLayer: (Boolean, (Boolean) -> Unit, String) -> Unit = { checked, nativeCall, prefKey ->
         nativeCall(checked)
         prefs.edit().putBoolean(prefKey, checked).apply()
-        MapTileStateHolder.clearCache()
         WearCommandService.syncPreferences(context)
     }
 
@@ -57,7 +55,7 @@ fun LayerSettingsScreen(onBack: () -> Unit) {
                 checked = navState.transitEnabled,
                 onCheckedChange = { checked ->
                     NavigationStateHolder.update { it.copy(transitEnabled = checked) }
-                    updateLayer(checked, { Framework.nativeSetTransitSchemeEnabled(it) }, "transit_enabled")
+                    updateLayer(checked, { Framework.nativeSetTransitSchemeEnabled(it) }, "pref_wear_os_transit")
                 }
             )
         }
@@ -68,7 +66,7 @@ fun LayerSettingsScreen(onBack: () -> Unit) {
                 checked = navState.bikingEnabled,
                 onCheckedChange = { checked ->
                     NavigationStateHolder.update { it.copy(bikingEnabled = checked) }
-                    updateLayer(checked, { Framework.nativeSetCyclingLayerEnabled(it) }, "biking_enabled")
+                    updateLayer(checked, { Framework.nativeSetCyclingLayerEnabled(it) }, "pref_wear_os_biking")
                 }
             )
         }
@@ -79,7 +77,7 @@ fun LayerSettingsScreen(onBack: () -> Unit) {
                 checked = navState.hikingEnabled,
                 onCheckedChange = { checked ->
                     NavigationStateHolder.update { it.copy(hikingEnabled = checked) }
-                    updateLayer(checked, { Framework.nativeSetHikingLayerEnabled(it) }, "hiking_enabled")
+                    updateLayer(checked, { Framework.nativeSetHikingLayerEnabled(it) }, "pref_wear_os_hiking")
                 }
             )
         }
@@ -90,7 +88,7 @@ fun LayerSettingsScreen(onBack: () -> Unit) {
                 checked = navState.isolinesEnabled,
                 onCheckedChange = { checked ->
                     NavigationStateHolder.update { it.copy(isolinesEnabled = checked) }
-                    updateLayer(checked, { Framework.nativeSetIsolinesLayerEnabled(it) }, "isolines_enabled")
+                    updateLayer(checked, { Framework.nativeSetIsolinesLayerEnabled(it) }, "pref_wear_os_isolines")
                 }
             )
         }

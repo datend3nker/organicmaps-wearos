@@ -50,7 +50,7 @@ void LayerRenderer::Render(ref_ptr<dp::GraphicsContext> context, ref_ptr<gpu::Pr
 
   for (auto & r : m_renderers)
   {
-    if (routingActive && (r.first == gui::WIDGET_COMPASS || r.first == gui::WIDGET_RULER))
+    if (routingActive && (r.first == gui::WIDGET_COMPASS))
       continue;
 
     r.second->Render(context, mng, screen);
@@ -205,7 +205,7 @@ drape_ptr<LayerRenderer> LayerCacher::RecacheWidgets(ref_ptr<dp::GraphicsContext
   static std::map<EWidget, TCacheShape> cacheFunctions{
       {WIDGET_COMPASS, std::bind(&LayerCacher::CacheCompass, this, _1, _2, _3, _4)},
       {WIDGET_RULER, std::bind(&LayerCacher::CacheRuler, this, _1, _2, _3, _4)},
-      {WIDGET_COPYRIGHT, std::bind(&LayerCacher::CacheCopyright, this, _1, _2, _3, _4)},
+      //{WIDGET_COPYRIGHT, std::bind(&LayerCacher::CacheCopyright, this, _1, _2, _3, _4)},
       {WIDGET_SCALE_FPS_LABEL, std::bind(&LayerCacher::CacheScaleFpsLabel, this, _1, _2, _3, _4)},
   };
 
@@ -245,7 +245,7 @@ drape_ptr<LayerRenderer> LayerCacher::RecacheDebugLabels(ref_ptr<dp::GraphicsCon
   drape_ptr<LayerRenderer> renderer = make_unique_dp<LayerRenderer>();
 
   auto const vs = static_cast<float>(df::VisualParams::Instance().GetVisualScale());
-  DebugInfoLabels debugLabels = DebugInfoLabels(Position(m2::PointF(10.0f * vs, 50.0f * vs), dp::Center));
+  DebugInfoLabels debugLabels = DebugInfoLabels(Position(m2::PointF(40.0f * vs, 60.0f * vs), dp::Center));
 
   debugLabels.AddLabel(textures,
                        "visible: km2, readed: km2, ratio:", [](ScreenBase const & screen, string & content) -> bool

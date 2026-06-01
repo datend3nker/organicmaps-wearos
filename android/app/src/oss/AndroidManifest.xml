@@ -11,7 +11,8 @@
     <application>
         <service
             android:name="app.organicmaps.wear.BluetoothMessageListenerService"
-            android:exported="false" />
+            android:exported="false"
+            android:stopWithTask="true" />
 
         <!-- Remove GMS service for OSS flavor -->
         <service

@@ -433,7 +433,7 @@ public enum BookmarkManager {
     getBookmarkCategoriesCache().unregisterListener(listener);
   }
 
-  @NonNull
+  @Nullable
   public BookmarkCategory getCategoryById(long categoryId)
   {
     return mCurrentDataProvider.getCategoryById(categoryId);

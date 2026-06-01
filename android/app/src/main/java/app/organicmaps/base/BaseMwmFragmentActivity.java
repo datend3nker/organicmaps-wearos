@@ -120,6 +120,7 @@ public abstract class BaseMwmFragmentActivity extends AppCompatActivity
     setSupportActionBar(getToolbar());
   }
 
+  @SuppressWarnings("deprecation")
   @Override
   public void onBackPressed()
   {

@@ -77,17 +77,30 @@
   <string name="twitter" translatable="false">X (Twitter)</string>
   <string name="vk" translatable="false">VK</string>
 
+  <string name="pref_wear_os_auto_download_route_maps" translatable="false">pref_wear_os_auto_download_route_maps</string>
   <string name="pref_wear_os" translatable="false">pref_wear_os</string>
   <string name="pref_wear_os_map_enabled" translatable="false">pref_wear_os_map_enabled</string>
   <string name="pref_wear_os_map_download_mode" translatable="false">pref_wear_os_map_download_mode</string>
   <string name="pref_wear_os_watch_local_mode" translatable="false">pref_wear_os_watch_local_mode</string>
   <string name="pref_wear_os_standalone_mode" translatable="false">pref_wear_os_standalone_mode</string>
   <string name="pref_wear_os_backend" translatable="false">pref_wear_os_backend</string>
+  <string name="pref_wear_os_3d" translatable="false">pref_wear_os_3d</string>
+  <string name="pref_wear_os_3d_buildings" translatable="false">pref_wear_os_3d_buildings</string>
+  <string name="pref_wear_os_auto_zoom" translatable="false">pref_wear_os_auto_zoom</string>
+  <string name="pref_wear_os_transit" translatable="false">pref_wear_os_transit</string>
+  <string name="pref_wear_os_biking" translatable="false">pref_wear_os_biking</string>
+  <string name="pref_wear_os_hiking" translatable="false">pref_wear_os_hiking</string>
+  <string name="pref_wear_os_isolines" translatable="false">pref_wear_os_isolines</string>
+  <string name="pref_wear_os_avoid_tolls" translatable="false">pref_wear_os_avoid_tolls</string>
+  <string name="pref_wear_os_avoid_motorways" translatable="false">pref_wear_os_avoid_motorways</string>
+  <string name="pref_wear_os_avoid_ferries" translatable="false">pref_wear_os_avoid_ferries</string>
+  <string name="pref_wear_os_avoid_unpaved" translatable="false">pref_wear_os_avoid_unpaved</string>
+  <string name="pref_wear_os_map_style" translatable="false">pref_wear_os_map_style</string>
+  <string name="pref_wear_os_munits" translatable="false">pref_wear_os_munits</string>
 
   <string-array name="wear_map_download_mode_values" translatable="false">
-    <item>BLUETOOTH_ONLY</item>
-    <item>AUTO</item>
-    <item>WIFI_ONLY</item>
+    <item>PHONE_SYNC</item>
+    <item>DIRECT_DOWNLOAD</item>
   </string-array>
 
   <string-array name="wear_backend_values" translatable="false">

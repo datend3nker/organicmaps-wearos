@@ -105,8 +105,7 @@ void RulerHelper::Update(ScreenBase const & screen)
 // static
 bool RulerHelper::IsVisible(ScreenBase const & screen)
 {
-  DrapeGui & gui = DrapeGui::Instance();
-  return !gui.IsCopyrightActive() && df::GetDrawTileScale(screen) >= kVisibleRulerBottomScale;
+  return df::GetDrawTileScale(screen) >= kVisibleRulerBottomScale;
 }
 
 void RulerHelper::Invalidate()

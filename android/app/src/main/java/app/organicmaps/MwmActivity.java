@@ -14,9 +14,11 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Dialog;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.location.Location;
@@ -46,9 +48,11 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
+import app.organicmaps.wear.WearSyncService;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.preference.PreferenceManager;
 import app.organicmaps.api.Const;
 import app.organicmaps.base.BaseMwmFragmentActivity;
 import app.organicmaps.base.OnBackPressListener;
@@ -83,6 +87,7 @@ import app.organicmaps.sdk.MapRenderingListener;
 import app.organicmaps.sdk.PlacePageActivationListener;
 import app.organicmaps.sdk.Router;
 import app.organicmaps.sdk.bookmarks.data.BookmarkManager;
+import app.organicmaps.sdk.bookmarks.data.DataChangedListener;
 import app.organicmaps.sdk.bookmarks.data.MapObject;
 import app.organicmaps.sdk.bookmarks.data.TrackRecording;
 import app.organicmaps.sdk.display.DisplayChangedListener;
@@ -126,6 +131,13 @@ import app.organicmaps.widget.menu.MainMenu;
 import app.organicmaps.widget.placepage.PlacePageController;
 import app.organicmaps.widget.placepage.PlacePageViewModel;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import android.graphics.Color;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.ImageView;
+import android.widget.TextView;
+import app.organicmaps.wear.WearSyncService;
+import app.organicmaps.sync.ISyncLayer;
 import java.util.ArrayList;
 import java.util.Objects;
 
@@ -135,7 +147,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
                RoutingBottomMenuListener, BookmarkManager.BookmarksLoadingListener,
                FloatingSearchToolbarController.SearchToolbarListener,
                MenuBottomSheetFragment.MenuBottomSheetInterfaceWithHeader, PlacePageController.PlacePageListener,
-               MapButtonsController.MapButtonClickListener, DisplayChangedListener
+               MapButtonsController.MapButtonClickListener, DisplayChangedListener, DataChangedListener
 {
   private static final String TAG = MwmActivity.class.getSimpleName();
 
@@ -234,6 +246,32 @@ public class MwmActivity extends BaseMwmFragmentActivity
   private boolean mRemoveDisplayListener = true;
   private static int mLastUiMode = Configuration.UI_MODE_TYPE_UNDEFINED;
 
+  private View mWearStatusContainer;
+  private ImageView mWearStatusIcon;
+  private TextView mWearStatusText;
+  private boolean mIsWearConnected = false;
+  private final Handler mWearStatusHandler = new Handler(Looper.getMainLooper());
+  private final Runnable mContractWearStatusTask = new Runnable() {
+    @Override
+    public void run() {
+      if (mWearStatusText != null) mWearStatusText.setVisibility(View.GONE);
+    }
+  };
+  private final Runnable mWearStatusPingTask = new Runnable() {
+    @Override
+    public void run() {
+      checkWearConnection();
+      mWearStatusHandler.postDelayed(this, 10000);
+    }
+  };
+
+  private final BroadcastReceiver mWearSettingsReceiver = new BroadcastReceiver() {
+    @Override
+    public void onReceive(Context context, Intent intent) {
+      checkWearConnection();
+    }
+  };
+
   public interface LeftAnimationTrackListener
   {
     void onTrackStarted(boolean collapsed);
@@ -246,6 +284,12 @@ public class MwmActivity extends BaseMwmFragmentActivity
   public static Intent createShowMapIntent(@NonNull Context context, @Nullable String countryId)
   {
     return new Intent(context, DownloadResourcesLegacyActivity.class).putExtra(EXTRA_COUNTRY_ID, countryId);
+  }
+
+  @Override
+  public void onChanged()
+  {
+    WearSyncService.sendBookmarkCategories(this, BookmarkManager.INSTANCE.getCategories());
   }
 
   @Override
@@ -274,6 +318,10 @@ public class MwmActivity extends BaseMwmFragmentActivity
       // The user has revoked location permissions in the system settings, causing the app to
       // restart while recording was active. Save the recorded data and stop the recording.
       saveAndStopTrackRecording();
+    }
+    else if (TrackRecorder.nativeIsTrackRecordingEnabled())
+    {
+      WearSyncService.sendTrackRecordingStatus(this, true);
     }
 
     processIntent();
@@ -524,6 +572,11 @@ public class MwmActivity extends BaseMwmFragmentActivity
       getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
 
     setContentView(R.layout.activity_map);
+    mWearStatusContainer = findViewById(R.id.wear_status_container);
+    mWearStatusIcon = findViewById(R.id.wear_status_icon);
+    mWearStatusText = findViewById(R.id.wear_status_text);
+    if (mWearStatusContainer != null)
+      mWearStatusContainer.setOnClickListener(v -> toggleWearStatusText());
     makeNavigationBarTransparentInLightMode();
 
     mPlacePageViewModel = new ViewModelProvider(this).get(PlacePageViewModel.class);
@@ -1080,6 +1133,12 @@ public class MwmActivity extends BaseMwmFragmentActivity
     refreshLightStatusBar();
 
     MwmApplication.from(this).getSensorHelper().addListener(this);
+    mWearStatusHandler.post(mWearStatusPingTask);
+    IntentFilter filter = new IntentFilter("app.organicmaps.wear.SETTINGS_CHANGED");
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+      registerReceiver(mWearSettingsReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+    else
+      registerReceiver(mWearSettingsReceiver, filter);
   }
 
   @Override
@@ -1098,6 +1157,62 @@ public class MwmActivity extends BaseMwmFragmentActivity
     dismissLocationErrorDialog();
     dismissAlertDialog();
     super.onPause();
+    mWearStatusHandler.removeCallbacks(mWearStatusPingTask);
+    try {
+      unregisterReceiver(mWearSettingsReceiver);
+    } catch (Exception ignored) {}
+  }
+
+  private void checkWearConnection() {
+    WearSyncService.checkConnection(this, (connected, type) -> {
+      runOnUiThread(() -> {
+        updateWearStatusUI(connected, type);
+        if (connected)
+          WearSyncService.syncPreferences(this);
+      });
+    });
+  }
+
+  private void toggleWearStatusText() {
+    if (mWearStatusText == null) return;
+    if (mWearStatusText.getVisibility() == View.VISIBLE) {
+      mWearStatusText.setVisibility(View.GONE);
+      mWearStatusHandler.removeCallbacks(mContractWearStatusTask);
+    } else {
+      expandWearStatus();
+    }
+  }
+
+  private void expandWearStatus() {
+    if (mWearStatusText == null) return;
+    mWearStatusText.setVisibility(View.VISIBLE);
+    mWearStatusHandler.removeCallbacks(mContractWearStatusTask);
+    mWearStatusHandler.postDelayed(mContractWearStatusTask, 5000);
+  }
+
+  private void updateWearStatusUI(boolean connected, ISyncLayer.ConnectionType type) {
+    if (mWearStatusContainer == null) return;
+
+    if (connected && !mIsWearConnected) {
+      expandWearStatus();
+    }
+    mIsWearConnected = connected;
+
+    if (connected) {
+      mWearStatusContainer.setVisibility(View.VISIBLE);
+      String backend = PreferenceManager.getDefaultSharedPreferences(this).getString("pref_wear_os_backend", "GMS");
+      if ("BLUETOOTH".equals(backend)) {
+        mWearStatusIcon.setImageResource(R.drawable.ic_wear_bluetooth);
+        mWearStatusText.setText("Watch connected via Bluetooth");
+      } else {
+        // GMS backend
+        mWearStatusIcon.setImageResource(R.drawable.ic_wear_cloud);
+        mWearStatusText.setText("Watch connected via GMS");
+      }
+      mWearStatusIcon.setColorFilter(Color.GREEN);
+    } else {
+      mWearStatusContainer.setVisibility(View.GONE);
+    }
   }
 
   @Override
@@ -1106,12 +1221,17 @@ public class MwmActivity extends BaseMwmFragmentActivity
     super.onStart();
     Framework.nativePlacePageActivationListener(this);
     BookmarkManager.INSTANCE.addLoadingListener(this);
+    BookmarkManager.INSTANCE.addCategoriesUpdatesListener(this);
     RoutingController.get().attach(this);
     MwmApplication.from(getApplicationContext()).getIsolinesManager().attach(this::onIsolinesStateChanged);
     LocationState.nativeSetListener(this);
     MwmApplication.from(this).getLocationHelper().addListener(this);
     mSearchController.attach(this);
     Utils.keepScreenOn(Config.isKeepScreenOnEnabled() || RoutingController.get().isNavigating(), getWindow());
+    
+    // Sync initial state to watch
+    WearSyncService.sendBookmarkCategories(this, BookmarkManager.INSTANCE.getCategories());
+    WearSyncService.sendTrackRecordingStatus(this, TrackRecorder.nativeIsTrackRecordingEnabled());
   }
 
   @Override
@@ -1120,6 +1240,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
     super.onStop();
     Framework.nativeRemovePlacePageActivationListener(this);
     BookmarkManager.INSTANCE.removeLoadingListener(this);
+    BookmarkManager.INSTANCE.removeCategoriesUpdatesListener(this);
     MwmApplication.from(this).getLocationHelper().removeListener(this);
     if (mDisplayManager.isDeviceDisplayUsed() && !RoutingController.get().isNavigating())
     {
@@ -1152,6 +1273,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
       mDisplayManager.removeListener(DisplayType.Device);
   }
 
+  @SuppressWarnings("deprecation")
   @Override
   public void onBackPressed()
   {
@@ -1626,6 +1748,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
       return;
 
     closeSearchToolbar(true, true);
+    WearSyncService.startNavigation(this);
   }
 
   @Override
@@ -2384,8 +2507,11 @@ public class MwmActivity extends BaseMwmFragmentActivity
     saveAndStopTrackRecording();
   }
 
+  @Override
   public void onTrackRecordingCancelled()
   {
+    TrackRecorder.nativeStopTrackRecording();
+    TrackRecorder.nativeClearTrackRecording();
     stopTrackRecording();
   }
 

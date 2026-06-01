@@ -25,6 +25,11 @@
   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
   <uses-permission android:name="android.permission.ACCESS_LOCATION_EXTRA_COMMANDS" />
+  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+  <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+  <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
@@ -144,17 +149,20 @@
     <activity
         android:name="app.organicmaps.editor.EditorActivity"
         android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
-        android:screenOrientation="fullUser" />
+        android:screenOrientation="fullUser"
+        android:windowSoftInputMode="adjustResize" />
 
     <activity
         android:name="app.organicmaps.editor.OsmLoginActivity"
         android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
-        android:screenOrientation="fullUser" />
+        android:screenOrientation="fullUser"
+        android:windowSoftInputMode="adjustResize" />
 
     <activity
         android:name="app.organicmaps.editor.ReportActivity"
         android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
-        android:screenOrientation="fullUser" />
+        android:screenOrientation="fullUser"
+        android:windowSoftInputMode="adjustResize" />
 
     <activity
         android:name="app.organicmaps.editor.FeatureCategoryActivity"
@@ -164,7 +172,8 @@
     <activity
         android:name="app.organicmaps.editor.ProfileActivity"
         android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation"
-        android:screenOrientation="fullUser" />
+        android:screenOrientation="fullUser"
+        android:windowSoftInputMode="adjustResize" />
 
     <activity
         android:name="app.organicmaps.help.HelpActivity"

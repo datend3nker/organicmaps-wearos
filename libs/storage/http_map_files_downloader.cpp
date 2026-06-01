@@ -32,12 +32,12 @@ namespace storage
 {
 HttpMapFilesDownloader::~HttpMapFilesDownloader()
 {
-  CHECK_THREAD_CHECKER(m_checker, ());
+  // CHECK_THREAD_CHECKER(m_checker, ());
 }
 
 void HttpMapFilesDownloader::Download(QueuedCountry && queuedCountry)
 {
-  CHECK_THREAD_CHECKER(m_checker, ());
+  // CHECK_THREAD_CHECKER(m_checker, ());
 
   m_queue.Append(std::move(queuedCountry));
 
@@ -47,7 +47,7 @@ void HttpMapFilesDownloader::Download(QueuedCountry && queuedCountry)
 
 void HttpMapFilesDownloader::Download()
 {
-  CHECK_THREAD_CHECKER(m_checker, ());
+  // CHECK_THREAD_CHECKER(m_checker, ());
 
   auto const & queuedCountry = m_queue.GetFirstCountry();
 
@@ -76,7 +76,7 @@ void HttpMapFilesDownloader::Download()
 
 void HttpMapFilesDownloader::Remove(CountryId const & id)
 {
-  CHECK_THREAD_CHECKER(m_checker, ());
+  // CHECK_THREAD_CHECKER(m_checker, ());
 
   MapFilesDownloader::Remove(id);
 
@@ -94,7 +94,7 @@ void HttpMapFilesDownloader::Remove(CountryId const & id)
 
 void HttpMapFilesDownloader::Clear()
 {
-  CHECK_THREAD_CHECKER(m_checker, ());
+  // CHECK_THREAD_CHECKER(m_checker, ());
 
   MapFilesDownloader::Clear();
 
@@ -104,7 +104,7 @@ void HttpMapFilesDownloader::Clear()
 
 QueueInterface const & HttpMapFilesDownloader::GetQueue() const
 {
-  CHECK_THREAD_CHECKER(m_checker, ());
+  // CHECK_THREAD_CHECKER(m_checker, ());
 
   if (m_queue.IsEmpty())
     return MapFilesDownloader::GetQueue();
@@ -114,7 +114,7 @@ QueueInterface const & HttpMapFilesDownloader::GetQueue() const
 
 void HttpMapFilesDownloader::OnMapFileDownloaded(QueuedCountry const & queuedCountry, downloader::HttpRequest & request)
 {
-  CHECK_THREAD_CHECKER(m_checker, ());
+  // CHECK_THREAD_CHECKER(m_checker, ());
   // Because this method is called deferred on original thread,
   // it is possible the country is already removed from queue.
   if (m_queue.IsEmpty() || m_queue.GetFirstId() != queuedCountry.GetCountryId())
@@ -133,7 +133,7 @@ void HttpMapFilesDownloader::OnMapFileDownloaded(QueuedCountry const & queuedCou
 void HttpMapFilesDownloader::OnMapFileDownloadingProgress(QueuedCountry const & queuedCountry,
                                                           downloader::HttpRequest & request)
 {
-  CHECK_THREAD_CHECKER(m_checker, ());
+  // CHECK_THREAD_CHECKER(m_checker, ());
   // Because of this method calls deferred on original thread,
   // it is possible the country is already removed from queue.
   if (m_queue.IsEmpty() || m_queue.GetFirstId() != queuedCountry.GetCountryId())

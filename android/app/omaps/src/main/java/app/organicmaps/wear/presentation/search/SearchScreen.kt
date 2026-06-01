@@ -33,6 +33,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -104,7 +105,9 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
                             openingHours = "", // Detailed search results don't have metadata yet
                             website = "",
                             phone = "",
-                            address = ""
+                            address = "",
+                            distance = it.description?.distance?.toString(context) ?: "",
+                            featureType = it.description?.localizedFeatureType ?: ""
                         )
                     }
                     current.copy(
@@ -318,7 +321,7 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
                         onNavigate = { routerType, avoidTolls, avoidMotorways, avoidFerries, avoidUnpaved ->
                             coroutineScope.launch {
                                 val state = NavigationStateHolder.state.value
-                                if (state.watchLocalMode) {
+                                if (state.standaloneMode || (!state.isPhoneConnected && state.watchLocalMode)) {
                                     try {
                                         val wearApp = context.applicationContext as WearApplication
                                         wearApp.waitForInitializationSuspend()
@@ -367,6 +370,7 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
                                             routeBuildProgress = 0,
                                             isRouteBuilding = true,
                                             isRouteReady = false,
+                                            isRouteBuilt = false,
                                             routePoints = emptyList(),
                                             distToTurn = "",
                                             nextStreet = "",
@@ -400,6 +404,8 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
                                 RoutingController.get().cancel()
                                 NavigationStateHolder.update(state.copy(
                                     isRouteBuilding = false, 
+                                    isRouteBuilt = false,
+                                    isRouteReady = false,
                                     isActive = false,
                                     isMapUnlocked = state.isMapUnlockedBeforeNav
                                 ), force = true)
@@ -720,12 +726,27 @@ fun ModeSelectionScreen(
 
 @Composable
 fun SearchResultChip(result: SearchResultItem, onClick: () -> Unit) {
+    val context = LocalContext.current
     val title = result.name.ifEmpty { result.description }
     val subTitle = if (result.name.isNotEmpty() && result.description != "Dropped Pin" && result.description != "Previous Fix") result.description else ""
     
+    val iconRes = remember(result.featureType) {
+        val name = result.featureType.lowercase().replace(" ", "_")
+        var id = context.resources.getIdentifier("ic_category_$name", "drawable", context.packageName)
+        if (id == 0) id = context.resources.getIdentifier("ic_bookmark_$name", "drawable", context.packageName)
+        if (id == 0) id = context.resources.getIdentifier("ic_$name", "drawable", context.packageName)
+        id
+    }
+
+    val navState by NavigationStateHolder.state.collectAsState()
+    
     var downloadStatus by remember { mutableStateOf(CountryItem.STATUS_DONE) }
     
-    LaunchedEffect(result.lat, result.lon) {
+    LaunchedEffect(result.lat, result.lon, navState.watchLocalMode) {
+        if (!navState.watchLocalMode) {
+            downloadStatus = CountryItem.STATUS_DONE
+            return@LaunchedEffect
+        }
         try {
             val countryId = MapManager.nativeFindCountry(result.lat, result.lon)
             if (countryId != null) {
@@ -740,14 +761,43 @@ fun SearchResultChip(result: SearchResultItem, onClick: () -> Unit) {
 
     Chip(
         onClick = onClick,
-        label = { Text(title, maxLines = 1) },
+        label = { 
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, maxLines = 1, modifier = Modifier.weight(1f))
+                if (result.distance.isNotEmpty()) {
+                    Text(
+                        result.distance,
+                        style = MaterialTheme.typography.caption2,
+                        color = Color(0xFF00E5FF),
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+            }
+        },
         secondaryLabel = { 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (downloadStatus != CountryItem.STATUS_DONE && downloadStatus != CountryItem.STATUS_UNKNOWN) {
+                if (navState.watchLocalMode && downloadStatus != CountryItem.STATUS_DONE && downloadStatus != CountryItem.STATUS_UNKNOWN) {
                     Text("Syncing Map...", color = Color.Yellow, maxLines = 1)
                 } else if (subTitle.isNotEmpty()) {
                     Text(subTitle, maxLines = 1)
                 }
+            }
+        },
+        icon = {
+            if (iconRes != 0) {
+                Icon(
+                    painter = painterResource(id = iconRes),
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = Color.Unspecified
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.LocationOn,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colors.primary
+                )
             }
         },
         modifier = Modifier.fillMaxWidth(),

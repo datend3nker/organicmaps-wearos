@@ -257,6 +257,8 @@ void FrontendRenderer::AcceptMessage(ref_ptr<Message> message)
   case Message::Type::FlushTile:
   {
     ref_ptr<FlushRenderBucketMessage> msg = message;
+    if (!IsValidCurrentZoom())
+      break;
     dp::RenderState const & state = msg->GetState();
     TileKey const & key = msg->GetKey();
     drape_ptr<dp::RenderBucket> bucket = msg->AcceptBuffer();
@@ -271,6 +273,8 @@ void FrontendRenderer::AcceptMessage(ref_ptr<Message> message)
   case Message::Type::FlushOverlays:
   {
     ref_ptr<FlushOverlaysMessage> msg = message;
+    if (!IsValidCurrentZoom())
+      break;
     TOverlaysRenderData renderData = msg->AcceptRenderData();
     for (auto & overlayRenderData : renderData)
     {
@@ -337,6 +341,9 @@ void FrontendRenderer::AcceptMessage(ref_ptr<Message> message)
   case Message::Type::FlushUserMarks:
   {
     ref_ptr<FlushUserMarksMessage> msg = message;
+    if (!IsValidCurrentZoom())
+      break;
+
     TUserMarksRenderData marksRenderData = msg->AcceptRenderData();
     for (auto & renderData : marksRenderData)
     {
@@ -1110,6 +1117,9 @@ void FrontendRenderer::InvalidateRect(m2::RectD const & gRect)
   m2::RectD rect = gRect;
   if (rect.Intersect(screen.ClipRect()))
   {
+    if (!IsValidCurrentZoom())
+      return;
+
     // Find tiles to invalidate.
     TTilesCollection tiles;
     int const dataZoomLevel = ClipTileZoomByMaxDataZoom(GetCurrentZoom());

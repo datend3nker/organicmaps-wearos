@@ -7,6 +7,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.util.AttributeSet;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -48,6 +49,9 @@ public class MapView extends SurfaceView
 
   @NonNull
   private final Map mMap;
+  @NonNull
+  private final GestureDetector mGestureDetector;
+  private boolean mIsMapLocked = false;
 
   public MapView(Context context)
   {
@@ -80,6 +84,14 @@ public class MapView extends SurfaceView
     super(context, attrs, defStyleAttr, defStyleRes);
     mMap = new Map(displayType);
     getHolder().addCallback(new SurfaceHolderCallback());
+    mGestureDetector = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener()
+    {
+      @Override
+      public void onLongPress(@NonNull MotionEvent e)
+      {
+        performLongClick();
+      }
+    });
   }
 
   public final void onDraw(@NonNull Canvas canvas)
@@ -92,31 +104,61 @@ public class MapView extends SurfaceView
   @Override
   public boolean onTouchEvent(@NonNull MotionEvent event)
   {
+    mGestureDetector.onTouchEvent(event);
     int action = event.getActionMasked();
     int pointerIndex = event.getActionIndex();
+
+    // Map Android action to NATIVE_ACTION
+    int nativeAction = -1;
     switch (action)
     {
-    case MotionEvent.ACTION_POINTER_UP -> action = Map.NATIVE_ACTION_UP;
+    case MotionEvent.ACTION_POINTER_UP -> nativeAction = Map.NATIVE_ACTION_UP;
     case MotionEvent.ACTION_UP ->
     {
-      action = Map.NATIVE_ACTION_UP;
+      nativeAction = Map.NATIVE_ACTION_UP;
       pointerIndex = 0;
     }
-    case MotionEvent.ACTION_POINTER_DOWN -> action = Map.NATIVE_ACTION_DOWN;
+    case MotionEvent.ACTION_POINTER_DOWN -> nativeAction = Map.NATIVE_ACTION_DOWN;
     case MotionEvent.ACTION_DOWN ->
     {
-      action = Map.NATIVE_ACTION_DOWN;
+      nativeAction = Map.NATIVE_ACTION_DOWN;
       pointerIndex = 0;
     }
     case MotionEvent.ACTION_MOVE ->
     {
-      action = Map.NATIVE_ACTION_MOVE;
+      nativeAction = Map.NATIVE_ACTION_MOVE;
       pointerIndex = Map.INVALID_POINTER_MASK;
     }
-    case MotionEvent.ACTION_CANCEL -> action = Map.NATIVE_ACTION_CANCEL;
+    case MotionEvent.ACTION_CANCEL -> nativeAction = Map.NATIVE_ACTION_CANCEL;
     }
-    Map.onTouch(action, event, pointerIndex);
-    performClick();
+
+    if (nativeAction == -1)
+      return false;
+
+    if (mIsMapLocked)
+    {
+      // When locked, we only allow single-finger taps for POI selection.
+      // We block ACTION_MOVE to prevent panning and ACTION_POINTER_DOWN to prevent pinch-zooming.
+      if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_POINTER_DOWN)
+        return false;
+
+      // If a secondary pointer goes up, ignore it since we never reported it going down.
+      if (action == MotionEvent.ACTION_POINTER_UP && event.getActionIndex() > 0)
+        return true;
+
+      // For all other relevant actions (DOWN, UP, CANCEL), we only report the primary pointer.
+      // This keeps the engine in a simple single-touch state and avoids crashes from 
+      // unexpected multi-finger events.
+      Map.nativeOnTouch(nativeAction, event.getPointerId(0), event.getX(), event.getY(), Map.INVALID_TOUCH_ID, 0, 0, 0);
+    }
+    else
+    {
+      Map.onTouch(nativeAction, event, pointerIndex);
+    }
+
+    if (action == MotionEvent.ACTION_UP)
+      performClick();
+
     return true;
   }
 
@@ -125,6 +167,11 @@ public class MapView extends SurfaceView
   {
     super.performClick();
     return false;
+  }
+
+  public void setMapLocked(boolean locked)
+  {
+    mIsMapLocked = locked;
   }
 
   @NonNull

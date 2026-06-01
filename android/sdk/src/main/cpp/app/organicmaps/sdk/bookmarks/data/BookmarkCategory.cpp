@@ -15,6 +15,14 @@ inline jclass getBookmarkCategoryClass(JNIEnv * env)
 
 jobject ToJavaBookmarkCategory(JNIEnv * env, kml::MarkGroupId id)
 {
+  auto const & manager = frm()->GetBookmarkManager();
+  if (!manager.HasBmCategory(id))
+    return nullptr;
+
+  auto const * category = manager.GetBmCategory(id);
+  if (!category)
+    return nullptr;
+
   // clang-format off
   static jmethodID g_bookmarkCategoryConstructor = jni::GetConstructorID(env, getBookmarkCategoryClass(env),
     "("
@@ -29,8 +37,7 @@ jobject ToJavaBookmarkCategory(JNIEnv * env, kml::MarkGroupId id)
   );
   // clang-format on
 
-  auto const & manager = frm()->GetBookmarkManager();
-  auto const & data = manager.GetCategoryData(id);
+  auto const & data = category->GetCategoryData();
 
   auto const tracksCount = manager.GetTrackIds(data.m_id).size();
   auto const bookmarksCount = manager.GetUserMarkIds(data.m_id).size();
@@ -80,7 +87,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkCategory_nativeSe
 JNIEXPORT jboolean Java_app_organicmaps_sdk_bookmarks_data_BookmarkCategory_nativeIsVisible(JNIEnv *, jclass,
                                                                                             jlong catId)
 {
-  return static_cast<jboolean>(frm()->GetBookmarkManager().IsVisible(static_cast<kml::MarkGroupId>(catId)));
+  return static_cast<jboolean>(frm()->GetBookmarkManager().IsVisibleSafe(static_cast<kml::MarkGroupId>(catId)));
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkCategory_nativeSetVisibility(JNIEnv *, jclass,

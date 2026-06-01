@@ -45,6 +45,7 @@ double const kMyPositionTrackSnapInMeters = 20.0;
 
 std::string const kKMZMimeType = "application/vnd.google-earth.kmz";
 std::string const kGPXMimeType = "application/gpx+xml";
+std::string const kKMBMimeType = "application/x-organicmaps-kmb";
 
 class FindMarkFunctor
 {
@@ -114,6 +115,17 @@ BookmarkManager::SharingResult ExportSingleFileGpx(
   if (!SaveKmlFileSafe(*kmlToShare.second, filePath, KmlFileType::Gpx))
     return {{categoryId}, BookmarkManager::SharingResult::Code::FileError, "Bookmarks file does not exist."};
   return {{categoryId}, std::move(filePath), kGPXMimeType};
+}
+
+BookmarkManager::SharingResult ExportSingleFileBinary(
+    BookmarkManager::KMLDataCollectionPtr::element_type::value_type const & kmlToShare)
+{
+  std::string const fileName = GetFileNameForExport(kmlToShare);
+  auto filePath = base::JoinPath(GetPlatform().TmpDir(), fileName + std::string{kKmbExtension});
+  auto const categoryId = kmlToShare.second->m_categoryData.m_id;
+  if (!SaveKmlFileSafe(*kmlToShare.second, filePath, KmlFileType::Binary))
+    return {{categoryId}, BookmarkManager::SharingResult::Code::FileError, "Bookmarks file does not exist."};
+  return {{categoryId}, std::move(filePath), kKMBMimeType};
 }
 
 std::string BuildIndexFile(std::vector<std::string> const & filesForIndex)
@@ -196,6 +208,7 @@ BookmarkManager::SharingResult GetFileForSharing(BookmarkManager::KMLDataCollect
   {
   case KmlFileType::Text: return ExportSingleFileKml(collection->front());
   case KmlFileType::Gpx: return ExportSingleFileGpx(collection->front());
+  case KmlFileType::Binary: return ExportSingleFileBinary(collection->front());
   default:
     LOG(LERROR, ("Unexpected file type", kmlFileType));
     return {{collection->front().second->m_categoryData.m_id},
@@ -1759,6 +1772,26 @@ bool BookmarkManager::IsVisible(kml::MarkGroupId groupId) const
   return GetGroup(groupId)->IsVisible();
 }
 
+bool BookmarkManager::IsVisibleSafe(kml::MarkGroupId groupId) const
+{
+  if (groupId < UserMark::Type::USER_MARK_TYPES_COUNT)
+  {
+    if (groupId <= 0 || static_cast<size_t>(groupId - 1) >= m_userMarkLayers.size())
+      return false;
+    return m_userMarkLayers[static_cast<size_t>(groupId - 1)]->IsVisible();
+  }
+
+  auto const compilationIt = m_compilations.find(groupId);
+  if (compilationIt != m_compilations.cend())
+    return compilationIt->second->IsVisible();
+
+  auto const catIt = m_categories.find(groupId);
+  if (catIt != m_categories.end())
+    return catIt->second->IsVisible();
+
+  return false;
+}
+
 void BookmarkManager::PrepareForSearch(kml::MarkGroupId groupId)
 {
   CHECK_THREAD_CHECKER(m_threadChecker, ());
@@ -2908,7 +2941,9 @@ BookmarkManager::KMLDataCollectionPtr BookmarkManager::PrepareToSaveBookmarks(
   auto collection = std::make_shared<KMLDataCollection>();
   for (auto const groupId : groupIdCollection)
   {
-    auto * group = GetBmCategory(groupId);
+    auto * group = GetBmCategorySafe(groupId);
+    if (!group)
+      continue;
 
     // Get valid file name from category name
     std::string file = group->GetFileName();
@@ -3021,7 +3056,10 @@ bool BookmarkManager::AreAllCategoriesEmpty() const
 bool BookmarkManager::IsCategoryEmpty(kml::MarkGroupId categoryId) const
 {
   CHECK_THREAD_CHECKER(m_threadChecker, ());
-  return GetBmCategory(categoryId)->IsEmpty();
+  auto * group = GetBmCategorySafe(categoryId);
+  if (!group)
+    return true;
+  return group->IsEmpty();
 }
 
 bool BookmarkManager::IsUsedCategoryName(std::string const & name) const

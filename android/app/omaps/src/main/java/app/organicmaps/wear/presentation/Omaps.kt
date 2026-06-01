@@ -21,9 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.*
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.PagerState
 import androidx.wear.compose.foundation.pager.rememberPagerState
@@ -41,6 +39,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 import android.view.KeyEvent
@@ -50,32 +49,43 @@ import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material.ButtonDefaults
-import androidx.wear.compose.material.ChipDefaults
-import androidx.wear.compose.material.CompactChip
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import app.organicmaps.sdk.settings.RoadType
 import app.organicmaps.sdk.routing.RoutingOptions
 
 import androidx.wear.input.WearableButtons
+import androidx.wear.ambient.AmbientModeSupport
+import androidx.compose.runtime.CompositionLocalProvider
+import app.organicmaps.wear.LocalAmbientMode
+import androidx.fragment.app.FragmentActivity
 
-class Omaps : ComponentActivity() {
+class Omaps : FragmentActivity(), AmbientModeSupport.AmbientCallbackProvider {
     private var availableButtons = emptySet<Int>()
+    private lateinit var ambientController: AmbientModeSupport.AmbientController
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setTheme(android.R.style.Theme_DeviceDefault)
 
+        ambientController = AmbientModeSupport.attach(this)
+
         // Check for available hardware buttons
-        val buttonCount = WearableButtons.getButtonCount(this)
         val buttons = mutableSetOf<Int>()
-        if (buttonCount > 0) {
-            val keyCodes = listOf(KeyEvent.KEYCODE_STEM_1, KeyEvent.KEYCODE_STEM_2, KeyEvent.KEYCODE_STEM_3)
-            keyCodes.forEach { code ->
-                if (WearableButtons.getButtonInfo(this, code) != null) {
-                    buttons.add(code)
+        val isWatch = packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)
+        if (isWatch) {
+            try {
+                val buttonCount = WearableButtons.getButtonCount(this)
+                if (buttonCount > 0) {
+                    val keyCodes = listOf(KeyEvent.KEYCODE_STEM_1, KeyEvent.KEYCODE_STEM_2, KeyEvent.KEYCODE_STEM_3)
+                    keyCodes.forEach { code ->
+                        if (WearableButtons.getButtonInfo(this, code) != null) {
+                            buttons.add(code)
+                        }
+                    }
                 }
+            } catch (e: Exception) {
+                android.util.Log.w("Omaps", "WearableButtons not available: ${e.message}")
             }
         }
         availableButtons = buttons
@@ -105,7 +115,7 @@ class Omaps : ComponentActivity() {
         val is3dBldEnabled = prefs.getBoolean("pref_3d_buildings", true)
         val isAutoZoomEnabled = prefs.getBoolean("pref_auto_zoom", true)
         val units = prefs.getInt("pref_munits", 0)
-        val style = prefs.getString("pref_map_style", "default") ?: "default"
+        val style = prefs.getString("pref_wear_os_map_style", "default") ?: "default"
         
         val avoidTolls = prefs.getBoolean("avoid_tolls", false)
         val avoidMotorways = prefs.getBoolean("avoid_motorways", false)
@@ -144,52 +154,41 @@ class Omaps : ComponentActivity() {
         }
     }
 
+    override fun getAmbientCallback(): AmbientModeSupport.AmbientCallback = object : AmbientModeSupport.AmbientCallback() {
+        override fun onEnterAmbient(ambientDetails: Bundle?) {
+            NavigationStateHolder.update { it.copy(isAmbient = true) }
+        }
+        override fun onExitAmbient() {
+            NavigationStateHolder.update { it.copy(isAmbient = false) }
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val navState = NavigationStateHolder.state.value
         if (navState.mapEnabled) {
             when (keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_NAVIGATE_IN -> {
-                    val currentSpan = if (navState.isMapUnlocked) navState.manualViewSpan else 0.003f
-                    val newSpan = (currentSpan * 0.8f).coerceIn(0.0001f, 0.05f)
-                    NavigationStateHolder.update(navState.copy(
-                        isMapUnlocked = true,
-                        manualViewSpan = newSpan,
-                        manualCenterLat = if (!navState.isMapUnlocked) navState.lat else navState.manualCenterLat,
-                        manualCenterLon = if (!navState.isMapUnlocked) navState.lon else navState.manualCenterLon,
-                        lastSettingsInteractionTime = System.currentTimeMillis()
-                    ))
+                    app.organicmaps.sdk.Map.zoomIn()
                     return true
                 }
                 KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_NAVIGATE_OUT -> {
-                    val currentSpan = if (navState.isMapUnlocked) navState.manualViewSpan else 0.003f
-                    val newSpan = (currentSpan * 1.25f).coerceIn(0.0001f, 0.05f)
-                    NavigationStateHolder.update(navState.copy(
-                        isMapUnlocked = true,
-                        manualViewSpan = newSpan,
-                        manualCenterLat = if (!navState.isMapUnlocked) navState.lat else navState.manualCenterLat,
-                        manualCenterLon = if (!navState.isMapUnlocked) navState.lon else navState.manualCenterLon,
-                        lastSettingsInteractionTime = System.currentTimeMillis()
-                    ))
+                    app.organicmaps.sdk.Map.zoomOut()
                     return true
                 }
                 KeyEvent.KEYCODE_STEM_1 -> {
-                    // STEM_1 usually opens menu. Handled in MapPanel, but we capture it here too.
                     return true
                 }
                 KeyEvent.KEYCODE_STEM_2 -> {
-                    NavigationStateHolder.update(navState.copy(
-                        isMapUnlocked = !navState.isMapUnlocked,
-                        manualCenterLat = if (!navState.isMapUnlocked) navState.lat else navState.manualCenterLat,
-                        manualCenterLon = if (!navState.isMapUnlocked) navState.lon else navState.manualCenterLon,
-                        manualViewSpan = 0.003f
-                    ))
-                    return true
-                }
-                KeyEvent.KEYCODE_BACK -> {
                     if (navState.isMapUnlocked) {
-                        NavigationStateHolder.update(navState.copy(isMapUnlocked = false))
-                        return true
+                        repeat(5) {
+                            val mode = app.organicmaps.sdk.location.LocationState.getMode()
+                            if (mode == app.organicmaps.sdk.location.LocationState.FOLLOW || mode == app.organicmaps.sdk.location.LocationState.FOLLOW_AND_ROTATE) return@repeat
+                            app.organicmaps.sdk.location.LocationState.nativeSwitchToNextMode()
+                        }
+                    } else {
+                        app.organicmaps.sdk.Framework.nativeStopLocationFollow()
                     }
+                    return true
                 }
             }
         }
@@ -203,30 +202,41 @@ fun WearApp() {
     val navState by NavigationStateHolder.state.collectAsState()
     val isNavigating = navState.isNavigating
     val isMapEnabled = navState.mapEnabled
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     
     val pagerState = rememberPagerState(
         pageCount = { 
             if (isNavigating) {
                 if (isMapEnabled) 3 else 2
             } else {
-                if (isMapEnabled) 4 else 3
+                if (isMapEnabled) 5 else 4
             }
         }
     )
 
     androidx.compose.runtime.LaunchedEffect(navState.openMapManager) {
         if (navState.openMapManager && !isNavigating) {
-            pagerState.animateScrollToPage(if (isMapEnabled) 2 else 1)
+            pagerState.animateScrollToPage(if (isMapEnabled) 3 else 2)
             NavigationStateHolder.update(navState.copy(openMapManager = false))
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(isNavigating, navState.showOnLockScreen) {
+    androidx.compose.runtime.LaunchedEffect(navState.openMap) {
+        if (navState.openMap && !isNavigating) {
+            pagerState.animateScrollToPage(0)
+            NavigationStateHolder.update(navState.copy(openMap = false))
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(isNavigating) {
         if (isNavigating && isMapEnabled) {
             pagerState.scrollToPage(0)
+        } else if (!isNavigating) {
+            pagerState.scrollToPage(0)
         }
-        
-        // Lock screen logic
+    }
+
+    androidx.compose.runtime.LaunchedEffect(isNavigating, navState.showOnLockScreen) {
         if (context is android.app.Activity) {
             val activity = context
             if (isNavigating && navState.showOnLockScreen) {
@@ -239,8 +249,17 @@ fun WearApp() {
         }
     }
 
+    androidx.compose.runtime.LaunchedEffect(navState.isPhoneConnected) {
+        if (!navState.isPhoneConnected && navState.locationSource == "PHONE_ONLY") {
+            // Fallback to internal GPS to keep map moving
+            NavigationStateHolder.update { it.copy(locationSource = "AUTO") }
+            android.widget.Toast.makeText(context, "Phone lost, using watch GPS", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     OrganicMapsTheme {
-        Box(modifier = Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalAmbientMode provides navState.isAmbient) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
             if (!isNavigating) {
                 HorizontalPager(
                     state = pagerState,
@@ -250,16 +269,22 @@ fun WearApp() {
                     val isVisible = pagerState.currentPage == page
                     if (isMapEnabled) {
                         when (page) {
-                            0 -> MapPanel()
+                            0 -> MapPanel(
+                                isVisible = isVisible,
+                                onSearchClick = { scope.launch { pagerState.animateScrollToPage(1) } },
+                                onSettingsClick = { scope.launch { pagerState.animateScrollToPage(if (isMapEnabled) 4 else 3) } }
+                            )
                             1 -> SearchScreen(isVisible = isVisible)
-                            2 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
-                            3 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
+                            2 -> app.organicmaps.wear.presentation.bookmarks.BookmarksScreen(isVisible = isVisible)
+                            3 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
+                            4 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
                         }
                     } else {
                         when (page) {
                             0 -> SearchScreen(isVisible = isVisible)
-                            1 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
-                            2 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
+                            1 -> app.organicmaps.wear.presentation.bookmarks.BookmarksScreen(isVisible = isVisible)
+                            2 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
+                            3 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
                         }
                     }
                 }
@@ -270,8 +295,13 @@ fun WearApp() {
                     userScrollEnabled = !navState.isMapUnlocked && !navState.isRouteBuilding
                 ) { page ->
                     if (isMapEnabled) {
+                        val isVisible = pagerState.currentPage == page
                         when (page) {
-                            0 -> MapPanel()
+                            0 -> MapPanel(
+                                isVisible = isVisible,
+                                onSearchClick = { /* No search during navigation? Or go to nav screen */ },
+                                onSettingsClick = { /* Settings during nav */ }
+                            )
                             1 -> NavigationPanel(navState)
                             2 -> StatsScreen(navState)
                         }
@@ -308,9 +338,9 @@ fun WearApp() {
                     }
                     
                     val (connIcon, connColor) = when {
-                        navState.standaloneMode -> Icons.Default.BluetoothDisabled to Color.Red
-                        !navState.isPhoneConnected -> Icons.Default.CloudOff to Color.Red
-                        else -> Icons.Default.Bluetooth to Color(0xFF4CAF50)
+                        navState.standaloneMode -> (if (navState.backend == "BLUETOOTH") Icons.Default.BluetoothDisabled else Icons.Default.CloudOff) to Color.Red
+                        !navState.isPhoneConnected -> (if (navState.backend == "BLUETOOTH") Icons.Default.BluetoothDisabled else Icons.Default.CloudOff) to Color.Red
+                        else -> (if (navState.backend == "BLUETOOTH") Icons.Default.Bluetooth else Icons.Default.Cloud) to Color(0xFF4CAF50)
                     }
                     
                     Icon(
@@ -319,6 +349,16 @@ fun WearApp() {
                         tint = connColor,
                         modifier = Modifier.size(16.dp)
                     )
+
+                    if (navState.isTrackRecording) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.Default.FiberManualRecord,
+                            contentDescription = "Recording",
+                            tint = Color.Red,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
                 }
             }
 
@@ -448,7 +488,7 @@ fun WearApp() {
                                     isRouteBuilt = false,
                                     isRouteReady = false,
                                     lastRouteError = 0,
-                                    isMapUnlocked = navState.isMapUnlockedBeforeNav
+                                    isMapUnlocked = false
                                 ), force = true)
                             },
                             colors = ChipDefaults.secondaryChipColors(),
@@ -460,6 +500,7 @@ fun WearApp() {
             }
 
             MapDownloadOverlay()
+            }
         }
     }
 }
@@ -472,7 +513,7 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
     
     NavigationScreen(
         distanceToNextTurn = navState.distToTurn,
-        turnIcon = getTurnIcon(navState.carDirection, navState.pedestrianDirection), 
+        turnIcon = getTurnIcon(navState.carDirection, navState.pedestrianDirection, navState.exitNum), 
         remainingTime = navState.nextStreet,
         onCancelClick = { 
             app.organicmaps.sdk.routing.RoutingController.get().cancel()
@@ -483,7 +524,9 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
                 isActive = false, 
                 isNavigating = false,
                 isRouteBuilding = false,
-                isMapUnlocked = navState.isMapUnlockedBeforeNav
+                isRouteBuilt = false,
+                isRouteReady = false,
+                isMapUnlocked = false
             ), force = true)
         },
         deviceRotation = deviceRotation,
@@ -492,7 +535,7 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
 }
 
 @Composable
-fun getTurnIcon(carDirection: Int, pedestrianDirection: Int): ImageVector {
+fun getTurnIcon(carDirection: Int, pedestrianDirection: Int, exitNum: Int = 0): ImageVector {
     // If pedestrian direction is not NoTurn/GoStraight, use it
     if (pedestrianDirection != 0 && pedestrianDirection != 1) {
         return when (pedestrianDirection) {
@@ -509,7 +552,7 @@ fun getTurnIcon(carDirection: Int, pedestrianDirection: Int): ImageVector {
         2, 3, 4 -> Icons.AutoMirrored.Filled.ArrowForward // TurnRight variants
         5, 6, 7 -> Icons.AutoMirrored.Filled.ArrowBack // TurnLeft variants
         8, 9 -> Icons.Default.Refresh // UTurn variants (Refresh as fallback)
-        10, 11, 12 -> Icons.Default.Refresh // Roundabout
+        10, 11, 12 -> if (exitNum > 0) Icons.Default.Refresh else Icons.Default.Refresh // Roundabout
         14 -> Icons.Default.Place // ReachedYourDestination
         else -> Icons.Default.ArrowUpward
     }

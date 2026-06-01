@@ -30,18 +30,25 @@ import app.organicmaps.sdk.location.LocationListener;
 import app.organicmaps.sdk.location.TrackRecorder;
 import app.organicmaps.sdk.util.LocationUtils;
 import app.organicmaps.sdk.util.log.Logger;
+import app.organicmaps.wear.WearSyncService;
 
 public class TrackRecordingService extends Service implements LocationListener
 {
   public static final String TRACK_REC_CHANNEL_ID = "TRACK RECORDING";
   public static final String STOP_TRACK_RECORDING = "STOP_TRACK_RECORDING";
   public static final int TRACK_REC_NOTIFICATION_ID = 54321;
+  private static long sRecordingStartTime = 0;
   private NotificationCompat.Builder mNotificationBuilder;
   private static final String TAG = TrackRecordingService.class.getSimpleName();
   private boolean mWarningNotification = false;
   private NotificationCompat.Builder mWarningBuilder;
   private PendingIntent mPendingIntent;
   private PendingIntent mExitPendingIntent;
+
+  public static long getRecordingStartTime()
+  {
+    return sRecordingStartTime;
+  }
 
   @Nullable
   @Override
@@ -131,10 +138,22 @@ public class TrackRecordingService extends Service implements LocationListener
     Logger.d(TAG);
     mNotificationBuilder = null;
     mWarningBuilder = null;
-    if (TrackRecorder.nativeIsTrackRecordingEnabled())
-      TrackRecorder.nativeStopTrackRecording();
+    saveAndStop();
     MwmApplication.from(this).getLocationHelper().removeListener(this);
+    WearSyncService.sendTrackRecordingStatus(this, false);
     // The notification is cancelled automatically by the system.
+  }
+
+  private void saveAndStop() {
+    sRecordingStartTime = 0;
+    if (TrackRecorder.nativeIsTrackRecordingEnabled())
+    {
+      if (!TrackRecorder.nativeIsTrackRecordingEmpty()) {
+          Logger.i(TAG, "Saving track recording");
+          TrackRecorder.nativeSaveTrackRecordingWithName("");
+      }
+      TrackRecorder.nativeStopTrackRecording();
+    }
   }
 
   @Override
@@ -175,7 +194,7 @@ public class TrackRecordingService extends Service implements LocationListener
     if (action != null && STOP_TRACK_RECORDING.equals(action))
     {
       Logger.d(TAG, "Stop action received");
-      TrackRecorder.nativeStopTrackRecording();
+      saveAndStop();
       stopSelf();
       return START_NOT_STICKY;
     }
@@ -193,10 +212,14 @@ public class TrackRecordingService extends Service implements LocationListener
     // Subscribe to location updates. This call is idempotent.
     locationHelper.addListener(this);
 
+    if (sRecordingStartTime == 0)
+      sRecordingStartTime = System.currentTimeMillis();
+
     // Restart the location with more frequent refresh interval for Track Recording.
     locationHelper.restartWithNewMode();
+    WearSyncService.sendTrackRecordingStatus(this, true);
 
-    return START_NOT_STICKY;
+    return START_STICKY;
   }
 
   public NotificationCompat.Builder getWarningBuilder(Context context)

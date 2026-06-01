@@ -1,7 +1,9 @@
 package app.organicmaps.wear.presentation
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -13,9 +15,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import app.organicmaps.wear.WearMapDownloader
+import app.organicmaps.wear.NavigationStateHolder
 
 @Composable
 fun MapDownloadOverlay() {
+    val navState by NavigationStateHolder.state.collectAsState()
     val downloadState by WearMapDownloader.downloadState.collectAsState()
     val progress by WearMapDownloader.downloadProgress.collectAsState()
     val currentMap by WearMapDownloader.currentMap.collectAsState()
@@ -30,81 +34,82 @@ fun MapDownloadOverlay() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.8f)),
+            .background(Color.Black.copy(alpha = 0.85f))
+            .clickable(enabled = true, onClick = {}) // Consume touches
+            .padding(12.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(16.dp).fillMaxWidth()
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
         ) {
-            val title = if (downloadState == WearMapDownloader.DownloadState.DOWNLOADING) {
-                "Downloading Map (Internet)"
-            } else {
-                "Streaming from Phone"
+            val title = when (downloadState) {
+                WearMapDownloader.DownloadState.DOWNLOADING -> "Downloading (Internet)"
+                WearMapDownloader.DownloadState.STREAMING_FROM_PHONE -> "Serving from Phone"
+                else -> "Synchronizing..."
             }
             
             Text(
                 text = title,
-                style = MaterialTheme.typography.caption1,
+                style = MaterialTheme.typography.caption2,
                 textAlign = TextAlign.Center,
-                color = Color.White
+                color = Color(0xFF00E5FF)
             )
             
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             
-            if (currentMap != null) {
+            currentMap?.let { name ->
                 Text(
-                    text = currentMap ?: "",
-                    style = MaterialTheme.typography.body2,
+                    text = name.replace("_", " "),
+                    style = MaterialTheme.typography.caption1,
                     textAlign = TextAlign.Center,
-                    color = MaterialTheme.colors.primary
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    color = Color.White
                 )
             }
             
             Spacer(modifier = Modifier.height(12.dp))
             
-            if (downloadState == WearMapDownloader.DownloadState.DOWNLOADING || 
-                downloadState == WearMapDownloader.DownloadState.STREAMING_FROM_PHONE) {
+            val isIndeterminate = progress <= 0f
+            if (isIndeterminate) {
                 CircularProgressIndicator(
-                    progress = progress,
-                    modifier = Modifier.size(48.dp),
-                    indicatorColor = if (downloadState == WearMapDownloader.DownloadState.DOWNLOADING) MaterialTheme.colors.secondary else MaterialTheme.colors.primary,
-                    trackColor = Color.DarkGray
+                    modifier = Modifier.size(40.dp),
+                    indicatorColor = MaterialTheme.colors.primary,
+                    trackColor = Color.White.copy(alpha = 0.1f),
+                    strokeWidth = 3.dp
                 )
-                if (downloadState == WearMapDownloader.DownloadState.STREAMING_FROM_PHONE) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    val progressText = if (progress > 0) "${(progress * 100).toInt()}%" else "Syncing..."
-                    Text(
-                        text = "Syncing via Bluetooth ($progressText)...",
-                        style = MaterialTheme.typography.caption3,
-                        textAlign = TextAlign.Center,
-                        color = Color.LightGray
-                    )
-                }
             } else {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(48.dp),
+                    progress = progress,
+                    modifier = Modifier.size(40.dp),
                     indicatorColor = MaterialTheme.colors.primary,
-                    trackColor = Color.DarkGray
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Syncing via Bluetooth...",
-                    style = MaterialTheme.typography.caption3,
-                    textAlign = TextAlign.Center,
-                    color = Color.LightGray
+                    trackColor = Color.White.copy(alpha = 0.1f),
+                    strokeWidth = 3.dp
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            val backendName = if (navState.backend == "GMS") "Google Play" else "Bluetooth"
+            val progressText = if (progress > 0) "${(progress * 100).toInt()}%" else "Starting..."
+            
+            Text(
+                text = "via $backendName ($progressText)",
+                style = MaterialTheme.typography.caption3,
+                textAlign = TextAlign.Center,
+                color = Color.LightGray
+            )
 
-            Button(
+            Spacer(modifier = Modifier.height(12.dp))
+
+            CompactChip(
                 onClick = { WearMapDownloader.cancel(context) },
-                colors = ButtonDefaults.secondaryButtonColors(),
-                modifier = Modifier.height(32.dp).width(100.dp)
-            ) {
-                Text("Cancel", style = MaterialTheme.typography.caption2)
-            }
+                colors = ChipDefaults.secondaryChipColors(),
+                label = { Text("Cancel", style = MaterialTheme.typography.caption2) },
+                modifier = Modifier.height(32.dp)
+            )
         }
     }
 }

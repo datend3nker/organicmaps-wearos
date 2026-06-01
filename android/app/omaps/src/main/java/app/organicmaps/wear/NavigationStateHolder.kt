@@ -24,7 +24,9 @@ data class SearchResultItem(
     val cuisine: String = "",
     val operator: String = "",
     val brand: String = "",
-    val stars: String = ""
+    val stars: String = "",
+    val distance: String = "",
+    val featureType: String = ""
 )
 
 data class NavigationState(
@@ -54,6 +56,7 @@ data class NavigationState(
     val routerType: Int = 0, // 0: Vehicle, 1: Pedestrian, 2: Bicycle, 3: Transit
     val routePoints: List<Pair<Double, Double>> = emptyList(),
     val openMapManager: Boolean = false,
+    val openMap: Boolean = false,
     val isPhoneConnected: Boolean = false,
     val poiCategoriesMask: Int = 0x7FFFFFFF, // Default to all POIs
     val mapDownloadMode: String = "PHONE_SYNC", // PHONE_SYNC, DIRECT_DOWNLOAD
@@ -75,6 +78,9 @@ data class NavigationState(
     val isRecalculating: Boolean = false,
     val measurementUnits: Int = 0, // 0: Metric, 1: Imperial
     val mapStyle: String = "default", // default, night, auto, nav_auto
+    val is3dEnabled: Boolean = true,
+    val is3dBuildingsEnabled: Boolean = true,
+    val isAutoZoomEnabled: Boolean = true,
     // Routing Options
     val avoidTolls: Boolean = false,
     val avoidMotorways: Boolean = false,
@@ -82,9 +88,9 @@ data class NavigationState(
     val avoidUnpaved: Boolean = false,
     // Map Layers
     val transitEnabled: Boolean = false,
-    val isolinesEnabled: Boolean = false,
     val bikingEnabled: Boolean = false,
     val hikingEnabled: Boolean = false,
+    val isolinesEnabled: Boolean = false,
     val allowMobileData: Boolean = false,
     val hasPhysicalButtons: Boolean = false,
     val forceGuiButtons: Boolean = false,
@@ -92,11 +98,24 @@ data class NavigationState(
     val isRouteBuilt: Boolean = false,
     val showOnLockScreen: Boolean = true,
     val lastFixTime: Long = 0L,
-    val syncNotificationsEnabled: Boolean = true
+    val syncNotificationsEnabled: Boolean = true,
+    val isTrackRecording: Boolean = false,
+    val trackRecordingStartTime: Long = 0L,
+    val bookmarkCategories: List<BookmarkCategoryItem> = emptyList(),
+    val missingMapId: String? = null
 ) {
     val isEffectivelyStandalone: Boolean
         get() = standaloneMode || !isPhoneConnected
 }
+
+data class BookmarkCategoryItem(
+    val id: Long,
+    val name: String,
+    val isVisible: Boolean,
+    val bookmarksCount: Int,
+    val tracksCount: Int,
+    val isSyncing: Boolean = false
+)
 
 object NavigationStateHolder {
     private val _state = MutableStateFlow(NavigationState())
@@ -172,19 +191,6 @@ object NavigationStateHolder {
             finalState = finalState.copy(isMapUnlocked = oldState.isMapUnlockedBeforeNav)
         }
 
-        // PRESERVE WATCH-LOCAL STATE
-        // These fields are strictly watch-local and should never be overwritten by remote updates.
-        finalState = if (!force) {
-            finalState.copy(
-                isMapUnlocked = finalState.isMapUnlocked,
-                manualCenterLat = if (finalState.manualCenterLat == 0.0 && oldState.manualCenterLat != 0.0) oldState.manualCenterLat else finalState.manualCenterLat,
-                manualCenterLon = if (finalState.manualCenterLon == 0.0 && oldState.manualCenterLon != 0.0) oldState.manualCenterLon else finalState.manualCenterLon,
-                manualViewSpan = if (finalState.manualViewSpan <= 0.0f && oldState.manualViewSpan > 0.0f) oldState.manualViewSpan else finalState.manualViewSpan
-            )
-        } else {
-            finalState
-        }
-
         _state.value = finalState
     }
 
@@ -203,20 +209,23 @@ object NavigationStateHolder {
                 mapEnabled = prefs.getBoolean("mapEnabled", true),
                 watchLocalMode = prefs.getBoolean("watchLocalMode", false),
                 standaloneMode = prefs.getBoolean("disconnectFromPhone", false),
-                autoDownloadRouteMaps = prefs.getBoolean("autoDownloadRouteMaps", true),
+                autoDownloadRouteMaps = prefs.getBoolean("pref_wear_os_auto_download_route_maps", true),
                 mapDownloadMode = prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC",
                 backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS",
                 locationSource = prefs.getString("locationSource", "AUTO") ?: "AUTO",
-                measurementUnits = prefs.getInt("pref_munits", 0),
-                mapStyle = prefs.getString("pref_map_style", "default") ?: "default",
-                avoidTolls = prefs.getBoolean("avoid_tolls", false),
-                avoidMotorways = prefs.getBoolean("avoid_motorways", false),
-                avoidFerries = prefs.getBoolean("avoid_ferries", false),
-                avoidUnpaved = prefs.getBoolean("avoid_dirty_roads", false),
-                transitEnabled = prefs.getBoolean("layer_transit", false),
-                isolinesEnabled = prefs.getBoolean("layer_isolines", false),
-                bikingEnabled = prefs.getBoolean("layer_biking", false),
-                hikingEnabled = prefs.getBoolean("layer_hiking", false),
+                measurementUnits = prefs.getInt("pref_wear_os_munits", 0),
+                mapStyle = prefs.getString("pref_wear_os_map_style", "default") ?: "default",
+                is3dEnabled = prefs.getBoolean("pref_wear_os_3d", true),
+                is3dBuildingsEnabled = prefs.getBoolean("pref_wear_os_3d_buildings", true),
+                isAutoZoomEnabled = prefs.getBoolean("pref_wear_os_auto_zoom", true),
+                avoidTolls = prefs.getBoolean("pref_wear_os_avoid_tolls", false),
+                avoidMotorways = prefs.getBoolean("pref_wear_os_avoid_motorways", false),
+                avoidFerries = prefs.getBoolean("pref_wear_os_avoid_ferries", false),
+                avoidUnpaved = prefs.getBoolean("pref_wear_os_avoid_unpaved", false),
+                transitEnabled = prefs.getBoolean("pref_wear_os_transit", false),
+                isolinesEnabled = prefs.getBoolean("pref_wear_os_isolines", false),
+                bikingEnabled = prefs.getBoolean("pref_wear_os_biking", false),
+                hikingEnabled = prefs.getBoolean("pref_wear_os_hiking", false),
                 allowMobileData = prefs.getBoolean("pref_mobile_data", false),
                 forceGuiButtons = prefs.getBoolean("pref_force_gui_buttons", false),
                 showOnLockScreen = prefs.getBoolean("pref_show_on_lock_screen", true),

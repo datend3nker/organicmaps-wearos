@@ -91,7 +91,7 @@ public class DownloaderService extends Service implements MapManager.StorageCall
         // Detach service from the notification to keep after the service is stopped.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
         {
-          stopForeground(Service.STOP_FOREGROUND_DETACH);
+          stopForeground(STOP_FOREGROUND_DETACH);
         }
         else
         {

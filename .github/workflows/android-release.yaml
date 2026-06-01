@@ -69,8 +69,11 @@ jobs:
       matrix:
         include:
           - flavor: google
-          - flavor: huawei
-          - flavor: web
+            taskFlavor: Google
+          - flavor: fdroid
+            taskFlavor: Fdroid
+          - flavor: oss
+            taskFlavor: Oss
     steps:
       - name: Install build tools and dependencies
         shell: bash
@@ -116,15 +119,11 @@ jobs:
         run: |
           echo "$PRIVATE_H" | base64 -d > private.h
           echo "$GOOGLE_PLAY_JSON" | base64 -d > android/app/google-play.json
-          echo "$HUAWEI_APPGALLERY_JSON" | base64 -d > android/app/huawei-appgallery.json
-          echo "$AGCONNECT_SERVICES_JSON" | base64 -d > android/app/agconnect-services.json
           echo "$SECURE_PROPERTIES" | base64 -d > android/app/secure.properties
           echo "$RELEASE_KEYSTORE" | base64 -d > android/app/release.keystore
         env:
           PRIVATE_H: ${{ secrets.PRIVATE_H }}
           GOOGLE_PLAY_JSON: ${{ secrets.GOOGLE_PLAY_JSON }}
-          HUAWEI_APPGALLERY_JSON: ${{ secrets.HUAWEI_APPGALLERY_JSON }}
-          AGCONNECT_SERVICES_JSON: ${{ secrets.AGCONNECT_SERVICES_JSON }}
           SECURE_PROPERTIES: ${{ secrets.SECURE_PROPERTIES }}
           RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE }}
 
@@ -136,73 +135,45 @@ jobs:
         shell: bash
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
 
-      # Compile steps are separated from upload steps to save built artifacts and debug symbols inbetween.
-      - name: Compile for Google Play
+      # BUILD PHONE
+      - name: Build Phone APK
+        shell: bash
+        working-directory: android
+        run: ./gradlew :app:assemble${{ matrix.taskFlavor }}Release
+
+      - name: Build Phone Bundle
         if: ${{ matrix.flavor == 'google' }}
         shell: bash
         working-directory: android
-        run: ./gradlew bundleGoogleRelease
+        run: ./gradlew :app:bundle${{ matrix.taskFlavor }}Release
 
-      - name: Compile for Huawei AppGallery
-        if: ${{ matrix.flavor == 'huawei' }}
+      # BUILD WATCH
+      - name: Build Watch APK
         shell: bash
         working-directory: android
-        run: ./gradlew bundleHuaweiRelease
+        run: ./gradlew :app:omaps:assemble${{ matrix.taskFlavor }}Release
 
-      - name: Compile universal web APK
-        if: ${{ matrix.flavor == 'web' }}
-        shell: bash
-        working-directory: android
-        run: ./gradlew assembleWebRelease
-
-      - name: Upload web debug symbols to GitHub artifacts # Google and Huawei include debug symbols inside the aab.
-        if: ${{ matrix.flavor == 'web' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-debug-symbols-web.zip
-          path: android/app/build/outputs/native-debug-symbols/webRelease/native-debug-symbols.zip
-
-      - name: Upload Google aab to GitHub artifacts
-        if: ${{ matrix.flavor == 'google' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: OrganicMaps-${{ needs.tag.outputs.code }}-google-release.aab
-          path: ./android/app/build/outputs/bundle/googleRelease/OrganicMaps-${{ needs.tag.outputs.code }}-google-release.aab
-
-      - name: Upload Huawei aab to GitHub artifacts
-        if: ${{ matrix.flavor == 'huawei' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: OrganicMaps-${{ needs.tag.outputs.code }}-huawei-release.aab
-          path: ./android/app/build/outputs/bundle/huaweiRelease/OrganicMaps-${{ needs.tag.outputs.code }}-huawei-release.aab
-
+      # STORE DEPLOYMENTS
       - name: Upload to Google Play
         if: ${{ matrix.flavor == 'google' }}
         shell: bash
         working-directory: android
         run: ./gradlew publishGoogleReleaseBundle
 
-      - name: Upload to Huawei AppGallery
-        if: ${{ matrix.flavor == 'huawei' }}
+      # GITHUB RELEASE UPLOADS
+      - name: Prepare release assets
         shell: bash
-        working-directory: android
-        run: ./gradlew publishHuaweiAppGalleryHuaweiRelease
-
-      - name: sha256sum web release apk
-        if: ${{ matrix.flavor == 'web' }}
-        shell: bash
-        working-directory: android/app/build/outputs/apk/web/release
-        run: sha256sum OrganicMaps-${{ needs.tag.outputs.code }}-web-release.apk > OrganicMaps-${{ needs.tag.outputs.code }}-web-release.apk.sha256sum
-
-      - name: Upload web release apk and its sha256sum to GitHub artifacts
-        if: ${{ matrix.flavor == 'web' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: OrganicMaps-${{ needs.tag.outputs.code }}-web-release.apk
-          path: ./android/app/build/outputs/apk/web/release/OrganicMaps-${{ needs.tag.outputs.code }}-web-release.*
+        run: |
+          mkdir -p release_assets
+          cp android/app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk release_assets/ || true
+          cp android/app/omaps/build/outputs/apk/${{ matrix.flavor }}/release/*.apk release_assets/ || true
+          cd release_assets
+          for f in *.apk; do
+            [ -f "$f" ] && sha256sum "$f" > "$f.sha256sum"
+          done
 
       - name: Prepare release notes
-        if: ${{ matrix.flavor == 'web' }}
+        if: ${{ matrix.flavor == 'google' }}
         shell: bash
         run: |
           {
@@ -210,23 +181,15 @@ jobs:
             echo ""
             echo "See [a detailed announce](https://organicmaps.app/news/) on our website when app updates are published in all stores."
             echo "You can get automatic app updates from GitHub [using Obtainium](https://github.com/organicmaps/organicmaps/wiki/Installing-Organic-Maps-from-GitHub-using-Obtainium)."
-            echo ""
-            echo "sha256sum:"
-            echo -e '\n```'
-            tr -d '\n' < ./android/app/build/outputs/apk/web/release/OrganicMaps-${{ needs.tag.outputs.code }}-web-release.apk.sha256sum
-            echo -e '\n```'
           } > ${{ runner.temp }}/release-notes.txt
 
-      - name: Upload universal APK to GitHub
-        if: ${{ matrix.flavor == 'web' }}
+      - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: ${{ runner.temp }}/release-notes.txt
+          body_path: ${{ matrix.flavor == 'google' && format('{0}/release-notes.txt', runner.temp) || '' }}
           token: ${{ secrets.GITHUB_TOKEN }}
           name: ${{ needs.tag.outputs.tag }}
           tag_name: ${{ needs.tag.outputs.tag }}
           discussion_category_name: 'Announcements'
-          files: |
-            ./android/app/build/outputs/apk/web/release/OrganicMaps-${{ needs.tag.outputs.code }}-web-release.apk
-            ./android/app/build/outputs/apk/web/release/OrganicMaps-${{ needs.tag.outputs.code }}-web-release.apk.sha256sum
-          fail_on_unmatched_files: true
+          files: release_assets/*
+          fail_on_unmatched_files: false

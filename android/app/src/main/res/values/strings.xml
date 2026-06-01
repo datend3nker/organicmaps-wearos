@@ -97,6 +97,7 @@
     <!-- Error moving map files from one storage to another -->
     <string name="move_maps_error">Error moving map files</string>
     <!-- Ask user to wait several minutes (some long process in modal dialog). -->
+    <string name="osm_credits">Map data © OpenStreetMap contributors</string>
     <string name="wait_several_minutes">This can take several minutes.\nPlease wait…</string>
     <!-- Measurement units title in settings activity -->
     <string name="measurement_units">Measurement units</string>
@@ -219,6 +220,9 @@
     <!-- Settings «Map» category: «3D buildings» title -->
     <string name="pref_map_3d_buildings_title">3D buildings</string>
     <string name="pref_map_3d_buildings_summary">Render 3D building geometry</string>
+    <string name="pref_wear_map_3d_title">Watch: Perspective view</string>
+    <string name="pref_wear_map_3d_buildings_title">Watch: 3D buildings</string>
+    <string name="pref_wear_map_auto_zoom_title">Watch: Auto zoom</string>
     <!-- A message in Settings/Preferences explaining why is it not possible to enable 3D buildings when max power saving mode is enabled -->
     <string name="pref_map_3d_buildings_disabled_summary">3D buildings are disabled in power saving mode</string>
     <!-- Settings «Route» category: «Tts enabled» title -->
@@ -877,7 +881,9 @@
     <string name="prefs_group_wear_os">Wear OS</string>
     <string name="prefs_group_misc">Miscellaneous</string>
     <string name="pref_wear_os_backend_title">Communication Backend</string>
-    <string name="pref_wear_os_backend_summary">GMS is recommended for most devices</string>
+    <string name="pref_wear_os_backend_summary">GSM is recommended for most devices</string>
+    <string name="wear_status_connected">Watch Connected</string>
+    <string name="wear_status_description">Wear OS Connection Status</string>
     <string name="pref_wear_map_enabled_title">Enable Map on Watch</string>
     <string name="pref_wear_map_enabled_summary">Show vector map on the watch screen (requires more battery)</string>
     <string name="pref_wear_os_watch_local_mode_title">Watch Local Mode</string>
@@ -890,9 +896,8 @@
     <string name="downloader_send_to_watch_success">Sending %s map to watch...</string>
 
     <string-array name="wear_map_download_mode">
-        <item>Always Sync via Bluetooth (Default)</item>
-        <item>Auto (Wi-Fi if available, otherwise Bluetooth)</item>
-        <item>Wi-Fi Only (Auto-download directly to watch)</item>
+        <item>Sync from Phone (Watch pulls from phone storage)</item>
+        <item>Direct Download (Watch uses internet)</item>
     </string-array>
 
     <string-array name="wear_backend">
