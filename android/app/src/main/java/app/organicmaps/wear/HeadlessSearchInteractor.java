@@ -37,6 +37,7 @@ public class HeadlessSearchInteractor implements SearchListener {
 
     public void startSearch(@NonNull String query, double lat, double lon) {
         Log.d(TAG, "startSearch requested for: " + query);
+        WearCompanionNotificationManager.showSearchNotification(mContext, query);
         try {
             if (MwmApplication.from(mContext).getOrganicMaps().arePlatformAndCoreInitialized()) {
                 Log.d(TAG, "Framework already initialized, performing search.");
@@ -120,6 +121,7 @@ public class HeadlessSearchInteractor implements SearchListener {
             return;
         }
         Log.d(TAG, "onResultsEnd. Final count: " + (mLastResults != null ? mLastResults.length : 0));
+        WearCompanionNotificationManager.hideNotification(mContext, WearCompanionNotificationManager.NOTIFICATION_ID_SEARCH);
         if (mLastResults != null) {
             WearSyncService.sendSearchResults(mContext, mLastResults, false);
         } else {

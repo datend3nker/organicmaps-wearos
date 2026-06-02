@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
 apply from: '../groovy/common-config.gradle'
 
 def googleFirebaseServicesEnabled = project.file('google-services.json').exists()
@@ -125,6 +126,10 @@ android {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
     coreLibraryDesugaringEnabled true
+  }
+
+  kotlinOptions {
+    jvmTarget = '17'
   }
 
   lint {

@@ -1,6 +1,7 @@
 package app.organicmaps.wear
 
 import android.content.Context
+import android.util.Log
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +28,8 @@ class GmsWearSyncBackend : IWearSyncBackend {
         private const val PATH_TRACK_RECORDING_TOGGLE = "/track/recording/toggle"
         private const val PATH_BOOKMARK_VISIBLE_TOGGLE = "/bookmark/visible/toggle"
         private const val PATH_BOOKMARK_SYNC_REQUEST = "/bookmark/sync/request"
+        private const val PATH_BOOKMARK_RENAME = "/bookmark/rename"
+        private const val PATH_BOOKMARK_DELETE = "/bookmark/delete"
         private const val PATH_BOOKMARKS_REQUEST = "/bookmarks/request"
         private const val PATH_BOOKMARK_SHOW = "/bookmark/show"
         private const val PATH_BOOKMARK_UPDATE = "/bookmark/update"
@@ -91,88 +94,71 @@ class GmsWearSyncBackend : IWearSyncBackend {
     }
 
     override fun sendPong(context: Context, nodeId: String) {
-        sendMessage(context, "/pong", byteArrayOf())
+        val pongData = byteArrayOf(IWearSyncBackend.PROTOCOL_VERSION)
+        Wearable.getMessageClient(context).sendMessage(nodeId, "/pong", pongData)
+            .addOnSuccessListener { Log.d("GmsWearSync", "DEBUG_GMS: Sent pong to $nodeId") }
     }
 
     override fun syncPreferences(context: Context) {
-        val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val mapEnabled = prefs.getBoolean("mapEnabled", false)
-        val watchLocalMode = prefs.getBoolean("watchLocalMode", false)
-        val standaloneMode = prefs.getBoolean("disconnectFromPhone", false)
-        val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
-        val downloadMode = prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC"
-        val backend = prefs.getString("pref_wear_os_backend", "GMS")
-        val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
+        val all = SettingsSyncManager.getAllSettings(context)
+        Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: syncPreferences (Full Sync) - Items: ${all.size}")
         
-        val is3dEnabled = prefs.getBoolean("pref_wear_os_3d", true)
-        val is3dBuildingsEnabled = prefs.getBoolean("pref_wear_os_3d_buildings", true)
-        val isAutoZoomEnabled = prefs.getBoolean("pref_wear_os_auto_zoom", true)
-        val mUnits = prefs.getInt("pref_wear_os_munits", 0)
-        val mapStyle = prefs.getString("pref_wear_os_map_style", "default")
-
-        val transitEnabled = prefs.getBoolean("pref_wear_os_transit", false)
-        val bikingEnabled = prefs.getBoolean("pref_wear_os_biking", false)
-        val hikingEnabled = prefs.getBoolean("pref_wear_os_hiking", false)
-        val isolinesEnabled = prefs.getBoolean("pref_wear_os_isolines", false)
-
-        val avoidTolls = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Toll)
-        val avoidMotorways = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Motorway)
-        val avoidFerries = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Ferry)
-        val avoidUnpaved = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Dirty)
-        val syncNotificationsEnabled = prefs.getBoolean("pref_sync_notifications", true)
-
-        val currentState = NavigationStateHolder.state.value
-        val now = System.currentTimeMillis()
-        
-        // CHECK IF ACTUALLY CHANGED to avoid infinite sync loops
-        // Only skip if it's not a forced sync and values are identical
-        val lastSentTimestamp = prefs.getLong("last_sent_prefs_timestamp", 0)
-        val lastSyncTimestamp = prefs.getLong("last_sync_timestamp", 0)
-        
-        // If we received a more recent update from phone, don't send back unless we interacted
-        if (lastSyncTimestamp > lastSentTimestamp && currentState.lastSettingsInteractionTime <= lastSyncTimestamp) {
-            android.util.Log.d("GmsWearSync", "DEBUG_GMS: Skipping sync to phone, remote state is newer/current")
-            return
-        }
-
-        // DEDUPLICATION: Check if values actually changed
-        val currentMapEnabled = prefs.getBoolean("mapEnabled", false)
-        // ... (We rely on lastSettingsInteractionTime being updated by UI interaction)
-        
-        android.util.Log.d("GmsWearSync", "DEBUG_GMS: Syncing preferences to phone: mapEnabled=$mapEnabled, watchLocal=$watchLocalMode")
-
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/preferences/watch")
         val map = putDataMapReq.dataMap
-        map.putBoolean("mapEnabled", mapEnabled)
-        map.putBoolean("watchLocalMode", watchLocalMode)
-        map.putBoolean("standaloneMode", standaloneMode)
-        map.putBoolean("autoDownloadRouteMaps", autoDownload)
-        map.putString("mapDownloadMode", downloadMode)
-        map.putString("backend", backend ?: "GMS")
-        map.putInt("poiCategoriesMask", poiMask)
-        map.putBoolean("is3dEnabled", is3dEnabled)
-        map.putBoolean("is3dBuildingsEnabled", is3dBuildingsEnabled)
-        map.putBoolean("isAutoZoomEnabled", isAutoZoomEnabled)
-        map.putInt("measurementUnits", mUnits)
-        map.putString("mapStyle", mapStyle ?: "default")
-        map.putBoolean("transitEnabled", transitEnabled)
-        map.putBoolean("bikingEnabled", bikingEnabled)
-        map.putBoolean("hikingEnabled", hikingEnabled)
-        map.putBoolean("isolinesEnabled", isolinesEnabled)
-        map.putBoolean("avoidTolls", avoidTolls)
-        map.putBoolean("avoidMotorways", avoidMotorways)
-        map.putBoolean("avoidFerries", avoidFerries)
-        map.putBoolean("avoidUnpaved", avoidUnpaved)
-        map.putBoolean("syncNotificationsEnabled", syncNotificationsEnabled)
-        map.putLong("timestamp", now)
+        map.putByte("protocolVersion", IWearSyncBackend.PROTOCOL_VERSION)
         
-        prefs.edit().putLong("last_sent_prefs_timestamp", now).apply()
+        for (update in all) {
+            putValue(map, update.key, update.value)
+            map.putLong("ts_" + update.key, update.timestamp)
+        }
+        
+        map.putLong("timestamp", System.currentTimeMillis())
+        
+        val putDataReq = putDataMapReq.asPutDataRequest()
+        putDataReq.setUrgent()
+        Wearable.getDataClient(context).putDataItem(putDataReq)
+            .addOnSuccessListener { 
+                Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: Successfully putDataItem for full preferences")
+                SettingsSyncManager.markAsSynced(context, all)
+            }
+            .addOnFailureListener { e -> Log.e("GmsWearSync", "DEBUG_GMS_PIPELINE: Failed to putDataItem for full preferences", e) }
+    }
+
+    override fun syncPreferenceUpdates(context: Context, updates: List<SettingsSyncManager.SettingUpdate>) {
+        if (updates.isEmpty()) return
+        Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: syncPreferenceUpdates (Buffered) - Items: ${updates.size}")
+
+        val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/preferences/updates")
+        val map = putDataMapReq.dataMap
+        map.putByte("protocolVersion", IWearSyncBackend.PROTOCOL_VERSION)
+        
+        for (update in updates) {
+            Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: Buffering setting for transmission: ${update.key} = ${update.value}")
+            val item = com.google.android.gms.wearable.DataMap()
+            putValue(item, "v", update.value)
+            item.putLong("t", update.timestamp)
+            map.putDataMap(update.key, item)
+        }
+        
+        map.putLong("_trigger", System.currentTimeMillis())
 
         val putDataReq = putDataMapReq.asPutDataRequest()
-        putDataReq.setUrgent() // Critical for immediate sync
+        putDataReq.setUrgent()
         Wearable.getDataClient(context).putDataItem(putDataReq)
-            .addOnSuccessListener { android.util.Log.d("GmsWearSync", "DEBUG_GMS: Preferences sent successfully to phone") }
-            .addOnFailureListener { e -> android.util.Log.e("GmsWearSync", "DEBUG_GMS: Failed to send preferences to phone", e) }
+            .addOnSuccessListener { 
+                Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: Successfully putDataItem for buffered updates")
+                SettingsSyncManager.markAsSynced(context, updates)
+            }
+            .addOnFailureListener { e -> Log.e("GmsWearSync", "DEBUG_GMS_PIPELINE: Failed to putDataItem for buffered updates", e) }
+    }
+
+    private fun putValue(map: com.google.android.gms.wearable.DataMap, key: String, value: Any) {
+        when (value) {
+            is Boolean -> map.putBoolean(key, value)
+            is String -> map.putString(key, value)
+            is Int -> map.putInt(key, value)
+            is Long -> map.putLong(key, value)
+        }
     }
 
 
@@ -191,6 +177,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         }
 
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/search/history/sync")
+        putDataMapReq.dataMap.putByte("protocolVersion", IWearSyncBackend.PROTOCOL_VERSION)
         putDataMapReq.dataMap.putStringArrayList("history", history)
         putDataMapReq.dataMap.putLong("timestamp", System.currentTimeMillis())
         putDataMapReq.setUrgent()
@@ -213,7 +200,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
     override fun checkConnection(context: Context, callback: (Boolean) -> Unit) {
         val nodeClient = Wearable.getNodeClient(context)
         nodeClient.connectedNodes.addOnCompleteListener { task ->
-            if (task.isSuccessful && task.result != null) {
+            if (task.isSuccessful() && task.result != null) {
                 callback(task.result.isNotEmpty())
             } else {
                 callback(false)
@@ -231,6 +218,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
 
     override fun sendMapProgress(context: Context, mapId: String, progress: Int) {
         val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create("/map/download/progress")
+        putDataMapReq.dataMap.putByte("protocolVersion", IWearSyncBackend.PROTOCOL_VERSION)
         putDataMapReq.dataMap.putString("countryId", mapId)
         putDataMapReq.dataMap.putInt("progress", progress)
         putDataMapReq.setUrgent()
@@ -245,16 +233,27 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, PATH_BOOKMARKS_REQUEST, byteArrayOf())
     }
 
-    override fun toggleBookmarkCategory(context: Context, categoryId: Long) {
-        val buffer = ByteBuffer.allocate(8)
-        buffer.putLong(categoryId)
-        sendMessage(context, PATH_BOOKMARK_VISIBLE_TOGGLE, buffer.array())
+    override fun toggleBookmarkCategory(context: Context, categoryName: String) {
+        sendMessage(context, PATH_BOOKMARK_VISIBLE_TOGGLE, categoryName.toByteArray(StandardCharsets.UTF_8))
     }
 
-    override fun syncCategory(context: Context, categoryId: Long) {
-        val buffer = ByteBuffer.allocate(8)
-        buffer.putLong(categoryId)
-        sendMessage(context, PATH_BOOKMARK_SYNC_REQUEST, buffer.array())
+    override fun syncCategory(context: Context, categoryName: String) {
+        sendMessage(context, PATH_BOOKMARK_SYNC_REQUEST, categoryName.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    override fun renameBookmarkCategory(context: Context, oldName: String, newName: String) {
+        val oldBytes = oldName.toByteArray(StandardCharsets.UTF_8)
+        val newBytes = newName.toByteArray(StandardCharsets.UTF_8)
+        val buffer = ByteBuffer.allocate(4 + oldBytes.size + 4 + newBytes.size)
+        buffer.putInt(oldBytes.size)
+        buffer.put(oldBytes)
+        buffer.putInt(newBytes.size)
+        buffer.put(newBytes)
+        sendMessage(context, PATH_BOOKMARK_RENAME, buffer.array())
+    }
+
+    override fun deleteBookmarkCategory(context: Context, name: String) {
+        sendMessage(context, PATH_BOOKMARK_DELETE, name.toByteArray(StandardCharsets.UTF_8))
     }
 
     override fun showBookmarkOnPhone(context: Context, bmkId: Long) {
@@ -314,6 +313,10 @@ class GmsWearSyncBackend : IWearSyncBackend {
         val messageClient = Wearable.getMessageClient(context)
         val nodeClient = Wearable.getNodeClient(context)
         val capabilityClient = Wearable.getCapabilityClient(context)
+        
+        val versionedData = ByteArray(data.size + 1)
+        versionedData[0] = IWearSyncBackend.PROTOCOL_VERSION
+        System.arraycopy(data, 0, versionedData, 1, data.size)
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -331,9 +334,9 @@ class GmsWearSyncBackend : IWearSyncBackend {
                     } ?: emptySet()
                 }
                 
-                android.util.Log.d("GmsWearSync", "DEBUG_GMS: sendMessage to $path: found ${nodes.size} nodes")
+                Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: sendMessage to $path (payload=${versionedData.size} bytes): found ${nodes.size} nodes")
                 if (nodes.isEmpty()) {
-                    android.util.Log.w("GmsWearSync", "DEBUG_GMS: No connected nodes found for $path")
+                    Log.w("GmsWearSync", "DEBUG_GMS_PIPELINE: No connected nodes found for $path")
                     if (NavigationStateHolder.state.value.isPhoneConnected) {
                          NavigationStateHolder.update { it.copy(isPhoneConnected = false) }
                     }
@@ -341,15 +344,15 @@ class GmsWearSyncBackend : IWearSyncBackend {
                 for (node in nodes) {
                     try {
                         withTimeoutOrNull(5000L) {
-                            messageClient.sendMessage(node.id, path, data).await()
+                            messageClient.sendMessage(node.id, path, versionedData).await()
                         }
-                        android.util.Log.d("GmsWearSync", "DEBUG_GMS: Sent message to ${node.displayName} at $path")
+                        Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: Successfully sent message to ${node.displayName} at $path")
                     } catch (e: Exception) {
-                        android.util.Log.e("GmsWearSync", "Failed to send message to ${node.displayName}", e)
+                        Log.e("GmsWearSync", "DEBUG_GMS_PIPELINE: Failed to send message to ${node.displayName} at $path: ${e.message}")
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("GmsWearSync", "Error in sendMessage: $path", e)
+                Log.e("GmsWearSync", "DEBUG_GMS_PIPELINE: Error in sendMessage: $path", e)
             }
         }
     }

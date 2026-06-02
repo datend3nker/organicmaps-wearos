@@ -64,6 +64,9 @@ import app.organicmaps.sdk.downloader.CountryItem
 import app.organicmaps.sdk.Framework
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.organicmaps.wear.presentation.MainViewModel
+import app.organicmaps.wear.presentation.navigation.RoutingOptionsRow
+import app.organicmaps.sdk.settings.RoadType
+import app.organicmaps.sdk.routing.RoutingOptions
 import androidx.compose.ui.text.font.FontWeight
 import androidx.wear.compose.material.dialog.Dialog
 import app.organicmaps.sdk.bookmarks.data.Metadata
@@ -676,39 +679,20 @@ fun ModeSelectionScreen(
         }
 
         item {
-            ToggleChip(
-                checked = avoidTolls,
-                onCheckedChange = { avoidTolls = it },
-                label = { Text("Avoid Tolls", fontSize = 12.sp) },
-                toggleControl = { Switch(checked = avoidTolls) },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        item {
-            ToggleChip(
-                checked = avoidMotorways,
-                onCheckedChange = { avoidMotorways = it },
-                label = { Text("Avoid Motorways", fontSize = 12.sp) },
-                toggleControl = { Switch(checked = avoidMotorways) },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        item {
-            ToggleChip(
-                checked = avoidFerries,
-                onCheckedChange = { avoidFerries = it },
-                label = { Text("Avoid Ferries", fontSize = 12.sp) },
-                toggleControl = { Switch(checked = avoidFerries) },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        item {
-            ToggleChip(
-                checked = avoidUnpaved,
-                onCheckedChange = { avoidUnpaved = it },
-                label = { Text("Avoid Unpaved", fontSize = 12.sp) },
-                toggleControl = { Switch(checked = avoidUnpaved) },
-                modifier = Modifier.fillMaxWidth()
+            RoutingOptionsRow(
+                avoidTolls = avoidTolls,
+                avoidMotorways = avoidMotorways,
+                avoidFerries = avoidFerries,
+                avoidUnpaved = avoidUnpaved,
+                onOptionToggled = { type, newVal ->
+                    when(type) {
+                        RoadType.Toll -> avoidTolls = newVal
+                        RoadType.Motorway -> avoidMotorways = newVal
+                        RoadType.Ferry -> avoidFerries = newVal
+                        RoadType.Dirty -> avoidUnpaved = newVal
+                        else -> {}
+                    }
+                }
             )
         }
 

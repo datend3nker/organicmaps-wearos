@@ -163,6 +163,7 @@ object WearMapDownloader {
                     val data = ByteArray(4096)
                     var total: Long = 0
                     while (true) {
+                        kotlinx.coroutines.yield()
                         val count = input.read(data)
                         if (count == -1) break
                         total += count.toLong()
@@ -183,7 +184,10 @@ object WearMapDownloader {
             currentDownloadJob = null
             WearNotificationManager.hideSyncNotification(context)
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is kotlinx.coroutines.CancellationException || e.cause is kotlinx.coroutines.CancellationException) {
+                _downloadState.value = DownloadState.CANCELLED
+                throw e
+            }
             Log.e(TAG, "Failed downloading via internet. Falling back to phone sync...", e)
             _downloadState.value = DownloadState.STREAMING_FROM_PHONE
             streamFromPhone(context, mapId)

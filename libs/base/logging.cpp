@@ -112,11 +112,11 @@ LogLevel GetDefaultLogLevel()
 
 LogLevel GetDefaultLogAbortLevel()
 {
-#if defined(DEBUG)
+#if defined(DEBUG) && !defined(OMIM_OS_ANDROID)
   return LERROR;
 #else
   return LCRITICAL;
-#endif  // defined(DEBUG)
+#endif  // defined(DEBUG) && !defined(OMIM_OS_ANDROID)
 }
 
 AtomicLogLevel g_LogLevel = {GetDefaultLogLevel()};

@@ -53,6 +53,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import app.organicmaps.sdk.settings.RoadType
 import app.organicmaps.sdk.routing.RoutingOptions
+import app.organicmaps.wear.presentation.navigation.RoutingOptionsRow
 
 import androidx.wear.input.WearableButtons
 import androidx.wear.ambient.AmbientModeSupport
@@ -387,55 +388,31 @@ fun WearApp() {
                         )
 
                         // Compact Routing Options Row
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            val options = listOf(
-                                Icons.Default.Paid to RoadType.Toll,
-                                Icons.Default.DirectionsCar to RoadType.Motorway,
-                                Icons.Default.DirectionsBoat to RoadType.Ferry,
-                                Icons.Default.Terrain to RoadType.Dirty
-                            )
-                            options.forEach { (icon, type) ->
-                                val isChecked = when(type) {
-                                    RoadType.Toll -> navState.avoidTolls
-                                    RoadType.Motorway -> navState.avoidMotorways
-                                    RoadType.Ferry -> navState.avoidFerries
-                                    RoadType.Dirty -> navState.avoidUnpaved
-                                    else -> false
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(if (isChecked) Color.Red.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.15f))
-                                        .clickable {
-                                            val newVal = !isChecked
-                                            if (newVal) RoutingOptions.addOption(type) else RoutingOptions.removeOption(type)
-                                            NavigationStateHolder.update { current ->
-                                                val next = when(type) {
-                                                    RoadType.Toll -> current.copy(avoidTolls = newVal)
-                                                    RoadType.Motorway -> current.copy(avoidMotorways = newVal)
-                                                    RoadType.Ferry -> current.copy(avoidFerries = newVal)
-                                                    RoadType.Dirty -> current.copy(avoidUnpaved = newVal)
-                                                    else -> current
-                                                }
-                                                // Re-trigger calculation if in standalone mode
-                                                if (navState.standaloneMode || !navState.isPhoneConnected) {
-                                                    app.organicmaps.sdk.routing.RoutingController.get().rebuildLastRoute()
-                                                } else {
-                                                    WearCommandService.syncPreferences(context)
-                                                }
-                                                next.copy(lastSettingsInteractionTime = System.currentTimeMillis())
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = if (isChecked) Color.White else Color.LightGray)
+                        RoutingOptionsRow(
+                            avoidTolls = navState.avoidTolls,
+                            avoidMotorways = navState.avoidMotorways,
+                            avoidFerries = navState.avoidFerries,
+                            avoidUnpaved = navState.avoidUnpaved,
+                            onOptionToggled = { type, newVal ->
+                                if (newVal) RoutingOptions.addOption(type) else RoutingOptions.removeOption(type)
+                                NavigationStateHolder.update { current ->
+                                    val next = when(type) {
+                                        RoadType.Toll -> current.copy(avoidTolls = newVal)
+                                        RoadType.Motorway -> current.copy(avoidMotorways = newVal)
+                                        RoadType.Ferry -> current.copy(avoidFerries = newVal)
+                                        RoadType.Dirty -> current.copy(avoidUnpaved = newVal)
+                                        else -> current
+                                    }
+                                    // Re-trigger calculation if in standalone mode
+                                    if (navState.standaloneMode || !navState.isPhoneConnected) {
+                                        app.organicmaps.sdk.routing.RoutingController.get().rebuildLastRoute()
+                                    } else {
+                                        WearCommandService.syncPreferences(context)
+                                    }
+                                    next.copy(lastSettingsInteractionTime = System.currentTimeMillis())
                                 }
                             }
-                        }
+                        )
                         
                         androidx.wear.compose.material.Button(
                             onClick = {

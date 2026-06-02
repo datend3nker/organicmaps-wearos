@@ -15,16 +15,18 @@ import app.organicmaps.sdk.Router;
 import app.organicmaps.sdk.bookmarks.data.MapObject;
 import app.organicmaps.sdk.routing.RoutingController;
 
-public final class HeadlessRouteInteractor {
+public final class HeadlessRouteInteractor implements RoutingController.Container {
     private static final String TAG = "HeadlessRoute";
 
     private static HeadlessRouteInteractor sInstance;
 
     @NonNull
     private final Context mContext;
+    private String mDestinationName;
 
     private HeadlessRouteInteractor(@NonNull Context context) {
         mContext = context.getApplicationContext();
+        RoutingController.get().attach(this);
     }
 
     @NonNull
@@ -35,7 +37,38 @@ public final class HeadlessRouteInteractor {
         return sInstance;
     }
 
+    @Override
+    public void onBuiltRoute() {
+        Log.d(TAG, "Route built successfully");
+        WearSyncService.sendRouteBuildProgress(mContext, 100);
+        WearSyncService.startNavigation(mContext);
+        WearCompanionNotificationManager.hideNotification(mContext, WearCompanionNotificationManager.NOTIFICATION_ID_ROUTE);
+    }
+
+    @Override
+    public void onCommonBuildError(int lastRouteError, @NonNull String[] lastMissingMaps) {
+        Log.e(TAG, "Route build error: " + lastRouteError);
+        WearSyncService.sendRouteBuildProgress(mContext, -1); // Indicate error
+        WearCompanionNotificationManager.hideNotification(mContext, WearCompanionNotificationManager.NOTIFICATION_ID_ROUTE);
+    }
+
+    @Override
+    public void onStartRouteBuilding() {
+        Log.d(TAG, "Route building started");
+        WearSyncService.sendRouteBuildProgress(mContext, 0);
+        if (mDestinationName != null) {
+            WearCompanionNotificationManager.showRouteCalculationNotification(mContext, mDestinationName);
+        }
+    }
+
+    @Override
+    public void updateBuildProgress(int progress, @NonNull app.organicmaps.sdk.Router router) {
+        Log.d(TAG, "Route build progress: " + progress + "%");
+        WearSyncService.sendRouteBuildProgress(mContext, progress);
+    }
+
     public void planRoute(double lat, double lon, int routerType, @NonNull String name) {
+        mDestinationName = name;
         try {
             if (MwmApplication.from(mContext).getOrganicMaps().arePlatformAndCoreInitialized()) {
                 performPlanning(lat, lon, routerType, name);

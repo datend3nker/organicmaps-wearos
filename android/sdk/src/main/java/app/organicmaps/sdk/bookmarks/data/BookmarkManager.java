@@ -105,6 +105,7 @@ public enum BookmarkManager {
   @MainThread
   public void onBookmarksChanged()
   {
+    Logger.d(TAG, "DEBUG_BOOKMARKS_PIPELINE: onBookmarksChanged (MANUAL change detected)");
     updateCache();
   }
 

@@ -22,6 +22,7 @@ import com.google.android.gms.wearable.WearableListenerService;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.List;
 
 import app.organicmaps.sync.GmsSyncLayer;
 import app.organicmaps.sync.ISyncLayer;
@@ -76,7 +77,7 @@ public class WearMessageListenerService extends WearableListenerService implemen
         Log.d(TAG, "Watch connected: " + node.getDisplayName());
         mMainHandler.post(() -> {
             android.widget.Toast.makeText(this, "Watch connected: " + node.getDisplayName(), android.widget.Toast.LENGTH_SHORT).show();
-            WearSyncService.syncPreferences(this);
+            WearSyncService.onConnectionEstablished(this);
         });
         // Verify capability
         Wearable.getCapabilityClient(this)
@@ -105,16 +106,44 @@ public class WearMessageListenerService extends WearableListenerService implemen
             String host = event.getDataItem().getUri().getHost();
             Log.d(TAG, "DEBUG_GMS: onDataChanged path: " + path + " type: " + event.getType() + " host: " + host);
             if (event.getType() == DataEvent.TYPE_CHANGED) {
-                if ("/preferences/watch".equals(path)) {
-                    DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
-                    Log.d(TAG, "DEBUG_GMS: Applying preferences from watch. Timestamp: " + dataMap.getLong("timestamp", 0) + " host: " + host);
+                DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
+                if (dataMap.containsKey("protocolVersion") && dataMap.getByte("protocolVersion") != ISyncLayer.PROTOCOL_VERSION) {
+                    Log.e(TAG, "Protocol version mismatch in DataItem at " + path + ": " + dataMap.getByte("protocolVersion"));
+                    continue;
+                }
+
+                if ("/preferences/watch".equals(path) || "/preferences/updates".equals(path)) {
+                    Log.d(TAG, "DEBUG_GMS: Applying preferences from watch (" + path + ")");
                     mMainHandler.post(() -> {
                         android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
-                        WearSyncService.getSyncLayer().parsePreferences(this, dataMap.toByteArray(), prefs);
-                        // Re-init happens inside applyPreferencesFromDataMap which is called by parsePreferences in GmsSyncLayer
+                        ISyncLayer syncLayer = WearSyncService.getSyncLayer();
+                        if (syncLayer instanceof GmsSyncLayer) {
+                            if ("/preferences/updates".equals(path)) {
+                                List<SettingsSyncManager.SettingUpdate> updates = new ArrayList<>();
+                                for (String key : dataMap.keySet()) {
+                                    if (key.equals("_trigger") || key.equals("protocolVersion")) continue;
+                                    DataMap item = dataMap.getDataMap(key);
+                                    if (item != null) {
+                                        updates.add(new SettingsSyncManager.SettingUpdate(key, item.get("v"), item.getLong("t")));
+                                    }
+                                }
+                                SettingsSyncManager.getInstance(this).applyRemoteUpdates(updates);
+                                WearSyncService.onRemotePreferencesApplied();
+                            } else {
+                                // Full sync fallback/legacy
+                                List<SettingsSyncManager.SettingUpdate> updates = new ArrayList<>();
+                                for (String key : dataMap.keySet()) {
+                                    if (key.startsWith("ts_")) continue;
+                                    if (key.equals("timestamp") || key.equals("protocolVersion")) continue;
+                                    long ts = dataMap.getLong("ts_" + key, dataMap.getLong("timestamp", 0));
+                                    updates.add(new SettingsSyncManager.SettingUpdate(key, dataMap.get(key), ts));
+                                }
+                                SettingsSyncManager.getInstance(this).applyRemoteUpdates(updates);
+                                WearSyncService.onRemotePreferencesApplied();
+                            }
+                        }
                     });
                 } else if ("/search/history/sync".equals(path)) {
-                    DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
                     ArrayList<String> history = dataMap.getStringArrayList("history");
                     Log.d(TAG, "DEBUG_GMS: Received search history sync. Size: " + (history != null ? history.size() : 0));
                     if (history != null) {
@@ -125,7 +154,6 @@ public class WearMessageListenerService extends WearableListenerService implemen
                         });
                     }
                 } else if ("/map/download/progress".equals(path)) {
-                    DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
                     String countryId = dataMap.getString("countryId");
                     int progress = dataMap.getInt("progress", 0);
                     Log.d(TAG, "DEBUG_GMS: Received map progress sync. " + countryId + " -> " + progress + "%");

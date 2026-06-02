@@ -3,6 +3,7 @@ package app.organicmaps.wear
 import android.content.Intent
 import app.organicmaps.wear.presentation.Omaps
 import android.util.Log
+import app.organicmaps.wear.ReloadWorldMapsDebouncer
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -16,17 +17,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.tasks.await
-import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
-
-import app.organicmaps.sdk.routing.RoutingOptions
-import app.organicmaps.sdk.settings.RoadType
+import java.io.File
+import java.io.FileOutputStream
 
 class WearDataListenerService : WearableListenerService() {
     private val TAG = "WearDataListener"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val bookmarkOutputStreams = mutableMapOf<Long, java.io.FileOutputStream>()
 
     override fun onCreate() {
         super.onCreate()
@@ -38,11 +36,6 @@ class WearDataListenerService : WearableListenerService() {
                 checkPhoneConnection()
             }
         }
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "DEBUG_GMS: Watch WearDataListenerService.onStartCommand()")
-        return super.onStartCommand(intent, flags, startId)
     }
 
     override fun onDestroy() {
@@ -70,25 +63,22 @@ class WearDataListenerService : WearableListenerService() {
                 
                 val nodes = capabilityInfo.nodes
                 val connected = nodes.isNotEmpty()
-                Log.d(TAG, "DEBUG_GMS: checkPhoneConnection: found ${nodes.size} nodes with phone app capability: ${nodes.map { it.displayName }}")
                 
+                NavigationStateHolder.update { it.copy(isPhoneConnected = connected) }
+
                 if (connected) {
+                    WearCommandService.syncPreferences(this@WearDataListenerService)
                     WearCommandService.requestPreferences(this@WearDataListenerService)
                     WearCommandService.requestBookmarks(this@WearDataListenerService)
                     WearCommandService.syncSearchHistory(this@WearDataListenerService)
                     
-                    // Trigger Virtual MWM for World map if not present locally
                     if (app.organicmaps.sdk.downloader.MapManager.nativeGetStatus("World") != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
                         WearCommandService.requestMwmMetadata(this@WearDataListenerService, "World")
                     }
                 } else {
-                    // Fallback to simple node check if capability not found (legacy or misconfigured)
                     val allNodes = Wearable.getNodeClient(this@WearDataListenerService).connectedNodes.await()
-                    Log.d(TAG, "DEBUG_GMS: checkPhoneConnection: found ${allNodes.size} total connected nodes: ${allNodes.map { it.displayName }}")
                     if (allNodes.isEmpty()) {
-                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
-                            isPhoneConnected = false
-                        ))
+                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = false))
                     }
                 }
             } catch (e: Exception) {
@@ -104,57 +94,68 @@ class WearDataListenerService : WearableListenerService() {
     override fun onChannelOpened(channel: com.google.android.gms.wearable.ChannelClient.Channel) {
         if (channel.path.startsWith("/map/stream/data/")) {
             val mapId = channel.path.substringAfterLast("/")
-            Log.d(TAG, "Receiving map stream for $mapId")
-            
-            val tempFile = java.io.File(cacheDir, "$mapId.mwm.tmp")
             val channelClient = Wearable.getChannelClient(this)
-            
-            // Show notification on watch
             WearMapDownloader.setStreamingMap(mapId)
             
-            channelClient.receiveFile(channel, android.net.Uri.fromFile(tempFile), false)
-                .addOnSuccessListener {
-                    scope.launch {
-                        try {
-                            (application as WearApplication).waitForInitializationSuspend()
-                            Log.d(TAG, "Map stream received for $mapId")
-                            val storagePath = app.organicmaps.sdk.settings.StoragePathManager.findMapsStorage(this@WearDataListenerService)
-                            val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
-                            val versionedPath = java.io.File(storagePath, dataVersion.toString())
-                            if (!versionedPath.exists()) versionedPath.mkdirs()
-                            val finalFile = java.io.File(versionedPath, "$mapId.mwm")
-                            tempFile.renameTo(finalFile)
-                            WearMapDownloader.onDownloadCompleted()
-                            
-                            try {
-                                app.organicmaps.sdk.Framework.nativeReloadWorldMaps()
-                            } catch (_: Throwable) {}
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error finalizing map download after initialization", e)
+            scope.launch {
+                try {
+                    (application as WearApplication).waitForInitializationSuspend()
+                    val storagePath = app.organicmaps.sdk.settings.StoragePathManager.findMapsStorage(this@WearDataListenerService)
+                    val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
+                    val versionedPath = File(storagePath, dataVersion.toString())
+                    if (!versionedPath.exists()) versionedPath.mkdirs()
+                    val tempFile = File(versionedPath, "$mapId.mwm.tmp")
+
+                    channelClient.getInputStream(channel).await().use { input ->
+                        if (app.organicmaps.wear.VirtualMwmManager.isMounted(mapId)) {
+                            Log.d(TAG, "GMS: Streaming directly into mounted virtual MWM: $mapId")
+                            val buffer = ByteArray(64 * 1024)
+                            var offset = 0L
+                            var bytesRead: Int
+                            while (input.read(buffer).also { bytesRead = it } != -1) {
+                                app.organicmaps.wear.VirtualMwmManager.onBytesReceived(mapId, offset, buffer.copyOf(bytesRead))
+                                offset += bytesRead
+                            }
+                        } else {
+                            FileOutputStream(tempFile).use { output ->
+                                input.copyTo(output)
+                            }
                         }
                     }
-                }
-                .addOnFailureListener { e ->
+                    
+                    if (!app.organicmaps.wear.VirtualMwmManager.isMounted(mapId)) {
+                        val finalFile = File(versionedPath, "$mapId.mwm")
+                        if (finalFile.exists()) finalFile.delete()
+                        tempFile.renameTo(finalFile)
+                    }
+                    WearMapDownloader.onDownloadCompleted()
+                    ReloadWorldMapsDebouncer.reload()
+                } catch (e: Exception) {
                     Log.e(TAG, "Failed to receive map stream for $mapId", e)
+                    WearMapDownloader.onDownloadCancelled()
+                } finally {
+                    channelClient.close(channel)
                 }
+            }
         }
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
-        Log.d(TAG, "DEBUG_GMS: Watch onDataChanged: received ${dataEvents.count} events")
         if (dataEvents.count > 0) {
             (applicationContext as WearApplication).onActivityReceived()
         }
         for (event in dataEvents) {
             val uri = event.dataItem.uri
-            Log.d(TAG, "DEBUG_GMS: Watch onDataChanged path: ${uri.path} type: ${event.type} host: ${uri.host}")
             if (event.type == DataEvent.TYPE_CHANGED) {
                 val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+                if (dataMap.containsKey("protocolVersion") && dataMap.getByte("protocolVersion") != IWearSyncBackend.PROTOCOL_VERSION) {
+                    Log.e(TAG, "Protocol version mismatch in DataItem at ${uri.path}: ${dataMap.getByte("protocolVersion")}")
+                    continue
+                }
+
                 when (uri.path) {
-                    "/preferences" -> {
-                        Log.d(TAG, "DEBUG_GMS: Received /preferences data item update")
-                        handlePreferences(dataMap)
-                    }
+                    "/preferences", "/preferences/phone", "/preferences/watch" -> handlePreferences(dataMap)
+                    "/preferences/updates" -> handlePreferenceUpdates(dataMap)
                     "/map/download/progress" -> {
                         val countryId = dataMap.getString("countryId") ?: return
                         val progress = dataMap.getInt("progress", 0)
@@ -168,118 +169,26 @@ class WearDataListenerService : WearableListenerService() {
     }
 
     private fun handlePreferences(dataMap: com.google.android.gms.wearable.DataMap) {
-        val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
-        val timestamp = dataMap.getLong("timestamp", 0)
-        val currentState = NavigationStateHolder.state.value
-
-        // TIMESTAMP-BASED WINNING LOGIC
-        if (timestamp > 0 && timestamp < currentState.lastSettingsInteractionTime) {
-            Log.d(TAG, "Ignoring stale remote preferences. Remote: $timestamp, LocalInteraction: ${currentState.lastSettingsInteractionTime}")
-            return
+        val updates = mutableListOf<SettingsSyncManager.SettingUpdate>()
+        val globalTs = dataMap.getLong("timestamp", 0L)
+        for (key in dataMap.keySet()) {
+            if (key.startsWith("ts_") || key == "timestamp" || key == "protocolVersion") continue
+            val ts = dataMap.getLong("ts_$key", globalTs)
+            val value = dataMap.get<Any>(key) ?: continue
+            updates.add(SettingsSyncManager.SettingUpdate(key, value, ts))
         }
+        SettingsSyncManager.applyRemoteUpdates(this, updates)
+    }
 
-        val mapEnabled = dataMap.getBoolean("mapEnabled", false)
-        val watchLocalMode = dataMap.getBoolean("watchLocalMode", false)
-        val standaloneMode = dataMap.getBoolean("standaloneMode", false)
-        val autoDownload = dataMap.getBoolean("autoDownloadRouteMaps", true)
-        val mapDownloadMode = dataMap.getString("mapDownloadMode", "PHONE_SYNC")
-        val backend = dataMap.getString("backend", "GMS")
-        val poiMask = dataMap.getInt("poiCategoriesMask", 0x3F)
-        val locationSource = dataMap.getString("locationSource", "AUTO")
-        
-        val is3dEnabled = dataMap.getBoolean("is3dEnabled", true)
-        val is3dBuildingsEnabled = dataMap.getBoolean("is3dBuildingsEnabled", true)
-        val isAutoZoomEnabled = dataMap.getBoolean("isAutoZoomEnabled", true)
-        val mUnits = dataMap.getInt("measurementUnits", 0)
-        val mapStyle = dataMap.getString("mapStyle", "default")
-        
-        val transitEnabled = dataMap.getBoolean("transitEnabled", false)
-        val bikingEnabled = dataMap.getBoolean("bikingEnabled", false)
-        val hikingEnabled = dataMap.getBoolean("hikingEnabled", false)
-        val isolinesEnabled = dataMap.getBoolean("isolinesEnabled", false)
-        
-        val avoidTolls = dataMap.getBoolean("avoidTolls", false)
-        val avoidMotorways = dataMap.getBoolean("avoidMotorways", false)
-        val avoidFerries = dataMap.getBoolean("avoidFerries", false)
-        val avoidUnpaved = dataMap.getBoolean("avoidUnpaved", false)
-
-        val isForcedOffline = prefs.getBoolean("forceWatchLocalMode", false)
-        val finalOfflineState = isForcedOffline || watchLocalMode
-        val finalMapEnabled = standaloneMode || mapEnabled
-        
-        prefs.edit()
-            .putLong("last_sync_timestamp", timestamp)
-            .putBoolean("mapEnabled", mapEnabled)
-            .putBoolean("watchLocalMode", watchLocalMode)
-            .putBoolean("disconnectFromPhone", standaloneMode)
-            .putBoolean("pref_wear_os_auto_download_route_maps", autoDownload)
-            .putString("mapDownloadMode", mapDownloadMode)
-            .putString("pref_wear_os_backend", backend)
-            .putInt("poiCategoriesMask", poiMask)
-            .putString("locationSource", locationSource)
-            .putBoolean("pref_wear_os_3d", is3dEnabled)
-            .putBoolean("pref_wear_os_3d_buildings", is3dBuildingsEnabled)
-            .putBoolean("pref_wear_os_auto_zoom", isAutoZoomEnabled)
-            .putInt("pref_wear_os_munits", mUnits)
-            .putString("pref_wear_os_map_style", mapStyle)
-            .putBoolean("pref_wear_os_avoid_tolls", avoidTolls)
-            .putBoolean("pref_wear_os_avoid_motorways", avoidMotorways)
-            .putBoolean("pref_wear_os_avoid_ferries", avoidFerries)
-            .putBoolean("pref_wear_os_avoid_unpaved", avoidUnpaved)
-            .putBoolean("pref_wear_os_transit", transitEnabled)
-            .putBoolean("pref_wear_os_biking", bikingEnabled)
-            .putBoolean("pref_wear_os_hiking", hikingEnabled)
-            .putBoolean("pref_wear_os_isolines", isolinesEnabled)
-            .apply()
-
-        // Sync backend implementation
-        if (backend != currentState.backend || standaloneMode != currentState.standaloneMode) {
-            WearCommandService.initBackend(this)
+    private fun handlePreferenceUpdates(dataMap: com.google.android.gms.wearable.DataMap) {
+        val updates = mutableListOf<SettingsSyncManager.SettingUpdate>()
+        for (key in dataMap.keySet()) {
+            if (key == "_trigger" || key == "protocolVersion") continue
+            val item = dataMap.getDataMap(key) ?: continue
+            val value = item.get<Any>("v") ?: continue
+            updates.add(SettingsSyncManager.SettingUpdate(key, value, item.getLong("t")))
         }
-
-        // Apply native settings immediately if initialized
-        val wearApp = applicationContext as WearApplication
-        if (wearApp.isFullyInitialized) {
-            try {
-                app.organicmaps.sdk.Framework.nativeSet3dMode(is3dEnabled, is3dBuildingsEnabled)
-                app.organicmaps.sdk.Framework.nativeSetAutoZoomEnabled(isAutoZoomEnabled)
-                app.organicmaps.sdk.Framework.nativeSetTransitSchemeEnabled(transitEnabled)
-                app.organicmaps.sdk.Framework.nativeSetCyclingLayerEnabled(bikingEnabled)
-                app.organicmaps.sdk.Framework.nativeSetHikingLayerEnabled(hikingEnabled)
-                app.organicmaps.sdk.Framework.nativeSetIsolinesLayerEnabled(isolinesEnabled)
-                
-                if (avoidTolls) RoutingOptions.addOption(RoadType.Toll) else RoutingOptions.removeOption(RoadType.Toll)
-                if (avoidMotorways) RoutingOptions.addOption(RoadType.Motorway) else RoutingOptions.removeOption(RoadType.Motorway)
-                if (avoidFerries) RoutingOptions.addOption(RoadType.Ferry) else RoutingOptions.removeOption(RoadType.Ferry)
-                if (avoidUnpaved) RoutingOptions.addOption(RoadType.Dirty) else RoutingOptions.removeOption(RoadType.Dirty)
-            } catch (_: Throwable) {}
-        }
-
-        NavigationStateHolder.update(currentState.copy(
-            mapEnabled = finalMapEnabled,
-            watchLocalMode = finalOfflineState,
-            standaloneMode = standaloneMode,
-            autoDownloadRouteMaps = autoDownload,
-            mapDownloadMode = mapDownloadMode,
-            backend = backend,
-            poiCategoriesMask = poiMask,
-            locationSource = locationSource ?: "AUTO",
-            measurementUnits = mUnits,
-            mapStyle = mapStyle,
-            is3dEnabled = is3dEnabled,
-            is3dBuildingsEnabled = is3dBuildingsEnabled,
-            isAutoZoomEnabled = isAutoZoomEnabled,
-            transitEnabled = transitEnabled,
-            bikingEnabled = bikingEnabled,
-            hikingEnabled = hikingEnabled,
-            isolinesEnabled = isolinesEnabled,
-            avoidTolls = avoidTolls,
-            avoidMotorways = avoidMotorways,
-            avoidFerries = avoidFerries,
-            avoidUnpaved = avoidUnpaved,
-            lastSettingsInteractionTime = timestamp
-        ))
-        Log.d(TAG, "Preferences updated: mapEnabled=$finalMapEnabled, watchLocal=$watchLocalMode, backend=$backend")
+        SettingsSyncManager.applyRemoteUpdates(this, updates)
     }
 
     private fun launchOmaps() {

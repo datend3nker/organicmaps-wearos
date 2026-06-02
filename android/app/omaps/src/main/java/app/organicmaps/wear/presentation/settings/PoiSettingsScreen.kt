@@ -47,9 +47,9 @@ fun PoiSettingsScreen(onBack: () -> Unit) {
     val updateMask: (Int, Boolean) -> Unit = { bit, checked ->
         val newMask = if (checked) mask or bit else mask and bit.inv()
         mask = newMask
-        prefs.edit().putInt("poiCategoriesMask", newMask).apply()
-        NavigationStateHolder.update(navState.copy(poiCategoriesMask = newMask))
-        WearCommandService.syncPreferences(context)
+        prefs.edit().putInt("poiCategoriesMask", newMask).commit()
+        NavigationStateHolder.updateSettings { it.copy(poiCategoriesMask = newMask) }
+        app.organicmaps.wear.WearCommandService.syncPreferences(context)
     }
 
     ScalingLazyColumn(
@@ -73,9 +73,9 @@ fun PoiSettingsScreen(onBack: () -> Unit) {
                 onCheckedChange = { checked ->
                     val newMask = if (checked) allMask else 0
                     mask = newMask
-                    prefs.edit().putInt("poiCategoriesMask", newMask).apply()
-                    NavigationStateHolder.update(navState.copy(poiCategoriesMask = newMask))
-                    WearCommandService.syncPreferences(context)
+                    prefs.edit().putInt("poiCategoriesMask", newMask).commit()
+                    NavigationStateHolder.updateSettings { it.copy(poiCategoriesMask = newMask) }
+                    app.organicmaps.wear.WearCommandService.syncPreferences(context)
                 },
                 label = { Text("All POIs") },
                 toggleControl = { Checkbox(checked = isAllChecked) },

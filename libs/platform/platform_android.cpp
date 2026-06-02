@@ -107,9 +107,17 @@ std::unique_ptr<ModelReader> Platform::GetReader(std::string const & file, std::
     }
 
     case 'f':
+    {
+      std::string name = file;
+      base::GetNameFromFullPath(name);
+      std::string virtualPath = wear::GetVirtualMwmPath(name);
+      if (!virtualPath.empty() && virtualPath == file)
+        return std::make_unique<VirtualModelReader>(name, virtualPath);
+
       if (IsFileExistsByFullPath(file))
         return make_unique<FileReader>(file, logPageSize, logPageCount);
       break;
+    }
 
     case 'r':
       ASSERT_EQUAL(file.find("assets/"), std::string::npos, ());

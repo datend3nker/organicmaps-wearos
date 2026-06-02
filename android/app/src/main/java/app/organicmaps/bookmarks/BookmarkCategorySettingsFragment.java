@@ -117,7 +117,11 @@ public class BookmarkCategorySettingsFragment extends BaseMwmToolbarFragment
       return;
 
     if (isCategoryNameChanged())
+    {
+      String oldName = mCategory.getName();
       mCategory.setName(newCategoryName);
+      app.organicmaps.wear.WearSyncService.renameBookmarkCategory(requireContext(), oldName, newCategoryName);
+    }
 
     if (isCategoryDescChanged())
       mCategory.setDescription(getEditableCategoryDesc());

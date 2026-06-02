@@ -114,7 +114,9 @@ data class BookmarkCategoryItem(
     val isVisible: Boolean,
     val bookmarksCount: Int,
     val tracksCount: Int,
-    val isSyncing: Boolean = false
+    val isSyncing: Boolean = false,
+    val remoteId: Long = 0L,
+    val lastModified: Long = 0L
 )
 
 object NavigationStateHolder {
@@ -196,6 +198,16 @@ object NavigationStateHolder {
 
     fun update(updater: (NavigationState) -> NavigationState) {
         update(updater(_state.value))
+    }
+
+    fun updateSettings(updater: (NavigationState) -> NavigationState) {
+        val now = System.currentTimeMillis()
+        update(updater(_state.value).copy(lastSettingsInteractionTime = now))
+    }
+
+    fun updateSetting(context: Context, key: String, value: Any, updater: (NavigationState) -> NavigationState) {
+        SettingsSyncManager.onSettingChanged(context, key, value, true)
+        updateSettings(updater)
     }
 
     fun updateTimestamp(timestamp: Long) {

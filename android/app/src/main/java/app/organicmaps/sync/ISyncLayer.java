@@ -13,8 +13,11 @@ import app.organicmaps.sdk.search.SearchResult;
  * Supports different transport layers (GMS Wearable, Bluetooth RFCOMM, etc.).
  */
 public interface ISyncLayer {
+    byte PROTOCOL_VERSION = 1;
+
     void syncPreferences(@NonNull Context context);
-    void updateNavigation(@NonNull Context context, @NonNull RoutingInfo info, @Nullable Location location);
+    void syncPreferenceUpdates(@NonNull Context context, @NonNull List<app.organicmaps.wear.SettingsSyncManager.SettingUpdate> updates);
+    void updateNavigation(@NonNull Context context, @Nullable RoutingInfo info, @Nullable Location location);
     void startNavigation(@NonNull Context context);
     void stopNavigation(@NonNull Context context);
     void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results, boolean isSearching);
@@ -25,15 +28,19 @@ public interface ISyncLayer {
     void sendMapChunk(@NonNull Context context, @NonNull String mapId, byte[] chunk, boolean isLast);
     void sendPong(@NonNull Context context, @NonNull String nodeId);
     void sendMapProgress(@NonNull Context context, @NonNull String countryId, int progress);
+    void sendRouteBuildProgress(@NonNull Context context, int progress);
     void sendMapNotFound(@NonNull Context context, @NonNull String mapId);
     void sendBackendSwitch(@NonNull Context context, @NonNull String newBackend);
     void sendTrackRecordingStatus(@NonNull Context context, boolean isRecording);
     void sendBookmarkCategories(@NonNull Context context, @NonNull List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories);
-    void sendBookmarkFile(@NonNull Context context, long catId, @NonNull String fileName, @NonNull byte[] data, boolean isLast);
+    void sendBookmarkFile(@NonNull Context context, @NonNull String categoryName, @NonNull byte[] data, boolean isLast);
+    void renameBookmarkCategory(@NonNull Context context, @NonNull String oldName, @NonNull String newName);
+    void deleteBookmarkCategory(@NonNull Context context, @NonNull String name);
     void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId, long requestId, @NonNull byte[] features);
     void sendMwmBytes(@NonNull Context context, @NonNull String mwmName, long offset, @NonNull byte[] data);
     void sendMwmMetadata(@NonNull Context context, @NonNull String mwmName, long totalSize);
     void streamMapFile(@NonNull Context context, @NonNull String nodeId, @NonNull String mapId, @NonNull java.io.File file);
+    void cancelStreaming(@NonNull String mapId);
     void checkConnection(@NonNull Context context, @NonNull ConnectionCallback callback);
     void launchWatchApp(@NonNull Context context);
 

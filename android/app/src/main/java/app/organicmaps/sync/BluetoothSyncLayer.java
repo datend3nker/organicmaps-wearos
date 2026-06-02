@@ -30,7 +30,7 @@ import app.organicmaps.sdk.routing.RoutingOptions;
 import app.organicmaps.sdk.settings.RoadType;
 import app.organicmaps.sdk.search.SearchRecents;
 import app.organicmaps.sdk.search.SearchResult;
-import app.organicmaps.util.GzipUtils;
+import app.organicmaps.sdk.util.GzipUtils;
 
 /**
  * OSS implementation of ISyncLayer using standard Bluetooth RFCOMM Sockets.
@@ -50,10 +50,14 @@ public class BluetoothSyncLayer implements ISyncLayer {
     private static final byte MSG_TYPE_BOOKMARKS = 9;
     private static final byte MSG_TYPE_COMMAND = 10;
     private static final byte MSG_TYPE_VIRTUAL_MWM_MOUNT = 15;
+    private static final byte MSG_TYPE_ROUTE_BUILD_PROGRESS = 16;
     private static final byte MSG_TYPE_MAP_CHUNK = 11;
     private static final byte MSG_TYPE_BOOKMARK_FILE = 12;
+    private static final byte MSG_TYPE_BOOKMARK_RENAME = 17;
+    private static final byte MSG_TYPE_BOOKMARK_DELETE = 18;
     private static final byte MSG_TYPE_VIRTUAL_MWM_REQUEST = 13;
     private static final byte MSG_TYPE_VIRTUAL_MWM_DATA = 14;
+    private static final byte MSG_TYPE_PREFERENCES_UPDATES = 19;
 
     private final ExecutorService mExecutor = Executors.newSingleThreadExecutor();
     private BluetoothSocket mActiveSocket = null;
@@ -64,7 +68,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
     private long mLastReceivedTime = 0;
     private long mLastPingSentTime = 0;
     private long mCurrentPingInterval = 15000; // 15 seconds
-    private static final long CONNECTION_TIMEOUT = 40000; // 40 seconds
+    private static final long CONNECTION_TIMEOUT = 120000; // 2 minutes (increased from 40s)
     private boolean mIsApplyingPreferences = false;
     private final android.os.Handler mHeartbeatHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable mHeartbeatRunnable = new Runnable() {
@@ -117,94 +121,98 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void syncPreferences(@NonNull Context context) {
-        Log.d(TAG, "DEBUG_BT: syncPreferences called");
-        android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
-        boolean standaloneMode = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), false);
-        boolean mapEnabled = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), false);
-        boolean watchLocalMode = standaloneMode || prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), false);
-        String mapDownloadMode = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), "PHONE_SYNC");
-        String backend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
-        boolean autoDownload = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_auto_download_route_maps), true);
-        int poiMask = prefs.getInt("poiCategoriesMask", 0x3F);
-
-        // Map-specific settings
-        boolean is3dEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_3d), true);
-        boolean is3dBuildingsEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_3d_buildings), true);
-        boolean isAutoZoomEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_auto_zoom), true);
-        int mUnits = Integer.parseInt(prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_munits), "0"));
-        String mapStyle = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_map_style), "default");
-
-        // Routing options
-        boolean avoidTolls = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_avoid_tolls), false);
-        boolean avoidMotorways = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_avoid_motorways), false);
-        boolean avoidFerries = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_avoid_ferries), false);
-        boolean avoidUnpaved = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_avoid_unpaved), false);
-        boolean syncNotificationsEnabled = prefs.getBoolean("pref_sync_notifications", true);
-
-        boolean transitEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_transit), false);
-        boolean bikingEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_biking), false);
-        boolean hikingEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_hiking), false);
-        boolean isolinesEnabled = prefs.getBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_isolines), false);
+        if (mIsApplyingPreferences) return;
         
-        boolean isTrackRecording = false;
-        long recordingStartTime = 0;
-        if (isFrameworkReady()) {
-            try {
-                isTrackRecording = app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled();
-                recordingStartTime = app.organicmaps.location.TrackRecordingService.getRecordingStartTime();
-            } catch (Throwable ignored) {}
+        List<app.organicmaps.wear.SettingsSyncManager.SettingUpdate> all = 
+            app.organicmaps.wear.SettingsSyncManager.getInstance(context).getAllSettings();
+
+        Log.d(TAG, "DEBUG_BT_PIPELINE: syncPreferences (Full Sync) - Items: " + all.size());
+
+        // BUFFER Format: [4:count] { [4:keyLen][key][1:type][4:valLen][val][8:timestamp] }
+        int totalSize = 4;
+        List<byte[]> keyBytesList = new ArrayList<>();
+        List<byte[]> valBytesList = new ArrayList<>();
+        
+        for (app.organicmaps.wear.SettingsSyncManager.SettingUpdate update : all) {
+            byte[] kb = update.key.getBytes(StandardCharsets.UTF_8);
+            keyBytesList.add(kb);
+            byte[] vb = serializeValue(update.value);
+            valBytesList.add(vb);
+            totalSize += 4 + kb.length + 1 + 4 + vb.length + 8;
+        }
+
+        Log.d(TAG, "DEBUG_BT_PIPELINE: syncPreferences - Calculated Buffer Size: " + totalSize + " bytes");
+        ByteBuffer buffer = ByteBuffer.allocate(totalSize);
+        buffer.putInt(all.size());
+        for (int i = 0; i < all.size(); i++) {
+            app.organicmaps.wear.SettingsSyncManager.SettingUpdate update = all.get(i);
+            byte[] kb = keyBytesList.get(i);
+            byte[] vb = valBytesList.get(i);
+            
+            buffer.putInt(kb.length);
+            buffer.put(kb);
+            buffer.put(getValueType(update.value));
+            buffer.putInt(vb.length);
+            buffer.put(vb);
+            buffer.putLong(update.timestamp);
         }
         
-        String locationSource = prefs.getString("locationSource", "AUTO");
-
-        byte[] modeBytes = mapDownloadMode.getBytes(StandardCharsets.UTF_8);
-        byte[] backendBytes = backend.getBytes(StandardCharsets.UTF_8);
-        byte[] styleBytes = mapStyle.getBytes(StandardCharsets.UTF_8);
-        byte[] locSrcBytes = locationSource.getBytes(StandardCharsets.UTF_8);
-
-        // BUFFER Format: [1:mapEnabled][1:watchLocal][1:standalone][1:autoDownload][4:modeLen][mode][4:backendLen][backend][4:poiMask][1:3d][1:3dBld][1:autoZoom][4:mUnits][4:styleLen][style][1:toll][1:mtw][1:ferry][1:dirty][1:syncNotif][1:transit][1:biking][1:hiking][1:isolines][1:recording][4:locSrcLen][locSrc][8:startTime][8:timestamp]
-        ByteBuffer buffer = ByteBuffer.allocate(57 + modeBytes.length + backendBytes.length + styleBytes.length + locSrcBytes.length);
-        buffer.put((byte) (mapEnabled ? 1 : 0));
-        buffer.put((byte) (watchLocalMode ? 1 : 0));
-        buffer.put((byte) (standaloneMode ? 1 : 0));
-        buffer.put((byte) (autoDownload ? 1 : 0));
-        buffer.putInt(modeBytes.length);
-        buffer.put(modeBytes);
-        buffer.putInt(backendBytes.length);
-        buffer.put(backendBytes);
-        buffer.putInt(poiMask);
-        
-        buffer.put((byte) (is3dEnabled ? 1 : 0));
-        buffer.put((byte) (is3dBuildingsEnabled ? 1 : 0));
-        buffer.put((byte) (isAutoZoomEnabled ? 1 : 0));
-        buffer.putInt(mUnits);
-        buffer.putInt(styleBytes.length);
-        buffer.put(styleBytes);
-
-        buffer.put((byte) (avoidTolls ? 1 : 0));
-        buffer.put((byte) (avoidMotorways ? 1 : 0));
-        buffer.put((byte) (avoidFerries ? 1 : 0));
-        buffer.put((byte) (avoidUnpaved ? 1 : 0));
-        buffer.put((byte) (syncNotificationsEnabled ? 1 : 0));
-
-        buffer.put((byte) (transitEnabled ? 1 : 0));
-        buffer.put((byte) (bikingEnabled ? 1 : 0));
-        buffer.put((byte) (hikingEnabled ? 1 : 0));
-        buffer.put((byte) (isolinesEnabled ? 1 : 0));
-        buffer.put((byte) (isTrackRecording ? 1 : 0));
-        
-        buffer.putInt(locSrcBytes.length);
-        buffer.put(locSrcBytes);
-        
-        buffer.putLong(recordingStartTime);
-
-        long timestamp = System.currentTimeMillis();
-        buffer.putLong(timestamp);
-        
-        // Update local timestamp to prevent ignoring our own fresh state if watch sends an old one later
-        prefs.edit().putLong("pref_wear_os_last_sync_timestamp", timestamp).apply();
-
         sendRawMessage(context, MSG_TYPE_PREFERENCES, buffer.array());
+        app.organicmaps.wear.SettingsSyncManager.getInstance(context).markAsSynced(all);
+    }
+
+    @Override
+    public void syncPreferenceUpdates(@NonNull Context context, @NonNull List<app.organicmaps.wear.SettingsSyncManager.SettingUpdate> updates) {
+        if (mIsApplyingPreferences || updates.isEmpty()) return;
+        Log.d(TAG, "DEBUG_BT_PIPELINE: syncPreferenceUpdates (Buffered) - Items: " + updates.size());
+
+        int totalSize = 4;
+        List<byte[]> keyBytesList = new ArrayList<>();
+        List<byte[]> valBytesList = new ArrayList<>();
+        
+        for (app.organicmaps.wear.SettingsSyncManager.SettingUpdate update : updates) {
+            byte[] kb = update.key.getBytes(StandardCharsets.UTF_8);
+            keyBytesList.add(kb);
+            byte[] vb = serializeValue(update.value);
+            valBytesList.add(vb);
+            totalSize += 4 + kb.length + 1 + 4 + vb.length + 8;
+        }
+
+        Log.d(TAG, "DEBUG_BT_PIPELINE: syncPreferenceUpdates - Calculated Buffer Size: " + totalSize + " bytes");
+        ByteBuffer buffer = ByteBuffer.allocate(totalSize);
+        buffer.putInt(updates.size());
+        for (int i = 0; i < updates.size(); i++) {
+            app.organicmaps.wear.SettingsSyncManager.SettingUpdate update = updates.get(i);
+            Log.d(TAG, "DEBUG_BT_PIPELINE: Buffering setting for transmission: " + update.key + " = " + update.value);
+            byte[] kb = keyBytesList.get(i);
+            byte[] vb = valBytesList.get(i);
+            
+            buffer.putInt(kb.length);
+            buffer.put(kb);
+            buffer.put(getValueType(update.value));
+            buffer.putInt(vb.length);
+            buffer.put(vb);
+            buffer.putLong(update.timestamp);
+        }
+        
+        sendRawMessage(context, MSG_TYPE_PREFERENCES_UPDATES, buffer.array());
+        app.organicmaps.wear.SettingsSyncManager.getInstance(context).markAsSynced(updates);
+    }
+
+    private byte getValueType(Object v) {
+        if (v instanceof Boolean) return 1;
+        if (v instanceof String) return 2;
+        if (v instanceof Integer) return 3;
+        if (v instanceof Long) return 4;
+        return 0;
+    }
+
+    private byte[] serializeValue(Object v) {
+        if (v instanceof Boolean) return new byte[]{(byte)((Boolean)v ? 1 : 0)};
+        if (v instanceof String) return ((String)v).getBytes(StandardCharsets.UTF_8);
+        if (v instanceof Integer) return ByteBuffer.allocate(4).putInt((Integer)v).array();
+        if (v instanceof Long) return ByteBuffer.allocate(8).putLong((Long)v).array();
+        return new byte[0];
     }
 
     @Override
@@ -298,6 +306,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
     @Override
     public void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results, boolean isSearching) {
         int count = Math.min(results.length, 15);
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendSearchResults - Results: " + results.length + " (sending " + count + "), isSearching: " + isSearching);
         int calcTotalSize = 1; // isSearching
         List<byte[]> nameBytesList = new ArrayList<>();
         List<byte[]> descBytesList = new ArrayList<>();
@@ -334,6 +343,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
             calcTotalSize += 4 + nb.length + 4 + db.length + 8 + 8 + 4 + distB.length + 4 + fb.length;
         }
         
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendSearchResults - Buffer size: " + calcTotalSize);
         ByteBuffer buffer = ByteBuffer.allocate(calcTotalSize);
         buffer.put((byte) (isSearching ? 1 : 0));
         for (int i = 0; i < count; i++) {
@@ -361,6 +371,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void sendSearchState(@NonNull Context context, boolean isSearching) {
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendSearchState: " + isSearching);
         ByteBuffer buffer = ByteBuffer.allocate(1);
         buffer.put((byte) (isSearching ? 1 : 0));
         sendRawMessage(context, MSG_TYPE_SEARCH_RESULTS, buffer.array());
@@ -370,6 +381,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
     public void sendSearchHistory(@NonNull Context context) {
         SearchRecents.refresh();
         int count = Math.min(SearchRecents.getSize(), 5);
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendSearchHistory - Items: " + count);
         int totalSize = 4;
         List<byte[]> historyBytes = new ArrayList<>();
         for (int i = 0; i < count; i++) {
@@ -401,9 +413,12 @@ public class BluetoothSyncLayer implements ISyncLayer {
                 try {
                     dataToSend = GzipUtils.compress(features);
                     compressed = true;
+                    Log.d(TAG, "DEBUG_BT_PIPELINE: sendMapTileResponse compressed: " + features.length + " -> " + dataToSend.length);
                 } catch (IOException e) {
                     Log.w(TAG, "Compression failed, sending raw");
                 }
+            } else {
+                Log.d(TAG, "DEBUG_BT_PIPELINE: sendMapTileResponse raw: " + features.length);
             }
 
             ByteBuffer buffer = ByteBuffer.allocate(8 + 1 + dataToSend.length);
@@ -416,6 +431,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void sendMapChunk(@NonNull Context context, @NonNull String mapId, byte[] chunk, boolean isLast) {
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendMapChunk for " + mapId + " size=" + chunk.length + " isLast=" + isLast);
         byte[] mapIdBytes = mapId.getBytes(StandardCharsets.UTF_8);
         ByteBuffer buffer = ByteBuffer.allocate(4 + mapIdBytes.length + 1 + chunk.length);
         buffer.putInt(mapIdBytes.length);
@@ -427,17 +443,34 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void sendMwmBytes(@NonNull Context context, @NonNull String mwmName, long offset, @NonNull byte[] data) {
+        byte[] dataToSend = data;
+        boolean compressed = false;
+        
+        if (data.length > 512) {
+            try {
+                dataToSend = GzipUtils.compress(data);
+                compressed = true;
+                Log.d(TAG, "DEBUG_BT_PIPELINE: sendMwmBytes compressed: " + data.length + " -> " + dataToSend.length);
+            } catch (IOException e) {
+                Log.w(TAG, "Compression failed for MwmBytes, sending raw");
+            }
+        } else {
+            Log.d(TAG, "DEBUG_BT_PIPELINE: sendMwmBytes raw: " + data.length);
+        }
+
         byte[] nameBytes = mwmName.getBytes(StandardCharsets.UTF_8);
-        ByteBuffer buffer = ByteBuffer.allocate(4 + nameBytes.length + 8 + data.length);
+        ByteBuffer buffer = ByteBuffer.allocate(4 + nameBytes.length + 8 + 1 + dataToSend.length);
         buffer.putInt(nameBytes.length);
         buffer.put(nameBytes);
         buffer.putLong(offset);
-        buffer.put(data);
+        buffer.put((byte) (compressed ? 1 : 0));
+        buffer.put(dataToSend);
         sendRawMessage(context, MSG_TYPE_VIRTUAL_MWM_DATA, buffer.array());
     }
 
     @Override
     public void sendMwmMetadata(@NonNull Context context, @NonNull String mwmName, long totalSize) {
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendMwmMetadata for " + mwmName + " size=" + totalSize);
         byte[] nameBytes = mwmName.getBytes(StandardCharsets.UTF_8);
         ByteBuffer buffer = ByteBuffer.allocate(4 + nameBytes.length + 8);
         buffer.putInt(nameBytes.length);
@@ -471,7 +504,15 @@ public class BluetoothSyncLayer implements ISyncLayer {
         buffer.putInt(progress);
         
         // MSG_TYPE 7 for progress
-        sendRawMessage(context, (byte) 7, buffer.array());
+        sendRawMessage(context, MSG_TYPE_MAP_PROGRESS, buffer.array());
+    }
+
+    @Override
+    public void sendRouteBuildProgress(@NonNull Context context, int progress) {
+        Log.d(TAG, "sendRouteBuildProgress: " + progress + "%");
+        ByteBuffer buffer = ByteBuffer.allocate(4);
+        buffer.putInt(progress);
+        sendRawMessage(context, MSG_TYPE_ROUTE_BUILD_PROGRESS, buffer.array());
     }
 
     @Override
@@ -496,20 +537,23 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void sendBookmarkCategories(@NonNull Context context, @NonNull List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories) {
+        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE);
         int count = Math.min(categories.size(), 20);
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendBookmarkCategories - Count: " + categories.size() + " (sending " + count + ")");
         int totalSize = 4;
         List<byte[]> nameBytesList = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat = categories.get(i);
             byte[] nb = cat.getName().getBytes(StandardCharsets.UTF_8);
             nameBytesList.add(nb);
-            totalSize += 8 + 4 + nb.length + 1 + 4 + 4; // id(8) + nameLen(4) + name + visible(1) + bmkCount(4) + trkCount(4)
+            totalSize += 8 + 4 + nb.length + 1 + 4 + 4 + 8; // id(8) + nameLen(4) + name + visible(1) + bmkCount(4) + trkCount(4) + ts(8)
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(totalSize);
         buffer.putInt(count);
         for (int i = 0; i < count; i++) {
             app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat = categories.get(i);
+            Log.d(TAG, "DEBUG_BT_PIPELINE: Buffering bookmark category for transmission: " + cat.getName() + " (ID: " + cat.getId() + ")");
             byte[] nb = nameBytesList.get(i);
             buffer.putLong(cat.getId());
             buffer.putInt(nb.length);
@@ -517,20 +561,51 @@ public class BluetoothSyncLayer implements ISyncLayer {
             buffer.put((byte) (cat.isVisible() ? 1 : 0));
             buffer.putInt(cat.getBookmarksCount());
             buffer.putInt(cat.getTracksCount());
+            buffer.putLong(syncPrefs.getLong(cat.getName(), 0));
         }
         sendRawMessage(context, MSG_TYPE_BOOKMARKS, buffer.array());
     }
 
     @Override
-    public void sendBookmarkFile(@NonNull Context context, long catId, @NonNull String fileName, @NonNull byte[] data, boolean isLast) {
-        byte[] fileNameBytes = fileName.getBytes(StandardCharsets.UTF_8);
-        ByteBuffer buffer = ByteBuffer.allocate(8 + 1 + 1 + fileNameBytes.length + data.length);
-        buffer.putLong(catId);
+    public void sendBookmarkFile(@NonNull Context context, @NonNull String categoryName, @NonNull byte[] data, boolean isLast) {
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendBookmarkFile for " + categoryName + " size=" + data.length + " isLast=" + isLast);
+        byte[] nameBytes = categoryName.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocate(1 + 4 + nameBytes.length + data.length);
         buffer.put((byte) (isLast ? 1 : 0));
-        buffer.put((byte) fileNameBytes.length);
-        buffer.put(fileNameBytes);
+        buffer.putInt(nameBytes.length);
+        buffer.put(nameBytes);
         buffer.put(data);
         sendRawMessage(context, MSG_TYPE_BOOKMARK_FILE, buffer.array());
+        
+        if (isLast) {
+            context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
+                   .edit().putLong(categoryName, System.currentTimeMillis()).apply();
+        }
+    }
+
+    @Override
+    public void renameBookmarkCategory(@NonNull Context context, @NonNull String oldName, @NonNull String newName) {
+        Log.d(TAG, "DEBUG_BT_PIPELINE: renameBookmarkCategory: " + oldName + " -> " + newName);
+        byte[] oldBytes = oldName.getBytes(StandardCharsets.UTF_8);
+        byte[] newBytes = newName.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocate(4 + oldBytes.length + 4 + newBytes.length);
+        buffer.putInt(oldBytes.length);
+        buffer.put(oldBytes);
+        buffer.putInt(newBytes.length);
+        buffer.put(newBytes);
+        sendRawMessage(context, MSG_TYPE_BOOKMARK_RENAME, buffer.array());
+        
+        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE);
+        long ts = syncPrefs.getLong(oldName, 0);
+        syncPrefs.edit().remove(oldName).putLong(newName, ts > 0 ? ts : System.currentTimeMillis()).apply();
+    }
+
+    @Override
+    public void deleteBookmarkCategory(@NonNull Context context, @NonNull String name) {
+        Log.d(TAG, "DEBUG_BT_PIPELINE: deleteBookmarkCategory: " + name);
+        sendRawMessage(context, MSG_TYPE_BOOKMARK_DELETE, name.getBytes(StandardCharsets.UTF_8));
+        context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
+               .edit().remove(name).apply();
     }
 
     @Override
@@ -549,7 +624,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
     @Override
     public void streamMapFile(@NonNull Context context, @NonNull String nodeId, @NonNull String mapId, @NonNull java.io.File file) {
         Thread thread = new Thread(() -> {
-            Log.d(TAG, "Starting Bluetooth map stream thread for " + mapId);
+            Log.d(TAG, "DEBUG_BT_PIPELINE: Starting map stream thread for " + mapId + " (File size: " + file.length() + ")");
             long totalBytes = file.length();
             try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
                 byte[] buffer = new byte[32 * 1024]; 
@@ -557,11 +632,11 @@ public class BluetoothSyncLayer implements ISyncLayer {
                 long totalSent = 0;
                 int lastReportedProgress = -1;
 
-                app.organicmaps.wear.WearServantNotificationManager.showServingNotification(context, mapId, 0);
+                app.organicmaps.wear.WearCompanionNotificationManager.showServingNotification(context, mapId, 0);
 
                 while ((bytesRead = fis.read(buffer)) != -1) {
                     if (Thread.interrupted()) {
-                        Log.d(TAG, "Bluetooth streaming for " + mapId + " was cancelled");
+                        Log.d(TAG, "DEBUG_BT_PIPELINE: Streaming for " + mapId + " was CANCELLED");
                         return;
                     }
                     byte[] chunk = bytesRead == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, bytesRead);
@@ -573,27 +648,31 @@ public class BluetoothSyncLayer implements ISyncLayer {
                     int progress = (int) (totalSent * 100 / totalBytes);
                     if (progress > lastReportedProgress) {
                         lastReportedProgress = progress;
-                        app.organicmaps.wear.WearServantNotificationManager.showServingNotification(context, mapId, progress);
+                        if (progress % 5 == 0) {
+                            Log.d(TAG, "DEBUG_BT_PIPELINE: Streaming " + mapId + " progress: " + progress + "% (" + totalSent + "/" + totalBytes + ")");
+                        }
+                        app.organicmaps.wear.WearCompanionNotificationManager.showServingNotification(context, mapId, progress);
                         app.organicmaps.wear.WearSyncService.sendMapProgress(context, mapId, progress);
                     }
                     
                     try { Thread.sleep(10); } catch (InterruptedException e) {
-                        Log.d(TAG, "Bluetooth streaming for " + mapId + " was interrupted during sleep");
+                        Log.d(TAG, "DEBUG_BT_PIPELINE: Streaming for " + mapId + " was INTERRUPTED");
                         return;
                     }
                 }
-                Log.d(TAG, "Finished Bluetooth streaming " + mapId);
+                Log.d(TAG, "DEBUG_BT_PIPELINE: Finished streaming " + mapId + " successfully.");
             } catch (java.io.IOException e) {
-                Log.e(TAG, "Error streaming map via Bluetooth " + mapId, e);
+                Log.e(TAG, "DEBUG_BT_PIPELINE: Error streaming map " + mapId + ": " + e.getMessage());
             } finally {
                 mStreamingThreads.remove(mapId);
-                app.organicmaps.wear.WearServantNotificationManager.hideNotification(context);
+                app.organicmaps.wear.WearCompanionNotificationManager.hideNotification(context, app.organicmaps.wear.WearCompanionNotificationManager.NOTIFICATION_ID_MAP_SYNC);
             }
         });
         mStreamingThreads.put(mapId, thread);
         thread.start();
     }
 
+    @Override
     public void cancelStreaming(@NonNull String mapId) {
         Thread t = mStreamingThreads.remove(mapId);
         if (t != null) {
@@ -617,154 +696,56 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void parsePreferences(@NonNull Context context, @NonNull byte[] data, @NonNull android.content.SharedPreferences prefs) {
+        List<app.organicmaps.wear.SettingsSyncManager.SettingUpdate> updates = parseUpdates(data);
+        if (!updates.isEmpty()) {
+            mIsApplyingPreferences = true;
+            try {
+                if (app.organicmaps.wear.SettingsSyncManager.getInstance(context).applyRemoteUpdates(updates)) {
+                    // Re-initialize sync layer if backend changed, and notify UI
+                    app.organicmaps.wear.WearSyncService.initSyncLayer(context);
+                    context.sendBroadcast(new android.content.Intent("app.organicmaps.wear.SETTINGS_CHANGED"));
+                }
+            } finally {
+                mIsApplyingPreferences = false;
+            }
+        }
+    }
+
+    private List<app.organicmaps.wear.SettingsSyncManager.SettingUpdate> parseUpdates(byte[] data) {
+        List<app.organicmaps.wear.SettingsSyncManager.SettingUpdate> updates = new ArrayList<>();
         ByteBuffer buffer = ByteBuffer.wrap(data);
-        if (buffer.remaining() < 4) return;
-        
-        boolean mapEnabled = buffer.get() == 1;
-        boolean watchLocalMode = buffer.get() == 1;
-        boolean standaloneMode = buffer.get() == 1;
-        boolean autoDownloadRouteMaps = buffer.get() == 1;
-
-        String mapDownloadMode = "PHONE_SYNC";
-        if (buffer.remaining() >= 4) {
-            int len = buffer.getInt();
-            if (len > 0 && buffer.remaining() >= len) {
-                byte[] b = new byte[len];
-                buffer.get(b);
-                mapDownloadMode = new String(b, StandardCharsets.UTF_8);
-            }
+        if (buffer.remaining() < 4) return updates;
+        int count = buffer.getInt();
+        for (int i = 0; i < count; i++) {
+            if (buffer.remaining() < 4) break;
+            int keyLen = buffer.getInt();
+            if (buffer.remaining() < keyLen) break;
+            byte[] kb = new byte[keyLen];
+            buffer.get(kb);
+            String key = new String(kb, StandardCharsets.UTF_8);
+            if (buffer.remaining() < 5) break;
+            byte type = buffer.get();
+            int valLen = buffer.getInt();
+            if (buffer.remaining() < valLen + 8) break;
+            byte[] vb = new byte[valLen];
+            buffer.get(vb);
+            Object value = deserializeValue(type, vb);
+            long ts = buffer.getLong();
+            if (value != null) updates.add(new app.organicmaps.wear.SettingsSyncManager.SettingUpdate(key, value, ts));
         }
+        return updates;
+    }
 
-        String backend = "GMS";
-        if (buffer.remaining() >= 4) {
-            int len = buffer.getInt();
-            if (len > 0 && buffer.remaining() >= len) {
-                byte[] b = new byte[len];
-                buffer.get(b);
-                backend = new String(b, StandardCharsets.UTF_8);
-            }
-        }
-        
-        int poiMask = 0x3F;
-        if (buffer.remaining() >= 4) {
-            poiMask = buffer.getInt();
-        }
-
-        boolean is3dEnabled = true;
-        boolean is3dBuildingsEnabled = true;
-        boolean isAutoZoomEnabled = true;
-        if (buffer.remaining() >= 3) {
-            is3dEnabled = buffer.get() == 1;
-            is3dBuildingsEnabled = buffer.get() == 1;
-            isAutoZoomEnabled = buffer.get() == 1;
-        }
-
-        int measurementUnits = 0;
-        if (buffer.remaining() >= 4) {
-            measurementUnits = buffer.getInt();
-        }
-
-        String mapStyle = "default";
-        if (buffer.remaining() >= 4) {
-            int len = buffer.getInt();
-            if (len > 0 && buffer.remaining() >= len) {
-                byte[] b = new byte[len];
-                buffer.get(b);
-                mapStyle = new String(b, StandardCharsets.UTF_8);
-            }
-        }
-
-        boolean avoidTolls = false;
-        boolean avoidMotorways = false;
-        boolean avoidFerries = false;
-        boolean avoidUnpaved = false;
-        boolean syncNotificationsEnabled = true;
-        if (buffer.remaining() >= 5) {
-            avoidTolls = buffer.get() == 1;
-            avoidMotorways = buffer.get() == 1;
-            avoidFerries = buffer.get() == 1;
-            avoidUnpaved = buffer.get() == 1;
-            syncNotificationsEnabled = buffer.get() == 1;
-        } else if (buffer.remaining() >= 4) {
-            avoidTolls = buffer.get() == 1;
-            avoidMotorways = buffer.get() == 1;
-            avoidFerries = buffer.get() == 1;
-            avoidUnpaved = buffer.get() == 1;
-        }
-
-        boolean transitEnabled = false;
-        boolean bikingEnabled = false;
-        boolean hikingEnabled = false;
-        boolean isolinesEnabled = false;
-        if (buffer.remaining() >= 4) {
-            transitEnabled = buffer.get() == 1;
-            bikingEnabled = buffer.get() == 1;
-            hikingEnabled = buffer.get() == 1;
-            isolinesEnabled = buffer.get() == 1;
-        }
-
-        boolean isTrackRecording = false;
-        if (buffer.remaining() >= 1) {
-            isTrackRecording = buffer.get() == 1;
-        }
-        
-        String locationSource = "AUTO";
-        if (buffer.remaining() >= 4) {
-            int len = buffer.getInt();
-            if (len > 0 && buffer.remaining() >= len) {
-                byte[] b = new byte[len];
-                buffer.get(b);
-                locationSource = new String(b, StandardCharsets.UTF_8);
-            }
-        }
-
-        long recordingStartTime = 0;
-        if (buffer.remaining() >= 8) {
-            recordingStartTime = buffer.getLong();
-        }
-
-        long timestamp = 0;
-        if (buffer.remaining() >= 8) {
-            timestamp = buffer.getLong();
-        }
-
-        long lastApplied = prefs.getLong("pref_wear_os_last_sync_timestamp", 0);
-        if (timestamp > 0 && timestamp < lastApplied) return;
-
-        mIsApplyingPreferences = true;
+    private Object deserializeValue(byte type, byte[] b) {
         try {
-            prefs.edit()
-                .putLong("pref_wear_os_last_sync_timestamp", timestamp)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_map_enabled), mapEnabled)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_watch_local_mode), watchLocalMode)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_standalone_mode), standaloneMode)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_auto_download_route_maps), autoDownloadRouteMaps)
-                .putString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), backend)
-                .putString(context.getString(app.organicmaps.R.string.pref_wear_os_map_download_mode), mapDownloadMode)
-                .putInt("poiCategoriesMask", poiMask)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_3d), is3dEnabled)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_3d_buildings), is3dBuildingsEnabled)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_auto_zoom), isAutoZoomEnabled)
-                .putString(context.getString(app.organicmaps.R.string.pref_wear_os_munits), String.valueOf(measurementUnits))
-                .putString(context.getString(app.organicmaps.R.string.pref_wear_os_map_style), mapStyle)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_avoid_tolls), avoidTolls)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_avoid_motorways), avoidMotorways)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_avoid_ferries), avoidFerries)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_avoid_unpaved), avoidUnpaved)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_transit), transitEnabled)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_biking), bikingEnabled)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_hiking), hikingEnabled)
-                .putBoolean(context.getString(app.organicmaps.R.string.pref_wear_os_isolines), isolinesEnabled)
-                .putBoolean("pref_sync_notifications", syncNotificationsEnabled)
-                .putString("locationSource", locationSource)
-                .apply();
-            
-            // Re-initialize sync layer if backend changed, and notify UI
-            app.organicmaps.wear.WearSyncService.initSyncLayer(context);
-            context.sendBroadcast(new android.content.Intent("app.organicmaps.wear.SETTINGS_CHANGED"));
-        } finally {
-            mIsApplyingPreferences = false;
+            if (type == 1) return b[0] == 1;
+            if (type == 2) return new String(b, StandardCharsets.UTF_8);
+            if (type == 3) return ByteBuffer.wrap(b).getInt();
+            if (type == 4) return ByteBuffer.wrap(b).getLong();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to deserialize value of type " + type, e);
         }
+        return null;
     }
 
     @Override
@@ -789,21 +770,22 @@ public class BluetoothSyncLayer implements ISyncLayer {
                 socket = mActiveSocket;
             }
             if (socket == null || !socket.isConnected()) {
-                Log.w(TAG, "DEBUG_BT: Cannot send data (type=" + type + "), no active Bluetooth connection");
+                Log.w(TAG, "DEBUG_BT_PIPELINE: Cannot send (type=" + type + "), no active Bluetooth connection");
                 return;
             }
 
             try {
                 OutputStream out = socket.getOutputStream();
-                ByteBuffer header = ByteBuffer.allocate(5);
+                ByteBuffer header = ByteBuffer.allocate(6);
+                header.put(PROTOCOL_VERSION);
                 header.put(type);
                 header.putInt(payload.length);
                 out.write(header.array());
                 out.write(payload);
                 out.flush();
-                Log.d(TAG, "DEBUG_BT: Sent message type " + type + ", size " + payload.length);
+                Log.d(TAG, "DEBUG_BT_PIPELINE: Sent message version=" + PROTOCOL_VERSION + ", type=" + type + ", payload=" + payload.length + " bytes. Total=" + (payload.length + 6));
             } catch (IOException e) {
-                Log.e(TAG, "DEBUG_BT: Bluetooth send failed: " + e.getMessage());
+                Log.e(TAG, "DEBUG_BT_PIPELINE: Bluetooth send failed: " + e.getMessage());
                 closeSocket();
             }
         });
@@ -848,8 +830,8 @@ public class BluetoothSyncLayer implements ISyncLayer {
                             // Sync current state to newly connected watch
                             new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                                 if (isFrameworkReady()) {
-                                    Log.d(TAG, "DEBUG_BT: Framework ready, triggering initial sync");
-                                    syncPreferences(app.organicmaps.MwmApplication.sInstance);
+                                    Log.d(TAG, "DEBUG_BT: Watch connected, triggering sync");
+                                    app.organicmaps.wear.WearSyncService.onConnectionEstablished(app.organicmaps.MwmApplication.sInstance);
                                     sendBookmarkCategories(app.organicmaps.MwmApplication.sInstance, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
                                     sendSearchHistory(app.organicmaps.MwmApplication.sInstance);
                                 }
@@ -910,24 +892,39 @@ public class BluetoothSyncLayer implements ISyncLayer {
             try {
                 InputStream in = socket.getInputStream();
                 while (mIsServerRunning && socket.isConnected()) {
-                    byte[] header = new byte[5];
+                    byte[] header = new byte[6];
                     readFully(in, header);
                     
                     ByteBuffer hb = ByteBuffer.wrap(header);
+                    byte version = hb.get();
                     byte type = hb.get();
                     int len = hb.getInt();
 
+                    if (version != PROTOCOL_VERSION) {
+                        Log.e(TAG, "DEBUG_BT_PIPELINE: Protocol version mismatch: received=" + version + ", expected=" + PROTOCOL_VERSION);
+                        throw new IOException("Protocol version mismatch");
+                    }
+
+                    if (len < 0 || len > 15 * 1024 * 1024 || type < 0 || type > 20) {
+                        Log.e(TAG, "DEBUG_BT_PIPELINE: Invalid message header: type=" + type + ", len=" + len + ". Stream desync?");
+                        throw new IOException("Protocol desync");
+                    }
+
+                    Log.d(TAG, "DEBUG_BT_PIPELINE: Received message header: type=" + type + ", len=" + len);
                     byte[] payload = new byte[len];
                     readFully(in, payload);
+                    Log.d(TAG, "DEBUG_BT_PIPELINE: Received message payload: " + len + " bytes");
                     
                     if (type == MSG_TYPE_COMMAND || type == MSG_TYPE_VIRTUAL_MWM_REQUEST) {
                         handleIncomingCommand(payload);
+                    } else if (type == MSG_TYPE_PREFERENCES || type == MSG_TYPE_PREFERENCES_UPDATES) {
+                        notifyMessageReceived("/preferences/watch", payload, "bluetooth_watch");
                     } else if (type == MSG_TYPE_MAP_PROGRESS) {
                         notifyMessageReceived("/map/download/progress", payload, "bluetooth_watch");
                     }
                 }
             } catch (IOException e) {
-                Log.e(TAG, "Listen failed: " + e.getMessage());
+                Log.e(TAG, "DEBUG_BT_PIPELINE: Listen failed: " + e.getMessage());
                 synchronized (this) {
                     if (mActiveSocket == socket) mActiveSocket = null;
                 }

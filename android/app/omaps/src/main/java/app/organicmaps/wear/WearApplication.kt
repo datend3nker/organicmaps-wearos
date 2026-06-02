@@ -6,7 +6,6 @@ import android.content.Intent
 import android.util.Log
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
-import app.organicmaps.sdk.location.BaseLocationProvider
 import app.organicmaps.sdk.location.LocationProviderFactory
 import app.organicmaps.sdk.OrganicMaps
 import app.organicmaps.sdk.settings.StoragePathManager
@@ -38,6 +37,14 @@ class WearApplication : Application() {
 
     @Volatile
     var isInitializing = false
+
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+        if (key == null) return@OnSharedPreferenceChangeListener
+        if (SettingsSyncManager.isApplyingRemoteUpdates) return@OnSharedPreferenceChangeListener
+        
+        val value = prefs.all[key] ?: return@OnSharedPreferenceChangeListener
+        SettingsSyncManager.onSettingChanged(this, key, value, true)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -74,6 +81,9 @@ class WearApplication : Application() {
                         // Start appropriate communication backend AFTER init
                         WearCommandService.initBackend(this@WearApplication)
                         WearCommandService.syncPreferences(this@WearApplication)
+                        
+                        // Storage Maintenance: Prune old virtual maps
+                        VirtualMwmManager.prune(this@WearApplication)
 
                         val state = NavigationStateHolder.state.value
                         if (state.allowMobileData) {
@@ -81,7 +91,7 @@ class WearApplication : Application() {
                         }
                         app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
                         organicMaps.locationHelper.onExitFromFirstRun()
-                        Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
+                        ReloadWorldMapsDebouncer.reloadImmediate() // CRITICAL for standalone routing
 
                         // Apply native settings from state
                         Framework.nativeSet3dMode(state.is3dEnabled, state.is3dBuildingsEnabled)
@@ -111,7 +121,7 @@ class WearApplication : Application() {
                         }
                         app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
                         organicMaps.locationHelper.onExitFromFirstRun()
-                        Framework.nativeReloadWorldMaps() // CRITICAL for standalone routing
+                        ReloadWorldMapsDebouncer.reloadImmediate() // CRITICAL for standalone routing
 
                         // Apply native settings from state
                         Framework.nativeSet3dMode(state.is3dEnabled, state.is3dBuildingsEnabled)
@@ -137,9 +147,11 @@ class WearApplication : Application() {
 
         NavigationStateHolder.loadFromPrefs(this)
         
+        getSharedPreferences("wear_prefs", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(prefsListener)
+        
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
         val selectedBackend = prefs.getString("pref_wear_os_backend", "GMS")
-        if (BuildConfig.FLAVOR == "oss" || selectedBackend == "BLUETOOTH") {
+        if (selectedBackend == "BLUETOOTH") {
             startService(Intent(this, BluetoothWearDataListenerService::class.java))
         }
 
@@ -463,7 +475,7 @@ class WearApplication : Application() {
             
             // Critical for routing: native core needs registered maps
             if (isFullyInitialized) {
-                Framework.nativeReloadWorldMaps()
+                ReloadWorldMapsDebouncer.reloadImmediate()
             }
         } catch (e: Throwable) {
             Log.w("WearApplication", "Couldn't pre-copy resources to writable storage", e)

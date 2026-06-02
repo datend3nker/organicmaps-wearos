@@ -299,7 +299,9 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
 
   private void onDeleteActionSelected(@NonNull BookmarkCategory category)
   {
+    String name = category.getName();
     BookmarkManager.INSTANCE.deleteCategory(category.getId());
+    app.organicmaps.wear.WearSyncService.deleteBookmarkCategory(requireContext(), name);
     getAdapter().notifyDataSetChanged();
   }
 

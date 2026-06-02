@@ -27,22 +27,22 @@ fun BookmarksScreen(isVisible: Boolean) {
     val navState by NavigationStateHolder.state.collectAsState()
     val categories = navState.bookmarkCategories
     
-    var selectedCategoryId by remember { mutableStateOf<Long?>(null) }
+    var selectedCategoryName by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(isVisible) {
         if (isVisible) {
             WearCommandService.requestBookmarks(context)
         } else {
-            selectedCategoryId = null
+            selectedCategoryName = null
         }
     }
 
-    if (selectedCategoryId != null) {
-        val category = categories.find { it.id == selectedCategoryId }
+    if (selectedCategoryName != null) {
+        val category = categories.find { it.name == selectedCategoryName }
         if (category != null) {
-            BookmarkListScreen(category = category, onBack = { selectedCategoryId = null })
+            BookmarkListScreen(category = category, onBack = { selectedCategoryName = null })
         } else {
-            selectedCategoryId = null
+            selectedCategoryName = null
         }
         return
     }
@@ -77,10 +77,10 @@ fun BookmarksScreen(isVisible: Boolean) {
                 BookmarkCategoryChip(
                     category = category,
                     onClick = {
-                        selectedCategoryId = category.id
+                        selectedCategoryName = category.name
                     },
                     onToggleVisibility = {
-                        WearCommandService.toggleBookmarkCategory(context, category.id)
+                        WearCommandService.toggleBookmarkCategory(context, category.name)
                     }
                 )
             }
@@ -88,7 +88,7 @@ fun BookmarksScreen(isVisible: Boolean) {
                 val isAnySyncing = categories.any { it.isSyncing }
                 Chip(
                     onClick = {
-                        categories.forEach { WearCommandService.syncCategory(context, it.id) }
+                        categories.forEach { WearCommandService.syncCategory(context, it.name) }
                     },
                     label = { Text(if (isAnySyncing) "Syncing..." else "Sync all to Watch") },
                     icon = {
@@ -147,9 +147,9 @@ fun BookmarkCategoryChip(category: BookmarkCategoryItem, onClick: () -> Unit, on
 fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
     val context = LocalContext.current
     
-    val bookmarks = remember(category.id) {
+    val bookmarks = remember(category.name) {
         val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
-        val cat = manager.getCategoryById(category.id)
+        val cat = manager.getCategories().find { it.name.equals(category.name, ignoreCase = true) }
         if (cat != null) {
             val list = mutableListOf<app.organicmaps.sdk.bookmarks.data.BookmarkInfo>()
             for (i in 0 until cat.bookmarksCount) {
@@ -191,7 +191,7 @@ fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
             }
             item {
                 Chip(
-                    onClick = { WearCommandService.syncCategory(context, category.id) },
+                    onClick = { WearCommandService.syncCategory(context, category.name) },
                     label = { Text("Sync from phone") },
                     icon = { Icon(Icons.Default.Sync, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth()

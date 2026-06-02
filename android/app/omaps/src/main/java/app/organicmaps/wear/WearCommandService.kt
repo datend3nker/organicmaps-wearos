@@ -12,6 +12,7 @@ import app.organicmaps.sdk.search.SearchResult
 import kotlinx.coroutines.*
 
 object WearCommandService {
+    private const val TAG = "WearCommandService"
     private var backend: IWearSyncBackend? = null
 
     @Synchronized
@@ -26,22 +27,18 @@ object WearCommandService {
     fun initBackend(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         val selectedBackend = prefs.getString("pref_wear_os_backend", "GMS")
-        val isOss = BuildConfig.FLAVOR == "oss"
 
-        // Properly dispose of previous backend if it exists
         backend?.stop()
         backend = null 
         
-        // Reset connection status during transition
         NavigationStateHolder.update { it.copy(isPhoneConnected = false) }
         
         val isStandalone = selectedBackend == "STANDALONE"
-        val useBluetooth = (selectedBackend == "BLUETOOTH" || isOss) && !isStandalone
+        val useBluetooth = selectedBackend == "BLUETOOTH" && !isStandalone
         
         backend = if (useBluetooth) {
             BluetoothWearSyncBackend()
         } else if (isStandalone) {
-            // Optional: dedicated Standalone backend that does nothing for remote calls
             BluetoothWearSyncBackend() 
         } else {
             try {
@@ -52,7 +49,6 @@ object WearCommandService {
             }
         }
 
-        // Ensure background listener service is running for Bluetooth
         val serviceIntent = Intent(context, BluetoothWearDataListenerService::class.java)
         if (useBluetooth) {
             context.startService(serviceIntent)
@@ -108,18 +104,15 @@ object WearCommandService {
         val isStandalone = navState.standaloneMode || !navState.isPhoneConnected
         
         if (!isStandalone) {
-            // Attempt to wake up phone for calculation
             launchPhoneApp(context)
             
-            // Start a timeout to fallback to standalone if phone doesn't respond/connect
             CoroutineScope(Dispatchers.Main).launch {
-                delay(4000) // Give phone 4s to wake up and connect
+                delay(4000)
                 val latestState = NavigationStateHolder.state.value
                 if (!latestState.isPhoneConnected && latestState.isActive && !latestState.isNavigating && !latestState.watchLocalMode) {
                     Log.d("WearCommand", "Phone failed to connect for routing - falling back to standalone")
                     android.widget.Toast.makeText(context, "Phone unavailable. Calculating locally.", android.widget.Toast.LENGTH_LONG).show()
                     NavigationStateHolder.update { it.copy(watchLocalMode = true) }
-                    // Re-trigger with standalone logic
                     selectSearchResult(context, result, routerType)
                 }
             }
@@ -131,15 +124,13 @@ object WearCommandService {
                 routerType = routerType,
                 isRouteBuilding = true,
                 isRouteReady = false,
-                isActive = true // Transition to map/nav view
+                isActive = true
             ))
             
             val wearApp = context.applicationContext as WearApplication
             val routing = RoutingController.get()
             val router = Router.values().getOrNull(routerType) ?: Router.Vehicle
             
-            // Force POI type for fallback coordinates to ensure native engine uses them immediately
-            // and doesn't wait for internal native LocationState fix (unblocks NO_POSITION error)
             val myPos = wearApp.organicMaps.locationHelper.savedLocation?.let { 
                 MapObject.createMapObject(MapObject.POI, "My Location", "", it.latitude, it.longitude)
             }
@@ -147,10 +138,8 @@ object WearCommandService {
             
             val endPoint = MapObject.createMapObject(MapObject.SEARCH, result.name, result.description, result.lat, result.lon)
             
-            // Add to local history
             app.organicmaps.sdk.search.SearchRecents.add(result.name, context)
 
-            // CRITICAL: Use prepare to initialize everything correctly on the native side
             routing.prepare(startPoint, endPoint, router)
         } else {
             getBackend(context).selectSearchResult(context, result, routerType)
@@ -162,8 +151,22 @@ object WearCommandService {
 
     fun requestMwmMetadata(context: Context, mwmName: String) = getBackend(context).requestMwmMetadata(context, mwmName)
 
+    private val syncHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val syncRunnable = Runnable {
+        val ctx = WearApplication.instance
+        val dirty = SettingsSyncManager.getDirtyUpdates(ctx)
+        if (dirty.isNotEmpty()) {
+            getBackend(ctx).syncPreferenceUpdates(ctx, dirty)
+        } else {
+            getBackend(ctx).syncPreferences(ctx)
+        }
+    }
+
     fun sendPing(context: Context) = getBackend(context).sendPing(context)
-    fun syncPreferences(context: Context) = getBackend(context).syncPreferences(context)
+    fun syncPreferences(context: Context) {
+        syncHandler.removeCallbacks(syncRunnable)
+        syncHandler.postDelayed(syncRunnable, 100) // 100ms debounce
+    }
     fun requestPreferences(context: Context) = getBackend(context).requestPreferences(context)
     fun syncSearchHistory(context: Context) = getBackend(context).syncSearchHistory(context)
     fun checkConnection(context: Context, callback: (Boolean) -> Unit) = getBackend(context).checkConnection(context, callback)
@@ -176,11 +179,9 @@ object WearCommandService {
         if (navState.mapDownloadMode == "PHONE_SYNC" && !navState.standaloneMode && navState.isPhoneConnected) {
             getBackend(context).sendMapDownloadRequest(context, mapId)
         } else {
-            // DIRECT_DOWNLOAD or Standalone
             app.organicmaps.sdk.downloader.MapManager.startDownload(mapId)
         }
     }
-    fun sendMapProgress(context: Context, mapId: String, progress: Int) = getBackend(context).sendMapProgress(context, mapId, progress)
     fun toggleTrackRecording(context: Context) {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || !navState.isPhoneConnected) {
@@ -195,18 +196,22 @@ object WearCommandService {
                 app.organicmaps.sdk.location.TrackRecorder.nativeStartTrackRecording()
                 NavigationStateHolder.update { it.copy(isTrackRecording = true, trackRecordingStartTime = System.currentTimeMillis()) }
             }
-        }
- else {
+        } else {
             getBackend(context).toggleTrackRecording(context)
         }
     }
     fun requestBookmarks(context: Context) = getBackend(context).requestBookmarks(context)
-    fun toggleBookmarkCategory(context: Context, categoryId: Long) = getBackend(context).toggleBookmarkCategory(context, categoryId)
+    fun toggleBookmarkCategory(context: Context, categoryName: String) = getBackend(context).toggleBookmarkCategory(context, categoryName)
     fun showBookmark(context: Context, bmkId: Long) {
         val navState = NavigationStateHolder.state.value
-        if (navState.standaloneMode || navState.watchLocalMode) {
-            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId)
-            NavigationStateHolder.update { it.copy(openMap = true) }
+        val wearApp = context.applicationContext as WearApplication
+        if (navState.standaloneMode || navState.watchLocalMode || wearApp.isFullyInitialized) {
+            try {
+                app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId)
+                NavigationStateHolder.update { it.copy(openMap = true, isMapUnlocked = false) }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to show bookmark $bmkId locally", e)
+            }
         } else {
             getBackend(context).showBookmarkOnPhone(context, bmkId)
         }
@@ -216,21 +221,29 @@ object WearCommandService {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || navState.watchLocalMode) {
             app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)?.update(name, null, "")
-            // Note: color update is a bit more complex in native, we'd need to convert index
         } else {
             getBackend(context).updateBookmarkOnPhone(context, bmkId, name, color)
         }
     }
 
-    fun syncCategory(context: Context, categoryId: Long) {
+    fun syncCategory(context: Context, categoryName: String) {
         NavigationStateHolder.update { current ->
             val updated = current.bookmarkCategories.map {
-                if (it.id == categoryId) it.copy(isSyncing = true) else it
+                if (it.name.equals(categoryName, ignoreCase = true)) it.copy(isSyncing = true) else it
             }
             current.copy(bookmarkCategories = updated)
         }
-        getBackend(context).syncCategory(context, categoryId)
+        getBackend(context).syncCategory(context, categoryName)
     }
+
+    fun renameBookmarkCategory(context: Context, oldName: String, newName: String) {
+        getBackend(context).renameBookmarkCategory(context, oldName, newName)
+    }
+
+    fun deleteBookmarkCategory(context: Context, name: String) {
+        getBackend(context).deleteBookmarkCategory(context, name)
+    }
+
     fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) = getBackend(context).requestMwmBytes(context, mwmName, offset, size)
     fun launchPhoneApp(context: Context) = getBackend(context).launchPhoneApp(context)
 }

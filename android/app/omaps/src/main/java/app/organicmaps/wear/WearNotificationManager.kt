@@ -29,20 +29,20 @@ object WearNotificationManager {
 
     fun updateSyncNotification(context: Context, mapId: String, progress: Float, isStreaming: Boolean) {
         if (!NavigationStateHolder.state.value.syncNotificationsEnabled) {
-            android.util.Log.d("WearNotif", "Notifications disabled in state")
+            android.util.Log.d("WearNotif", "DEBUG_NOTIF: Notifications disabled in state")
             return
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                android.util.Log.w("WearNotif", "POST_NOTIFICATIONS permission missing")
+                android.util.Log.w("WearNotif", "DEBUG_NOTIF: POST_NOTIFICATIONS permission missing")
                 return
             }
         }
 
-        android.util.Log.d("WearNotif", "Showing notification: $mapId ${progress * 100}%")
         val title = if (isStreaming) "Streaming Map from Phone" else "Downloading Map"
         val progressInt = (progress * 100).toInt()
+        android.util.Log.d("WearNotif", "DEBUG_NOTIF: updateSyncNotification: $mapId $progressInt% isStreaming=$isStreaming")
         
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
@@ -56,11 +56,12 @@ object WearNotificationManager {
         try {
             NotificationManagerCompat.from(context).notify(SYNC_NOTIFICATION_ID, notification)
         } catch (e: SecurityException) {
-            // Permission missing
+            android.util.Log.e("WearNotif", "DEBUG_NOTIF: SecurityException updating notification: ${e.message}")
         }
     }
 
     fun hideSyncNotification(context: Context) {
+        android.util.Log.d("WearNotif", "DEBUG_NOTIF: hideSyncNotification")
         NotificationManagerCompat.from(context).cancel(SYNC_NOTIFICATION_ID)
     }
 }

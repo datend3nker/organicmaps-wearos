@@ -57,7 +57,7 @@ std::pair<MwmSet::MwmId, MwmSet::RegResult> FeaturesFetcher::RegisterMap(LocalCo
   }
   catch (RootException const & ex)
   {
-    LOG(LERROR, ("IO error while adding", localFile.GetCountryName(), "map.", ex.Msg()));
+    LOG(LWARNING, ("IO error while adding", localFile.GetCountryName(), "map.", ex.Msg()));
     return std::make_pair(MwmSet::MwmId(), MwmSet::RegResult::BadFile);
   }
 }

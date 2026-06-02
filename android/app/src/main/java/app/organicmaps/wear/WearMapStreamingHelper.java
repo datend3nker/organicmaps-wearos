@@ -7,6 +7,7 @@ import androidx.annotation.NonNull;
 
 import java.io.File;
 
+import app.organicmaps.sdk.settings.StoragePathManager;
 import app.organicmaps.sync.ISyncLayer;
 
 public class WearMapStreamingHelper {
@@ -15,20 +16,19 @@ public class WearMapStreamingHelper {
     public static void streamMapToWatch(@NonNull Context context, @NonNull String nodeId, @NonNull String mapId) {
         ISyncLayer syncLayer = WearSyncService.getSyncLayer();
 
-        Log.d(TAG, "DEBUG_WEAR: streamMapToWatch: " + mapId + " to " + nodeId);
+        Log.d(TAG, "DEBUG_WEAR_PIPELINE: streamMapToWatch: " + mapId + " to " + nodeId);
         
-        // Find the map file
-        String writableDir = app.organicmaps.sdk.util.Config.getStoragePath();
-        if (writableDir == null || writableDir.isEmpty()) {
-            writableDir = context.getFilesDir().getAbsolutePath() + "/live/maps";
-        }
-
+        // Find the map file using the centralized StoragePathManager
+        String writableDir = StoragePathManager.findMapsStorage(context);
+        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Map storage path: " + writableDir);
+        
         File mapFile = null;
         File rootDir = new File(writableDir);
         
         long dataVersion = 0;
         try {
             dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion();
+            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Data version: " + dataVersion);
         } catch (Throwable ignored) {}
         
         if (dataVersion > 0) {
@@ -60,10 +60,14 @@ public class WearMapStreamingHelper {
         }
 
         if (mapFile == null || !mapFile.exists()) {
-            Log.e(TAG, "DEBUG_WEAR: Map file NOT FOUND: " + mapId);
+            Log.e(TAG, "DEBUG_WEAR_PIPELINE: Map file NOT FOUND: " + mapId);
             syncLayer.sendMapNotFound(context, mapId);
             return;
         }
+
+        // Send metadata first to allow watch to "mount" the virtual MWM (ghost file)
+        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending MWM metadata (mount) for " + mapId + " size: " + mapFile.length());
+        syncLayer.sendMwmMetadata(context, mapId, mapFile.length());
 
         syncLayer.streamMapFile(context, nodeId, mapId, mapFile);
     }

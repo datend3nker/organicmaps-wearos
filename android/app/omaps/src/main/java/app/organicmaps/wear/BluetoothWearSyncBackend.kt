@@ -30,14 +30,19 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         private const val PATH_TRACK_RECORDING_TOGGLE = "/track/recording/toggle"
         private const val PATH_BOOKMARK_VISIBLE_TOGGLE = "/bookmark/visible/toggle"
         private const val PATH_BOOKMARK_SYNC_REQUEST = "/bookmark/sync/request"
+        private const val PATH_BOOKMARK_RENAME = "/bookmark/rename"
+        private const val PATH_BOOKMARK_DELETE = "/bookmark/delete"
         private const val PATH_BOOKMARKS_REQUEST = "/bookmarks/request"
         private const val PATH_BOOKMARK_SHOW = "/bookmark/show"
         private const val PATH_BOOKMARK_UPDATE = "/bookmark/update"
         private const val PATH_SEARCH_HISTORY_SYNC = "/search/history/sync"
+        private const val PATH_PREFERENCES_UPDATES = "/preferences/updates"
         private const val PATH_VIRTUAL_MWM_REQUEST = "/virtual_mwm/request"
         private const val PATH_VIRTUAL_MWM_METADATA_REQUEST = "/virtual_mwm/metadata_request"
 
         private const val MSG_TYPE_COMMAND = 10.toByte()
+        private const val MSG_TYPE_PREFERENCES = 4.toByte()
+        private const val MSG_TYPE_PREFERENCES_UPDATES = 19.toByte()
         private const val MSG_TYPE_VIRTUAL_MWM_REQUEST = 13.toByte()
     }
 
@@ -47,13 +52,19 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         val appContext = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val socket = getOrConnectSocket(appContext) ?: return@launch
+                val socket = getOrConnectSocket(appContext) ?: run {
+                    Log.w(TAG, "DEBUG_BT_PIPELINE: Cannot send to $path, no Bluetooth socket available")
+                    return@launch
+                }
                 val out = socket.outputStream
                 
                 val pathBytes = path.toByteArray(StandardCharsets.UTF_8)
                 val totalLen = 4 + pathBytes.size + data.size
                 
-                val header = ByteBuffer.allocate(5)
+                Log.d(TAG, "DEBUG_BT_PIPELINE: sendMessage to $path (type=$type, payload=${data.size} bytes). Total packet size=${totalLen + 6}")
+                
+                val header = ByteBuffer.allocate(6)
+                header.put(IWearSyncBackend.PROTOCOL_VERSION)
                 header.put(type)
                 header.putInt(totalLen)
                 out.write(header.array())
@@ -65,7 +76,7 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
                 out.write(data)
                 out.flush()
             } catch (e: Exception) {
-                Log.e(TAG, "Bluetooth send failed: ${e.message}")
+                Log.e(TAG, "DEBUG_BT_PIPELINE: Bluetooth send failed for $path: ${e.message}")
                 closeSocket()
             }
         }
@@ -122,83 +133,97 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
     }
 
     override fun syncPreferences(context: Context) {
-        val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val mapEnabled = prefs.getBoolean("mapEnabled", false)
-        val watchLocalMode = prefs.getBoolean("watchLocalMode", false)
-        val standaloneMode = prefs.getBoolean("disconnectFromPhone", false)
-        val autoDownload = prefs.getBoolean("autoDownloadRouteMaps", true)
-        val downloadMode = prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC"
-        val backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS"
-        val poiMask = prefs.getInt("poiCategoriesMask", 0x3F)
+        val all = SettingsSyncManager.getAllSettings(context)
+        Log.d(TAG, "DEBUG_BT_PIPELINE: syncPreferences (Full Sync) - Items: ${all.size}")
         
-        val is3dEnabled = prefs.getBoolean("pref_wear_os_3d", true)
-        val is3dBuildingsEnabled = prefs.getBoolean("pref_wear_os_3d_buildings", true)
-        val isAutoZoomEnabled = prefs.getBoolean("pref_wear_os_auto_zoom", true)
-        val mUnits = prefs.getInt("pref_wear_os_munits", 0)
-        val mapStyle = prefs.getString("pref_wear_os_map_style", "default") ?: "default"
+        // BUFFER Format: [4:count] { [4:keyLen][key][1:type][4:valLen][val][8:timestamp] }
+        var totalSize = 4
+        val keyBytesList = mutableListOf<ByteArray>()
+        val valBytesList = mutableListOf<ByteArray>()
+        
+        for (update in all) {
+            val kb = update.key.toByteArray(StandardCharsets.UTF_8)
+            keyBytesList.add(kb)
+            val vb = serializeValue(update.value)
+            valBytesList.add(vb)
+            totalSize += 4 + kb.size + 1 + 4 + vb.size + 8
+        }
 
-        val avoidTolls = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Toll)
-        val avoidMotorways = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Motorway)
-        val avoidFerries = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Ferry)
-        val avoidUnpaved = app.organicmaps.sdk.routing.RoutingOptions.hasOption(app.organicmaps.sdk.settings.RoadType.Dirty)
-        val syncNotificationsEnabled = prefs.getBoolean("pref_sync_notifications", true)
+        Log.d(TAG, "DEBUG_BT_PIPELINE: syncPreferences - Calculated Buffer Size: $totalSize bytes")
+        val buffer = ByteBuffer.allocate(totalSize)
+        buffer.putInt(all.size)
+        for (i in all.indices) {
+            val update = all[i]
+            val kb = keyBytesList[i]
+            val vb = valBytesList[i]
+            
+            buffer.putInt(kb.size)
+            buffer.put(kb)
+            buffer.put(getValueType(update.value))
+            buffer.putInt(vb.size)
+            buffer.put(vb)
+            buffer.putLong(update.timestamp)
+        }
         
-        val transitEnabled = prefs.getBoolean("pref_wear_os_transit", false)
-        val bikingEnabled = prefs.getBoolean("pref_wear_os_biking", false)
-        val hikingEnabled = prefs.getBoolean("pref_wear_os_hiking", false)
-        val isolinesEnabled = prefs.getBoolean("pref_wear_os_isolines", false)
-        val locationSource = prefs.getString("locationSource", "AUTO") ?: "AUTO"
-        val isTrackRecording = NavigationStateHolder.state.value.isTrackRecording
-        val recordingStartTime = NavigationStateHolder.state.value.trackRecordingStartTime
-        
-        val backendBytes = backend.toByteArray(StandardCharsets.UTF_8)
-        val downloadModeBytes = downloadMode.toByteArray(StandardCharsets.UTF_8)
-        val styleBytes = mapStyle.toByteArray(StandardCharsets.UTF_8)
-        val locSrcBytes = locationSource.toByteArray(StandardCharsets.UTF_8)
-        
-        // BUFFER Format: [1:mapEnabled][1:watchLocal][1:standalone][1:autoDownload][4:modeLen][mode][4:backendLen][backend][4:poiMask][1:3d][1:3dBld][1:autoZoom][4:mUnits][4:styleLen][style][1:toll][1:mtw][1:ferry][1:dirty][1:syncNotif][1:transit][1:biking][1:hiking][1:isolines][1:recording][4:locSrcLen][locSrc][8:startTime][8:timestamp]
-        val buffer = ByteBuffer.allocate(57 + downloadModeBytes.size + backendBytes.size + styleBytes.size + locSrcBytes.size)
-        buffer.put((if (mapEnabled) 1 else 0).toByte())
-        buffer.put((if (watchLocalMode) 1 else 0).toByte())
-        buffer.put((if (standaloneMode) 1 else 0).toByte())
-        buffer.put((if (autoDownload) 1 else 0).toByte())
-        buffer.putInt(downloadModeBytes.size)
-        buffer.put(downloadModeBytes)
-        buffer.putInt(backendBytes.size)
-        buffer.put(backendBytes)
-        buffer.putInt(poiMask)
-        
-        buffer.put((if (is3dEnabled) 1 else 0).toByte())
-        buffer.put((if (is3dBuildingsEnabled) 1 else 0).toByte())
-        buffer.put((if (isAutoZoomEnabled) 1 else 0).toByte())
-        buffer.putInt(mUnits)
-        buffer.putInt(styleBytes.size)
-        buffer.put(styleBytes)
+        sendMessage(context, "/preferences/watch", buffer.array(), MSG_TYPE_PREFERENCES)
+        SettingsSyncManager.markAsSynced(context, all)
+    }
 
-        buffer.put((if (avoidTolls) 1 else 0).toByte())
-        buffer.put((if (avoidMotorways) 1 else 0).toByte())
-        buffer.put((if (avoidFerries) 1 else 0).toByte())
-        buffer.put((if (avoidUnpaved) 1 else 0).toByte())
-        buffer.put((if (syncNotificationsEnabled) 1 else 0).toByte())
+    override fun syncPreferenceUpdates(context: Context, updates: List<SettingsSyncManager.SettingUpdate>) {
+        if (updates.isEmpty()) return
+        Log.d(TAG, "DEBUG_BT_PIPELINE: syncPreferenceUpdates (Buffered) - Items: ${updates.size}")
 
-        buffer.put((if (transitEnabled) 1 else 0).toByte())
-        buffer.put((if (bikingEnabled) 1 else 0).toByte())
-        buffer.put((if (hikingEnabled) 1 else 0).toByte())
-        buffer.put((if (isolinesEnabled) 1 else 0).toByte())
-        buffer.put((if (isTrackRecording) 1 else 0).toByte())
-
-        buffer.putInt(locSrcBytes.size)
-        buffer.put(locSrcBytes)
-
-        buffer.putLong(recordingStartTime)
-
-        val timestamp = System.currentTimeMillis()
-        buffer.putLong(timestamp)
+        var totalSize = 4
+        val keyBytesList = mutableListOf<ByteArray>()
+        val valBytesList = mutableListOf<ByteArray>()
         
-        // Update local interaction time to prevent ignoring phone's sync of this change
-        NavigationStateHolder.update { it.copy(lastSettingsInteractionTime = timestamp) }
+        for (update in updates) {
+            val kb = update.key.toByteArray(StandardCharsets.UTF_8)
+            keyBytesList.add(kb)
+            val vb = serializeValue(update.value)
+            valBytesList.add(vb)
+            totalSize += 4 + kb.size + 1 + 4 + vb.size + 8
+        }
+
+        Log.d(TAG, "DEBUG_BT_PIPELINE: syncPreferenceUpdates - Calculated Buffer Size: $totalSize bytes")
+        val buffer = ByteBuffer.allocate(totalSize)
+        buffer.putInt(updates.size)
+        for (i in updates.indices) {
+            val update = updates[i]
+            Log.d(TAG, "DEBUG_BT_PIPELINE: Buffering setting for transmission: ${update.key} = ${update.value}")
+            val kb = keyBytesList[i]
+            val vb = valBytesList[i]
+            
+            buffer.putInt(kb.size)
+            buffer.put(kb)
+            buffer.put(getValueType(update.value))
+            buffer.putInt(vb.size)
+            buffer.put(vb)
+            buffer.putLong(update.timestamp)
+        }
         
-        sendMessage(context, "/preferences/watch", buffer.array())
+        sendMessage(context, PATH_PREFERENCES_UPDATES, buffer.array(), MSG_TYPE_PREFERENCES_UPDATES)
+        SettingsSyncManager.markAsSynced(context, updates)
+    }
+
+    private fun getValueType(v: Any): Byte {
+        return when (v) {
+            is Boolean -> 1
+            is String -> 2
+            is Int -> 3
+            is Long -> 4
+            else -> 0
+        }
+    }
+
+    private fun serializeValue(v: Any): ByteArray {
+        return when (v) {
+            is Boolean -> byteArrayOf(if (v) 1 else 0)
+            is String -> v.toByteArray(StandardCharsets.UTF_8)
+            is Int -> ByteBuffer.allocate(4).putInt(v).array()
+            is Long -> ByteBuffer.allocate(8).putLong(v).array()
+            else -> byteArrayOf()
+        }
     }
 
     override fun requestPreferences(context: Context) {
@@ -266,16 +291,29 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         sendMessage(context, PATH_BOOKMARKS_REQUEST, byteArrayOf())
     }
 
-    override fun toggleBookmarkCategory(context: Context, categoryId: Long) {
-        val buffer = ByteBuffer.allocate(8)
-        buffer.putLong(categoryId)
-        sendMessage(context, PATH_BOOKMARK_VISIBLE_TOGGLE, buffer.array())
+    override fun toggleBookmarkCategory(context: Context, categoryName: String) {
+        val nameBytes = categoryName.toByteArray(StandardCharsets.UTF_8)
+        sendMessage(context, PATH_BOOKMARK_VISIBLE_TOGGLE, nameBytes)
     }
 
-    override fun syncCategory(context: Context, categoryId: Long) {
-        val buffer = ByteBuffer.allocate(8)
-        buffer.putLong(categoryId)
-        sendMessage(context, PATH_BOOKMARK_SYNC_REQUEST, buffer.array())
+    override fun syncCategory(context: Context, categoryName: String) {
+        val nameBytes = categoryName.toByteArray(StandardCharsets.UTF_8)
+        sendMessage(context, PATH_BOOKMARK_SYNC_REQUEST, nameBytes)
+    }
+
+    override fun renameBookmarkCategory(context: Context, oldName: String, newName: String) {
+        val oldBytes = oldName.toByteArray(StandardCharsets.UTF_8)
+        val newBytes = newName.toByteArray(StandardCharsets.UTF_8)
+        val buffer = ByteBuffer.allocate(4 + oldBytes.size + 4 + newBytes.size)
+        buffer.putInt(oldBytes.size)
+        buffer.put(oldBytes)
+        buffer.putInt(newBytes.size)
+        buffer.put(newBytes)
+        sendMessage(context, PATH_BOOKMARK_RENAME, buffer.array())
+    }
+
+    override fun deleteBookmarkCategory(context: Context, name: String) {
+        sendMessage(context, PATH_BOOKMARK_DELETE, name.toByteArray(StandardCharsets.UTF_8))
     }
 
     override fun showBookmarkOnPhone(context: Context, bmkId: Long) {
@@ -342,12 +380,14 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
             try {
                 val pairedDevices = adapter.bondedDevices ?: return null
                 for (device in pairedDevices) {
+                    val socket = device.createRfcommSocketToServiceRecord(OM_WEAR_UUID)
                     try {
-                        val socket = device.createRfcommSocketToServiceRecord(OM_WEAR_UUID)
                         socket.connect()
                         activeSocket = socket
                         return socket
-                    } catch (ignored: Exception) {}
+                    } catch (ignored: Exception) {
+                        try { socket.close() } catch (e: Exception) {}
+                    }
                 }
             } catch (e: SecurityException) {
                 Log.e(TAG, "Bluetooth permission missing", e)

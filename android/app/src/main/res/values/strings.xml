@@ -98,6 +98,16 @@
     <string name="move_maps_error">Error moving map files</string>
     <!-- Ask user to wait several minutes (some long process in modal dialog). -->
     <string name="osm_credits">Map data © OpenStreetMap contributors</string>
+    <string name="notification_channel_wear_progress">Wear OS Progress</string>
+    <string name="notification_channel_wear_progress_description">Shows progress of tasks requested by the watch</string>
+    <string name="notification_channel_wear_silent">Wear OS Background Tasks</string>
+    <string name="notification_channel_wear_silent_description">Background tasks for Wear OS companion</string>
+    <string name="notification_serving_map">Serving Map to Watch</string>
+    <string name="notification_calculating_route">Calculating Route</string>
+    <string name="notification_planning_route_to">Planning route to %s</string>
+    <string name="notification_searching">Searching</string>
+    <string name="notification_searching_for">Searching for %s</string>
+    <string name="pref_sync_notifications">Wear OS Sync Notifications</string>
     <string name="wait_several_minutes">This can take several minutes.\nPlease wait…</string>
     <!-- Measurement units title in settings activity -->
     <string name="measurement_units">Measurement units</string>

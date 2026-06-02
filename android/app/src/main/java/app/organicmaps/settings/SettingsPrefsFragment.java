@@ -41,16 +41,6 @@ import androidx.preference.PreferenceManager;
 
 public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements LanguagesFragment.Listener
 {
-  private final SharedPreferences.OnSharedPreferenceChangeListener mSharedPreferenceChangeListener = (sharedPreferences, key) -> {
-    if (key == null) return;
-    if (key.startsWith("pref_wear_os_")) {
-      new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-          refreshWearOsPrefs();
-          syncWearOsPreferences();
-      });
-    }
-  };
-
   private final android.content.BroadcastReceiver mSettingsChangedReceiver = new android.content.BroadcastReceiver() {
     @Override
     public void onReceive(android.content.Context context, android.content.Intent intent) {
@@ -62,14 +52,12 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
   public void onCreate(@Nullable Bundle savedInstanceState)
   {
     super.onCreate(savedInstanceState);
-    PreferenceManager.getDefaultSharedPreferences(requireContext()).registerOnSharedPreferenceChangeListener(mSharedPreferenceChangeListener);
   }
 
   @Override
   public void onDestroy()
   {
     super.onDestroy();
-    PreferenceManager.getDefaultSharedPreferences(requireContext()).unregisterOnSharedPreferenceChangeListener(mSharedPreferenceChangeListener);
   }
 
   @Override
@@ -399,14 +387,6 @@ public class SettingsPrefsFragment extends BaseXmlSettingsFragment implements La
       }
       return true;
     });
-  }
-
-  private void syncWearOsPreferences() {
-    try {
-        app.organicmaps.wear.WearSyncService.syncPreferences(requireContext());
-    } catch (Throwable e) {
-        android.util.Log.e("SettingsPrefsFragment", "Wear OS sync failed: ", e);
-    }
   }
 
   private boolean isUpdatingFromSync = false;
