@@ -1,9 +1,11 @@
 package app.organicmaps.bookmarks;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
@@ -20,6 +22,7 @@ import androidx.annotation.LayoutRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.RecyclerView;
 import app.organicmaps.MwmApplication;
 import app.organicmaps.R;
@@ -39,10 +42,12 @@ import app.organicmaps.util.SharingUtils;
 import app.organicmaps.util.Utils;
 import app.organicmaps.util.bottomsheet.MenuBottomSheetFragment;
 import app.organicmaps.util.bottomsheet.MenuBottomSheetItem;
+import app.organicmaps.wear.WearSyncService;
 import app.organicmaps.widget.PlaceholderView;
 import app.organicmaps.widget.recycler.DividerItemDecorationWithPadding;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -88,6 +93,18 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
                                 -> {
                                     // not handled at the moment
                                 });
+
+  private final BroadcastReceiver mConflictReceiver = new BroadcastReceiver() {
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        if ("app.organicmaps.wear.ACTION_BOOKMARK_CONFLICT".equals(intent.getAction())) {
+            String catName = intent.getStringExtra("categoryName");
+            if (catName != null) {
+                showConflictDialog(catName);
+            }
+        }
+    }
+  };
 
   @Override
   @LayoutRes
@@ -137,6 +154,9 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
   @Override
   public void onPreparedFileForSharing(@NonNull BookmarkSharingResult result)
   {
+    if (WearSyncService.isSilentSyncInProgress()) {
+        return;
+    }
     BookmarksSharingHelper.INSTANCE.onPreparedFileForSharing(requireActivity(), shareLauncher, result);
   }
 
@@ -146,6 +166,8 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
     super.onStart();
     BookmarkManager.INSTANCE.addLoadingListener(this);
     BookmarkManager.INSTANCE.addSharingListener(this);
+    IntentFilter filter = new IntentFilter("app.organicmaps.wear.ACTION_BOOKMARK_CONFLICT");
+    ContextCompat.registerReceiver(requireActivity(), mConflictReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
   }
 
   @Override
@@ -154,6 +176,7 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
     super.onStop();
     BookmarkManager.INSTANCE.removeLoadingListener(this);
     BookmarkManager.INSTANCE.removeSharingListener(this);
+    requireActivity().unregisterReceiver(mConflictReceiver);
   }
 
   @Override
@@ -199,7 +222,6 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
                                         () -> onShareActionSelected(mSelectedCategory, KmlFileType.Text)));
       items.add(new MenuBottomSheetItem(R.string.export_file_gpx, R.drawable.ic_file_gpx,
                                         () -> onShareActionSelected(mSelectedCategory, KmlFileType.Gpx)));
-      // Disallow deleting the last category
       if (getAdapter().getBookmarkCategories().size() > 1)
         items.add(new MenuBottomSheetItem(R.string.delete, R.drawable.ic_delete,
                                           () -> onDeleteActionSelected(mSelectedCategory)));
@@ -210,7 +232,6 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
   @Override
   protected void setupPlaceholder(@Nullable PlaceholderView placeholder)
   {
-    // A placeholder is no needed on this screen.
   }
 
   @Override
@@ -222,10 +243,7 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
   @Override
   public void onBookmarksFileImportFailed()
   {
-    // TODO: Is there a way to display several failure notifications?
-    // TODO: It would be helpful to see the file name that failed to import.
     final View view = getView();
-    // TODO: how to get import button view to show snackbar above it?
     if (view != null)
       Utils.showSnackbar(requireActivity(), view, R.string.load_kmz_failed);
   }
@@ -246,13 +264,6 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
   public void onImportButtonClick()
   {
     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-
-    // Sic: EXTRA_INITIAL_URI doesn't work
-    // https://stackoverflow.com/questions/65326605/extra-initial-uri-will-not-work-no-matter-what-i-do
-    // intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initial);
-
-    // Enable "Show SD card option"
-    // http://stackoverflow.com/a/31334967/1615876
     intent.putExtra("android.content.extra.SHOW_ADVANCED", true);
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
@@ -374,6 +385,30 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
     if (mSelectedCategory == null)
       throw new AssertionError("Invalid attempt to use null selected category.");
     return mSelectedCategory;
+  }
+
+  private void showConflictDialog(String catName) {
+    new MaterialAlertDialogBuilder(requireActivity(), R.style.MwmTheme_AlertDialog)
+        .setTitle(R.string.bookmark_conflict_title)
+        .setMessage(getString(R.string.bookmark_conflict_message, catName))
+        .setPositiveButton(R.string.bookmark_conflict_keep_phone, (dialog, which) -> {
+            for (BookmarkCategory cat : BookmarkManager.INSTANCE.getCategories()) {
+                if (cat.getName().equals(catName)) {
+                    WearSyncService.setSilentSyncInProgress(true);
+                    BookmarkManager.INSTANCE.prepareCategoriesForSharing(new long[]{cat.getId()}, KmlFileType.Text);
+                    break;
+                }
+            }
+        })
+        .setNegativeButton(R.string.bookmark_conflict_keep_watch, (dialog, which) -> {
+            WearSyncService.getSyncLayer().sendRawMessage(requireContext(), app.organicmaps.sdk.sync.WearProtocol.TYPE_COMMAND, 
+                WearSyncService.buildCommandPayload(app.organicmaps.sdk.sync.WearProtocol.PATH_BOOKMARK_SYNC_REQUEST, catName.getBytes(StandardCharsets.UTF_8)));
+        })
+        .setNeutralButton(R.string.bookmark_conflict_merge, (dialog, which) -> {
+            WearSyncService.getSyncLayer().sendRawMessage(requireContext(), app.organicmaps.sdk.sync.WearProtocol.TYPE_COMMAND, 
+                WearSyncService.buildCommandPayload(app.organicmaps.sdk.sync.WearProtocol.PATH_BOOKMARK_SYNC_REQUEST, catName.getBytes(StandardCharsets.UTF_8)));
+        })
+        .show();
   }
 
   interface CategoryEditor

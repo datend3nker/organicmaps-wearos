@@ -127,18 +127,22 @@ class WearDataListenerService : WearableListenerService() {
                 }
             }
 
+            val wasConnected = NavigationStateHolder.state.value.isPhoneConnected
             if (connected) {
                 (application as WearApplication).onActivityReceived()
 
-                WearCommandService.syncPreferences(this@WearDataListenerService)
-                WearCommandService.requestPreferences(this@WearDataListenerService)
-                WearCommandService.requestBookmarks(this@WearDataListenerService)
-                WearCommandService.requestSearchHistory(this@WearDataListenerService)
-                WearCommandService.syncSearchHistory(this@WearDataListenerService)
-                WearCommandService.requestDownloadedMaps(this@WearDataListenerService)
+                if (!wasConnected) {
+                    Log.i(TAG, "DEBUG_GMS_PIPELINE: Connection established, performing initial sync")
+                    WearCommandService.syncPreferences(this@WearDataListenerService)
+                    WearCommandService.requestPreferences(this@WearDataListenerService)
+                    WearCommandService.requestBookmarks(this@WearDataListenerService)
+                    WearCommandService.requestSearchHistory(this@WearDataListenerService)
+                    WearCommandService.syncSearchHistory(this@WearDataListenerService)
+                    WearCommandService.requestDownloadedMaps(this@WearDataListenerService)
 
-                if (app.organicmaps.sdk.downloader.MapManager.nativeGetStatus("World") != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
-                    WearCommandService.requestMwmMetadata(this@WearDataListenerService, "World")
+                    if (app.organicmaps.sdk.downloader.MapManager.nativeGetStatus("World") != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
+                        WearCommandService.requestMwmMetadata(this@WearDataListenerService, "World")
+                    }
                 }
             } else {
                 Log.d(TAG, "DEBUG_GMS_PIPELINE: No phone found (capability or physical), waiting for timeout")
@@ -172,11 +176,11 @@ class WearDataListenerService : WearableListenerService() {
                 WearMessageRouter.onMessageReceived(this, messageEvent.path, payload, messageEvent.sourceNodeId, currentLocalId)
             } else {
                 app.organicmaps.sdk.sync.WearLog.e("Protocol version mismatch at ${messageEvent.path}: received=$version, expected=${WearProtocol.PROTOCOL_VERSION}")
-                // Fallback: try routing raw data
-                WearMessageRouter.onMessageReceived(this, messageEvent.path, data, messageEvent.sourceNodeId, currentLocalId)
+                // For safety, don't route unknown versions
             }
         } else {
-            WearMessageRouter.onMessageReceived(this, messageEvent.path, data, messageEvent.sourceNodeId, currentLocalId)
+            // Empty messages like triggers
+            WearMessageRouter.onMessageReceived(this, messageEvent.path, null, messageEvent.sourceNodeId, currentLocalId)
         }
     }
 

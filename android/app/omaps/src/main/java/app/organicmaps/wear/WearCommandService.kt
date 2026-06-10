@@ -57,7 +57,6 @@ object WearCommandService {
         val navState = NavigationStateHolder.state.value
         app.organicmaps.sdk.sync.WearLog.logState("WATCH", "UI Search Request: '$query'. Standalone=${navState.standaloneMode}, Connected=${navState.isPhoneConnected}")
         
-        // Ensure search listener is ALWAYS registered so local fallbacks are captured
         ensureSearchInitialized(context)
         
         if (navState.standaloneMode || !navState.isPhoneConnected) {
@@ -67,7 +66,6 @@ object WearCommandService {
             
             app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Standalone search at $lat, $lon (hasLocation=$hasLocation)")
             
-            // CRITICAL: Set viewport so search engine knows WHERE to search
             val zoom = if (hasLocation) 13 else 1
             app.organicmaps.sdk.Framework.nativeSetSearchViewport(lat, lon, zoom)
             
@@ -180,7 +178,7 @@ object WearCommandService {
     fun sendHandshake(context: Context) = getBackend(context).sendHandshake(context)
     fun syncPreferences(context: Context) {
         syncHandler.removeCallbacks(syncRunnable)
-        syncHandler.postDelayed(syncRunnable, 100) // 100ms debounce
+        syncHandler.postDelayed(syncRunnable, 100) 
     }
     fun requestPreferences(context: Context) = getBackend(context).requestPreferences(context)
     fun syncSearchHistory(context: Context) = getBackend(context).syncSearchHistory(context)
@@ -219,16 +217,20 @@ object WearCommandService {
     fun toggleBookmarkCategory(context: Context, categoryName: String) = getBackend(context).toggleBookmarkCategory(context, categoryName)
     fun showBookmark(context: Context, bmkId: Long) {
         val navState = NavigationStateHolder.state.value
-        val wearApp = context.applicationContext as WearApplication
-        if (navState.standaloneMode || navState.watchLocalMode || wearApp.isFullyInitialized) {
+        val effectivelyStandalone = navState.isEffectivelyStandalone
+        if (effectivelyStandalone) {
             try {
+                // If native framework is not ready, we might need a fallback or wait, 
+                // but usually it's initialized if we are seeing bookmarks locally.
                 app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId)
                 NavigationStateHolder.emitEvent(UiEvent.OpenMap)
+                // Force lock map to center on bookmark
                 NavigationStateHolder.update { it.copy(isMapUnlocked = false) }
             } catch (e: Throwable) {
                 Log.e(TAG, "Failed to show bookmark $bmkId locally", e)
             }
         } else {
+            // Companion mode: Request phone to show it
             getBackend(context).showBookmarkOnPhone(context, bmkId)
         }
     }
@@ -258,6 +260,14 @@ object WearCommandService {
 
     fun deleteBookmarkCategory(context: Context, name: String) {
         getBackend(context).deleteBookmarkCategory(context, name)
+    }
+
+    fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean) {
+        getBackend(context).sendBookmarkFile(context, categoryName, data, isLast)
+    }
+
+    fun sendBookmarksMetadata(context: Context, payload: ByteArray) {
+        getBackend(context).sendBookmarksMetadata(context, payload)
     }
 
     fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) = getBackend(context).requestMwmBytes(context, mwmName, offset, size)

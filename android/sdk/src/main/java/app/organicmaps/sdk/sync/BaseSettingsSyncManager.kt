@@ -12,6 +12,7 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
         private const val PREFS_NAME = "wear_settings_sync_v2"
         private const val KEY_PREFIX_TIMESTAMP = "ts_"
         private const val KEY_PREFIX_DIRTY = "dirty_"
+        private const val KEY_PREFIX_VERSION = "v_"
     }
 
     @get:Synchronized
@@ -21,7 +22,8 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
     data class SettingUpdate(
         @JvmField val key: String,
         @JvmField val value: Any,
-        @JvmField val timestamp: Long
+        @JvmField val timestamp: Long,
+        @JvmField val version: Long = 0
     )
 
     abstract fun getCanonicalToLocalMapping(): Map<String, String>
@@ -36,7 +38,10 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
         syncPrefs.edit().apply {
             putLong(KEY_PREFIX_TIMESTAMP + canonicalKey, now)
             if (isUserAction) {
-                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Setting $canonicalKey ($localKey) manually CHANGED by user to: $value")
+                val currentVersion = syncPrefs.getLong(KEY_PREFIX_VERSION + canonicalKey, 0)
+                val newVersion = currentVersion + 1
+                putLong(KEY_PREFIX_VERSION + canonicalKey, newVersion)
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Setting $canonicalKey ($localKey) manually CHANGED by user to: $value. New version: $newVersion")
                 putBoolean(KEY_PREFIX_DIRTY + canonicalKey, true)
             }
             apply()
@@ -61,9 +66,10 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
                 val localKey = getCanonicalToLocalMapping()[canonicalKey]
                 if (localKey != null) {
                     val ts = syncPrefs.getLong(KEY_PREFIX_TIMESTAMP + canonicalKey, 0)
+                    val ver = syncPrefs.getLong(KEY_PREFIX_VERSION + canonicalKey, 0)
                     allMain[localKey]?.let { value ->
-                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Found DIRTY setting to buffer: $canonicalKey = $value (ts=$ts)")
-                        updates.add(SettingUpdate(canonicalKey, value, ts))
+                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Found DIRTY setting to buffer: $canonicalKey = $value (ts=$ts, ver=$ver)")
+                        updates.add(SettingUpdate(canonicalKey, value, ts, ver))
                     }
                 }
             }
@@ -81,7 +87,8 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
             val canonicalKey = getLocalToCanonicalMapping()[localKey]
             if ((canonicalKey != null) && (value != null)) {
                 val ts = syncPrefs.getLong(KEY_PREFIX_TIMESTAMP + canonicalKey, 0)
-                updates.add(SettingUpdate(canonicalKey, value, ts))
+                val ver = syncPrefs.getLong(KEY_PREFIX_VERSION + canonicalKey, 0)
+                updates.add(SettingUpdate(canonicalKey, value, ts, ver))
             }
         }
         return updates
@@ -108,23 +115,32 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
 
             for (remote in updates) {
                 val localTs = syncPrefs.getLong(KEY_PREFIX_TIMESTAMP + remote.key, 0)
-                if (remote.timestamp > localTs) {
+                val localVer = syncPrefs.getLong(KEY_PREFIX_VERSION + remote.key, 0)
+                
+                val isNewer = if (remote.version > 0 || localVer > 0) {
+                    remote.version > localVer || (remote.version == localVer && remote.timestamp > localTs)
+                } else {
+                    remote.timestamp > localTs
+                }
+
+                if (isNewer) {
                     val localKey = getCanonicalToLocalMapping()[remote.key]
                     if (localKey != null) {
-                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: APPLYING REMOTE update for ${remote.key} -> ${remote.value} (remote=${remote.timestamp}, local=$localTs)")
+                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: APPLYING REMOTE update for ${remote.key} -> ${remote.value} (remoteVer=${remote.version}, localVer=$localVer, remoteTs=${remote.timestamp}, localTs=$localTs)")
                         applyValue(mainEditor, localKey, remote.value)
                         syncEditor.putLong(KEY_PREFIX_TIMESTAMP + remote.key, remote.timestamp)
+                        syncEditor.putLong(KEY_PREFIX_VERSION + remote.key, remote.version)
                         syncEditor.remove(KEY_PREFIX_DIRTY + remote.key)
                         changed = true
                     }
                 } else {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Ignoring stale remote update for ${remote.key} (remote=${remote.timestamp}, local=$localTs)")
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Ignoring stale remote update for ${remote.key} (remoteVer=${remote.version}, localVer=$localVer, remoteTs=${remote.timestamp}, localTs=$localTs)")
                 }
             }
 
             if (changed) {
-                mainEditor.apply()
-                syncEditor.apply()
+                mainEditor.commit()
+                syncEditor.commit()
                 onSettingsApplied()
             }
         } finally {

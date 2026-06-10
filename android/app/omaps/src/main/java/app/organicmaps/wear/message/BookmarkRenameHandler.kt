@@ -3,6 +3,9 @@ package app.organicmaps.wear.message
 import android.content.Context
 import android.util.Log
 import app.organicmaps.wear.NavigationStateHolder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -24,15 +27,23 @@ class BookmarkRenameHandler : WearMessageHandler {
         
         Log.d("BookmarkRename", "Renaming category from '$oldName' to '$newName'")
         
-        val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
-        val category = manager.getCategories().find { it.name.equals(oldName, ignoreCase = true) }
-        category?.setName(newName)
-        
-        NavigationStateHolder.update { current ->
-            val updated = current.bookmarkCategories.map {
-                if (it.name.equals(oldName, ignoreCase = true)) it.copy(name = newName) else it
+        CoroutineScope(Dispatchers.Main).launch {
+            val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
+            val category = manager.getCategories().find { it.name.equals(oldName, ignoreCase = true) }
+            
+            app.organicmaps.wear.WatchBookmarkSyncManager.isApplyingRemoteUpdate = true
+            try {
+                category?.setName(newName)
+            } finally {
+                app.organicmaps.wear.WatchBookmarkSyncManager.isApplyingRemoteUpdate = false
             }
-            current.copy(bookmarkCategories = updated)
+            
+            NavigationStateHolder.update { current ->
+                val updated = current.bookmarkCategories.map {
+                    if (it.name.equals(oldName, ignoreCase = true)) it.copy(name = newName) else it
+                }
+                current.copy(bookmarkCategories = updated)
+            }
         }
     }
 }

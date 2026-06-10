@@ -29,6 +29,8 @@ public class WearProtocol {
     public static final String PATH_TRACK_RECORDING_TOGGLE = "/track/recording/toggle";
     public static final String PATH_BOOKMARKS = "/bookmarks";
     public static final String PATH_BOOKMARKS_REQUEST = "/bookmarks/request";
+    public static final String PATH_BOOKMARKS_METADATA = "/bookmarks/metadata";
+    public static final String PATH_BOOKMARK_CONFLICT = "/bookmark/conflict";
     public static final String PATH_BOOKMARK_FILE = "/bookmark/file";
     public static final String PATH_BOOKMARK_RENAME = "/bookmark/rename";
     public static final String PATH_BOOKMARK_DELETE = "/bookmark/delete";
@@ -99,6 +101,7 @@ public class WearProtocol {
     public static final byte TYPE_PREFERENCES_UPDATES = 19;
     public static final byte TYPE_MAP_PHONE_DOWNLOADED = 20;
     public static final byte TYPE_HANDSHAKE = 21;
+    public static final byte TYPE_BOOKMARKS_METADATA = 22;
 
     // Priorities
     public static final int PRIORITY_HIGH = 0;
@@ -121,6 +124,8 @@ public class WearProtocol {
         register(PATH_MAP_DOWNLOAD_PROGRESS, TYPE_MAP_DOWNLOAD_PROGRESS);
         register(PATH_TRACK_RECORDING, TYPE_TRACK_RECORDING);
         register(PATH_BOOKMARKS, TYPE_BOOKMARKS);
+        register(PATH_BOOKMARKS_METADATA, TYPE_BOOKMARKS_METADATA);
+        register(PATH_BOOKMARK_CONFLICT, TYPE_COMMAND);
         register(PATH_BOOKMARK_FILE, TYPE_BOOKMARK_FILE);
         register(PATH_BOOKMARK_RENAME, TYPE_BOOKMARK_RENAME);
         register(PATH_BOOKMARK_DELETE, TYPE_BOOKMARK_DELETE);
@@ -158,6 +163,7 @@ public class WearProtocol {
             case TYPE_PREFERENCES_UPDATES:
             case TYPE_TRACK_RECORDING:
             case TYPE_BOOKMARKS:
+            case TYPE_BOOKMARKS_METADATA:
             case TYPE_BOOKMARK_RENAME:
             case TYPE_BOOKMARK_DELETE:
             case TYPE_MAP_DOWNLOAD_PROGRESS:

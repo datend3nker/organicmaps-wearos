@@ -69,7 +69,7 @@ class WearApplication : Application() {
             applicationContext, 
             BuildConfig.FLAVOR, 
             BuildConfig.APPLICATION_ID, 
-            251123, // Matches countries.txt version
+            251123, 
             BuildConfig.VERSION_NAME, 
             BuildConfig.APPLICATION_ID + ".fileprovider.wear",
             nativeLocationFactory
@@ -77,12 +77,10 @@ class WearApplication : Application() {
 
         organicMaps.locationHelper.onEnteredIntoFirstRun()
 
-        // FIX: Pre-initialize framework singletons on Main thread to establish thread ownership
         app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
         app.organicmaps.sdk.routing.RoutingController.get()
         app.organicmaps.sdk.search.SearchEngine.INSTANCE
 
-        // FIX: Native core MUST be initialized on the UI thread to set the correct main thread owner
         try {
             val asyncContinue = organicMaps.init {
                 onCoreInitialized()
@@ -99,9 +97,6 @@ class WearApplication : Application() {
         
         val prefs = getSharedPreferences("wear_prefs", MODE_PRIVATE)
         
-        // MIGRATION / DEFAULT BACKEND LOGIC:
-        // 1. If not set, use GMS as default (unless explicitly OSS flavor)
-        // 2. FORCE GMS for first-run or migration on emulators if currently set to BLUETOOTH
         val isEmulator = android.os.Build.PRODUCT.contains("sdk") || android.os.Build.PRODUCT.contains("vbox")
         val currentBackend = prefs.getString("pref_wear_os_backend", null)
         val shouldResetToGms = isEmulator && currentBackend == "BLUETOOTH" && BuildConfig.FLAVOR != "oss" && !prefs.getBoolean("gms_migration_done", false)
@@ -132,7 +127,11 @@ class WearApplication : Application() {
         setupLifecycleAwareUpdates()
         WearNotificationManager.createNotificationChannel(this)
 
-        // Manual Message Listener is handled inside GmsWearSyncBackend if using GMS
+        // Initialize Bookmark Sync
+        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addSharingListener(WatchBookmarkSyncManager.sharingListener)
+        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addCategoriesUpdatesListener {
+            WatchBookmarkSyncManager.onLocalBookmarksChanged(this)
+        }
     }
 
     private fun setupLifecycleAwareUpdates() {
@@ -141,7 +140,6 @@ class WearApplication : Application() {
             while (true) {
                 yield()
                 
-                // POWER SAVING: Check lifecycle state
                 if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
                     delay(5000)
                     continue
@@ -150,7 +148,6 @@ class WearApplication : Application() {
                 val state = NavigationStateHolder.state.value
                 val isAmbient = state.isAmbient
                 
-                // POWER SAVING: Hardware management based on visibility and navigation state
                 if (state.isEffectivelyStandalone) {
                     if (!organicMaps.locationHelper.isActive) {
                         try { 
@@ -163,7 +160,6 @@ class WearApplication : Application() {
                         } catch (_: Exception) {}
                     }
                 } else if (state.locationSource == "PHONE_ONLY" || state.isActive) {
-                    // Disable local GPS when phone is providing location or we are actively navigating (companion mode)
                     if (organicMaps.locationHelper.isActive) {
                         withContext(Dispatchers.Main) { organicMaps.locationHelper.stop() }
                     }
@@ -210,11 +206,10 @@ class WearApplication : Application() {
                     }
                 }
                 
-        // POWER SAVING: Adaptive delay to save battery
                 val delayMs = when {
                     routingController.isNavigating -> if (isAmbient) 5000L else 1000L
-                    isAmbient -> 30000L // Longer delay in ambient when not navigating
-                    else -> 10000L // Longer delay in foreground when idle
+                    isAmbient -> 30000L 
+                    else -> 10000L 
                 }
                 delay(delayMs)
             }
@@ -349,12 +344,9 @@ class WearApplication : Application() {
             isFullyInitialized = true
             copyCountriesFileToWritableStorage()
 
-            // Start appropriate communication backend AFTER init
             WearCommandService.initBackend(this@WearApplication)
             WearCommandService.syncPreferences(this@WearApplication)
 
-            // Storage Maintenance: Prune old virtual maps
-            // Now safe to call because core is initialized
             VirtualMwmManager.prune(this@WearApplication)
 
             val state = NavigationStateHolder.state.value
@@ -363,9 +355,8 @@ class WearApplication : Application() {
             }
             app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
             organicMaps.locationHelper.onExitFromFirstRun()
-            ReloadWorldMapsDebouncer.reloadImmediate() // CRITICAL for standalone routing
+            ReloadWorldMapsDebouncer.reloadImmediate() 
 
-            // Apply native settings from state
             Framework.nativeSet3dMode(state.is3dEnabled, state.is3dBuildingsEnabled)
             Framework.nativeSetAutoZoomEnabled(state.isAutoZoomEnabled)
             Framework.nativeSetTransitSchemeEnabled(state.transitEnabled)
@@ -388,14 +379,7 @@ class WearApplication : Application() {
             val dataVersion = Framework.nativeGetDataVersion()
             val versionedPath = File(storagePath, dataVersion.toString())
             if (!versionedPath.exists()) versionedPath.mkdirs()
-
-            // DO NOT copy assets recursively here. 
-            // The phone app and watch app share the same applicationId and storage directory.
-            // Copying assets from the watch APK into the shared storage can corrupt
-            // the phone app's map files and cause native crashes.
-            // The native core can read resources from the APK assets directly.
             
-            // Critical for routing: native core needs registered maps
             if (isFullyInitialized) {
                 ReloadWorldMapsDebouncer.reloadImmediate()
             }
@@ -407,10 +391,8 @@ class WearApplication : Application() {
     private fun copyAssetsRecursively(path: String, targetDir: String) {
         val assetList = assets.list(path) ?: return
         if (assetList.isEmpty()) {
-            // It's a file
             copySingleAsset(path, targetDir)
         } else {
-            // It's a directory
             val newTargetDir = if (path.isEmpty()) targetDir else File(targetDir, path).absolutePath
             val dirFile = File(newTargetDir)
             if (!dirFile.exists()) dirFile.mkdirs()
@@ -425,8 +407,6 @@ class WearApplication : Application() {
     private fun copySingleAsset(fileName: String, targetDir: String) {
         val targetFile = File(targetDir, fileName)
         if (targetFile.exists() && targetFile.length() > 0) return
-        
-        // Ensure parent directories exist
         targetFile.parentFile?.mkdirs()
         
         try {
@@ -436,7 +416,6 @@ class WearApplication : Application() {
                 }
             }
         } catch (e: Exception) {
-            // Might be a directory that assets.list returned but can't be opened as a file
         }
     }
 }

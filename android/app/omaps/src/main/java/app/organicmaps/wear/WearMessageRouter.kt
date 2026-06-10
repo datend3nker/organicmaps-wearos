@@ -16,8 +16,22 @@ object WearMessageRouter {
         return _dispatcher
     }
 
-    private var sLastMsgHash = 0
-    private var sLastMsgTime = 0L
+    private val sLastMsgTimes = mutableMapOf<String, Long>()
+    private val sLastMsgHashes = mutableMapOf<String, Int>()
+
+    @JvmStatic
+    private val prefRequestDebouncer = object : Runnable {
+        private var ctx: Context? = null
+        private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        fun request(context: Context) {
+            ctx = context.applicationContext
+            handler.removeCallbacks(this)
+            handler.postDelayed(this, 2000)
+        }
+        override fun run() {
+            ctx?.let { WearCommandService.requestPreferences(it) }
+        }
+    }
 
     @JvmStatic
     fun onMessageReceived(context: Context, path: String, data: ByteArray?, sourceNodeId: String, localNodeId: String? = null) {
@@ -36,13 +50,20 @@ object WearMessageRouter {
         
         val hash = path.hashCode() xor java.util.Arrays.hashCode(payload)
         val now = System.currentTimeMillis()
-        // Robust deduplication (500ms) to ignore redundant listeners
-        if (hash == sLastMsgHash && (now - sLastMsgTime) < 500) {
+        
+        val lastHash = sLastMsgHashes[path]
+        val lastTime = sLastMsgTimes[path]
+        
+        var window = 500L
+        if (path.endsWith("/request") || path.endsWith("/trigger") || path == PATH_PONG || path == WearProtocol.PATH_PING) window = 50L
+        
+        // Robust deduplication to ignore redundant listeners
+        if (lastHash == hash && lastTime != null && (now - lastTime) < window) {
             app.organicmaps.sdk.sync.WearLog.d("onMessageReceived IGNORED (Deduplication): $path")
             return
         }
-        sLastMsgHash = hash
-        sLastMsgTime = now
+        sLastMsgHashes[path] = hash
+        sLastMsgTimes[path] = now
 
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         val backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS"
@@ -75,11 +96,12 @@ object WearMessageRouter {
         when (path) {
             WearProtocol.PATH_HANDSHAKE -> {
                 Log.d(TAG, "Handshake received")
-                val remoteVersion = java.nio.ByteBuffer.wrap(payload).int
+                // Version stripping is now handled in WearDataListenerService, so payload starts with version code
+                val remoteVersion = if (payload.size >= 4) java.nio.ByteBuffer.wrap(payload).int else -1
                 Log.i(TAG, "Remote app version: $remoteVersion")
                 
                 // On handshake, always request fresh preferences
-                WearCommandService.requestPreferences(context)
+                prefRequestDebouncer.request(context)
                 return
             }
             WearProtocol.PATH_NAVIGATION_START -> {
@@ -101,12 +123,16 @@ object WearMessageRouter {
             WearProtocol.PATH_PING -> {
                 Log.d(TAG, "DEBUG_GMS: Ping received, sending pong")
                 WearCommandService.sendPong(context, sourceNodeId)
-                WearCommandService.requestPreferences(context)
+                prefRequestDebouncer.request(context)
                 return
             }
             WearProtocol.PATH_PREFERENCES_TRIGGER -> {
                 Log.d(TAG, "DEBUG_GMS: Preferences trigger received")
-                WearCommandService.requestPreferences(context)
+                prefRequestDebouncer.request(context)
+                return
+            }
+            WearProtocol.PATH_BOOKMARKS_METADATA -> {
+                WatchBookmarkSyncManager.handleIncomingMetadata(context, payload)
                 return
             }
         }

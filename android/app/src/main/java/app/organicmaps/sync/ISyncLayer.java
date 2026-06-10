@@ -48,6 +48,7 @@ public interface ISyncLayer {
     boolean isLinked();
     void launchWatchApp(@NonNull Context context);
     void sendHandshake(@NonNull Context context);
+    void sendRawMessage(@NonNull Context context, byte type, byte[] payload);
 
     default boolean isIgnoringPreferenceChanges() {
         return false;

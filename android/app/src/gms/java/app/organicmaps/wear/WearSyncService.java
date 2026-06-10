@@ -9,18 +9,16 @@ import androidx.annotation.Nullable;
 import app.organicmaps.sdk.routing.RoutingInfo;
 import app.organicmaps.sdk.search.SearchRecents;
 import app.organicmaps.sdk.search.SearchResult;
-import com.google.android.gms.tasks.Task;
-import com.google.android.gms.wearable.DataItem;
-import com.google.android.gms.wearable.DataMap;
-import com.google.android.gms.wearable.PutDataMapRequest;
-import com.google.android.gms.wearable.Wearable;
-import com.google.android.gms.wearable.Node;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
-import app.organicmaps.BuildConfig;
 import app.organicmaps.sync.BluetoothSyncLayer;
 import app.organicmaps.sync.GmsSyncLayer;
 import app.organicmaps.sync.ISyncLayer;
@@ -30,6 +28,10 @@ public class WearSyncService {
     private static final List<ISyncLayer.MessageListener> sListeners = new ArrayList<>();
     private static boolean sListenersRegistered = false;
     private static final android.os.Handler sHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static boolean sIsSilentSyncInProgress = false;
+    private static boolean sIsApplyingRemoteUpdate = false;
+    private static final Map<String, FileOutputStream> sBookmarkOutputStreams = new HashMap<>();
+
     private static final Runnable sSyncPrefsRunnable = () -> {
         Log.d("WearSync", "Debounced syncPreferences executing");
         Context context = app.organicmaps.MwmApplication.sInstance;
@@ -43,91 +45,292 @@ public class WearSyncService {
     };
 
     private static final Runnable sSyncBookmarksRunnable = () -> {
-        Log.d("WearSync", "Debounced sendBookmarkCategories executing");
-        Context context = app.organicmaps.MwmApplication.sInstance;
-        if (context == null) return;
-        sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
+        Log.d("WearSync", "Debounced syncBookmarksNow executing");
+        syncBookmarksNow();
     };
 
+    private static byte[] sLastSentBookmarkMetadata = null;
+
+    public static void syncBookmarksNow() {
+        Context context = app.organicmaps.MwmApplication.sInstance;
+        if (context == null || !isFrameworkReady()) return;
+        
+        List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories();
+        android.content.SharedPreferences prefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
+        
+        ByteBuffer buffer = ByteBuffer.allocate(4 + categories.size() * 256);
+        buffer.putInt(categories.size());
+        
+        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : categories) {
+            byte[] nameBytes = cat.getName().getBytes(StandardCharsets.UTF_8);
+            buffer.putInt(nameBytes.length);
+            buffer.put(nameBytes);
+            buffer.putInt(cat.getBookmarksCount());
+            buffer.putInt(cat.getTracksCount());
+            buffer.putLong(prefs.getLong("last_local_edit_" + cat.getName(), 0));
+            buffer.putLong(prefs.getLong("last_synced_" + cat.getName(), 0));
+        }
+        
+        byte[] payload = new byte[buffer.position()];
+        buffer.flip();
+        buffer.get(payload);
+        
+        if (java.util.Arrays.equals(sLastSentBookmarkMetadata, payload)) {
+            Log.d("WearSync", "Bookmark metadata unchanged, skipping sync push");
+            return;
+        }
+        sLastSentBookmarkMetadata = payload;
+        
+        Log.d("WearSync", "Sending bookmarks metadata to watch. Count: " + categories.size());
+        getSyncLayer().sendRawMessage(context, app.organicmaps.sdk.sync.WearProtocol.TYPE_BOOKMARKS_METADATA, payload);
+    }
+
+    public static void handleIncomingBookmarksMetadata(Context context, byte[] payload) {
+        ByteBuffer buffer = ByteBuffer.wrap(payload);
+        if (buffer.remaining() < 4) return;
+        int count = buffer.getInt();
+        
+        List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> localCategories = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories();
+        android.content.SharedPreferences prefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
+        
+        for (int i = 0; i < count; i++) {
+            int nameLen = buffer.getInt();
+            byte[] nameBytes = new byte[nameLen];
+            buffer.get(nameBytes);
+            String name = new String(nameBytes, StandardCharsets.UTF_8);
+            buffer.getInt(); // remoteBmkCount
+            buffer.getInt(); // remoteTrkCount
+            long remoteLastEdit = buffer.getLong();
+            long remoteLastSynced = buffer.getLong();
+            
+            long localLastEdit = prefs.getLong("last_local_edit_" + name, 0);
+            long localLastSynced = prefs.getLong("last_synced_" + name, 0);
+            
+            boolean localChanged = localLastEdit > localLastSynced;
+            boolean remoteChanged = remoteLastEdit > localLastSynced;
+            
+            if (localChanged && remoteChanged) {
+                Log.w("WearSync", "CONFLICT detected for category: " + name);
+                Intent intent = new Intent("app.organicmaps.wear.ACTION_BOOKMARK_CONFLICT");
+                intent.putExtra("categoryName", name);
+                context.sendBroadcast(intent);
+            } else if (remoteChanged) {
+                Log.i("WearSync", "Watch has newer updates for: " + name + ". Requesting PULL.");
+                getSyncLayer().sendRawMessage(context, app.organicmaps.sdk.sync.WearProtocol.TYPE_COMMAND, buildCommandPayload(app.organicmaps.sdk.sync.WearProtocol.PATH_BOOKMARK_SYNC_REQUEST, name.getBytes(StandardCharsets.UTF_8)));
+            } else if (localChanged) {
+                Log.i("WearSync", "Phone has newer updates for: " + name + ". Triggering PUSH.");
+                app.organicmaps.sdk.bookmarks.data.BookmarkCategory localCat = null;
+                for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : localCategories) {
+                    if (cat.getName().equals(name)) {
+                        localCat = cat;
+                        break;
+                    }
+                }
+                if (localCat != null) {
+                    sIsSilentSyncInProgress = true;
+                    app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.prepareCategoriesForSharing(new long[]{localCat.getId()}, app.organicmaps.sdk.bookmarks.data.KmlFileType.Binary);
+                }
+            }
+        }
+    }
+
+    public static void handleIncomingBookmarkFile(Context context, byte[] payload) {
+        ByteBuffer buffer = ByteBuffer.wrap(payload);
+        if (buffer.remaining() < 5) return;
+        boolean isLast = buffer.get() == 1;
+        int nameLen = buffer.getInt();
+        if (buffer.remaining() < nameLen) return;
+        byte[] nameBytes = new byte[nameLen];
+        buffer.get(nameBytes);
+        String categoryName = new String(nameBytes, StandardCharsets.UTF_8);
+        
+        byte[] chunk = new byte[buffer.remaining()];
+        buffer.get(chunk);
+        
+        try {
+            String fileName = categoryName.replaceAll("[\\\\/:*?\"<>|]", "_") + ".kml";
+            FileOutputStream fos = sBookmarkOutputStreams.get(categoryName);
+            if (fos == null) {
+                File file = new File(context.getCacheDir(), fileName + ".tmp");
+                fos = new FileOutputStream(file);
+                sBookmarkOutputStreams.put(categoryName, fos);
+            }
+            fos.write(chunk);
+            if (isLast) {
+                fos.close();
+                sBookmarkOutputStreams.remove(categoryName);
+                File tmpFile = new File(context.getCacheDir(), fileName + ".tmp");
+                File finalFile = new File(context.getCacheDir(), fileName);
+                if (finalFile.exists()) finalFile.delete();
+                tmpFile.renameTo(finalFile);
+                
+                Log.d("WearSync", "Successfully received bookmark file from watch: " + categoryName);
+                
+                sHandler.post(() -> {
+                    if (isFrameworkReady()) {
+                        sIsApplyingRemoteUpdate = true;
+                        try {
+                            app.organicmaps.sdk.bookmarks.data.BookmarkManager manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE;
+                            app.organicmaps.sdk.bookmarks.data.BookmarkCategory existing = null;
+                            for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : manager.getCategories()) {
+                                if (cat.getName().equalsIgnoreCase(categoryName)) {
+                                    existing = cat;
+                                    break;
+                                }
+                            }
+                            if (existing != null) {
+                                manager.deleteCategory(existing.getId());
+                            }
+                            manager.loadBookmarksFile(finalFile.getAbsolutePath(), true);
+                            
+                            context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
+                                .edit().putLong("last_synced_" + categoryName, System.currentTimeMillis()).apply();
+                        } finally {
+                            sIsApplyingRemoteUpdate = false;
+                        }
+                    }
+                });
+            }
+        } catch (Exception e) {
+            Log.e("WearSync", "Failed to handle incoming bookmark file", e);
+            sBookmarkOutputStreams.remove(categoryName);
+        }
+    }
+
+    public static byte[] buildCommandPayload(String path, byte[] data) {
+        byte[] pathBytes = path.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocate(4 + pathBytes.length + data.length);
+        buffer.putInt(pathBytes.length);
+        buffer.put(pathBytes);
+        buffer.put(data);
+        return buffer.array();
+    }
+
+    public static boolean isSilentSyncInProgress() {
+        return sIsSilentSyncInProgress;
+    }
+
+    public static void setSilentSyncInProgress(boolean inProgress) {
+        sIsSilentSyncInProgress = inProgress;
+    }
+
+    public static void setApplyingRemoteUpdate(boolean applying) {
+        sIsApplyingRemoteUpdate = applying;
+    }
+
     private static final app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksSharingListener sSharingListener = (result) -> {
-        android.util.Log.d("WearSync", "onPreparedFileForSharing: " + result.getCode() + " path: " + result.getSharingPath());
+        Log.d("WearSync", "onPreparedFileForSharing: " + result.getCode() + " silent=" + sIsSilentSyncInProgress);
         if (result.getCode() == app.organicmaps.sdk.bookmarks.data.BookmarkSharingResult.SUCCESS) {
             String path = result.getSharingPath();
             long[] catIds = result.getCategoriesIds();
-            if (catIds == null || catIds.length == 0) {
-                android.util.Log.w("WearSync", "No category IDs in sharing result");
-                return;
-            }
+            if (catIds == null || catIds.length == 0) return;
+            
             long catId = catIds[0];
             app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategoryById(catId);
             String catName = cat != null ? cat.getName() : "sync_" + catId;
 
-            java.io.File file = new java.io.File(path);
-            long length = file.length();
-            long sent = 0;
-            android.util.Log.i("WearSync", "Starting to send bookmark file: " + catName + " (Size: " + length + " bytes)");
-            try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
-                byte[] buffer = new byte[32 * 1024];
-                int read;
-                while ((read = fis.read(buffer)) != -1) {
-                    sent += read;
-                    boolean isLast = sent >= length;
-                    byte[] chunk = read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read);
-                    android.util.Log.d("WearSync", "Sending bookmark chunk for " + catName + " size=" + chunk.length + " isLast=" + isLast);
-                    getSyncLayer().sendBookmarkFile(app.organicmaps.MwmApplication.sInstance, catName, chunk, isLast);
-                    
-                    // Report progress back to watch so UI can show it
-                    int progress = (int) (sent * 100 / length);
-                    getSyncLayer().sendMapProgress(app.organicmaps.MwmApplication.sInstance, "Bookmarks: " + catName, progress);
+            if (sIsSilentSyncInProgress) {
+                java.io.File file = new java.io.File(path);
+                long length = file.length();
+                Log.i("WearSync", "Silent pushing bookmark file to watch: " + catName + " (" + length + " bytes)");
+                try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+                    byte[] buffer = new byte[32 * 1024];
+                    int read;
+                    long sent = 0;
+                    while ((read = fis.read(buffer)) != -1) {
+                        sent += read;
+                        boolean isLast = sent >= length;
+                        byte[] chunk = read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read);
+                        getSyncLayer().sendBookmarkFile(app.organicmaps.MwmApplication.sInstance, catName, chunk, isLast);
+                        if (isLast) {
+                            app.organicmaps.MwmApplication.sInstance.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
+                                .edit().putLong("last_synced_" + catName, System.currentTimeMillis()).apply();
+                            sIsSilentSyncInProgress = false;
+                        }
+                    }
+                } catch (java.io.IOException e) {
+                    Log.e("WearSync", "Failed to silent push bookmarks", e);
+                    sIsSilentSyncInProgress = false;
                 }
-                android.util.Log.i("WearSync", "Finished sending bookmark file: " + catName);
-            }
-            catch (java.io.IOException e) {
-                android.util.Log.e("WearSync", "Failed to send bookmark file: " + catName, e);
             }
         } else {
-            android.util.Log.w("WearSync", "Bookmark preparation failed with code: " + result.getCode());
+            sIsSilentSyncInProgress = false;
         }
     };
 
     private static final app.organicmaps.sdk.bookmarks.data.DataChangedListener sBookmarkListener = () -> {
-        sHandler.removeCallbacks(sSyncBookmarksRunnable);
-        sHandler.postDelayed(sSyncBookmarksRunnable, 1000);
+        if (sIsApplyingRemoteUpdate) return;
+        Context context = app.organicmaps.MwmApplication.sInstance;
+        if (context == null) return;
+        
+        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
+        List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories();
+        
+        boolean anyChanged = false;
+        android.content.SharedPreferences.Editor editor = syncPrefs.edit();
+        long now = System.currentTimeMillis();
+        
+        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : categories) {
+            String name = cat.getName();
+            // Create a fingerprint of the category to detect renames, edits, and count changes
+            String fingerprint = name + ":" + cat.getBookmarksCount() + ":" + cat.getTracksCount() + ":" + cat.isVisible();
+            String lastFingerprint = syncPrefs.getString("fp_" + name, "");
+            
+            if (!fingerprint.equals(lastFingerprint)) {
+                Log.d("WearSync", "Bookmark change detected for " + name + " (User Action). Fingerprint: " + fingerprint);
+                editor.putLong("last_local_edit_" + name, now);
+                editor.putString("fp_" + name, fingerprint);
+                anyChanged = true;
+            }
+        }
+        if (anyChanged) {
+            editor.apply();
+            sHandler.removeCallbacks(sSyncBookmarksRunnable);
+            sHandler.postDelayed(sSyncBookmarksRunnable, 1000);
+        }
     };
+
+    private static Location sLastSentLocation = null;
+    private static long sLastNavStatusTime = 0;
+    private static String sLastSentNextStreet = "";
+    private static int sLastSentDistanceToTurn = -1;
 
     private static final app.organicmaps.sdk.location.LocationListener sLocationListener = (location) -> {
         Context context = app.organicmaps.MwmApplication.sInstance;
         if (context == null) return;
-        
-        // Sync location even when not navigating (for companion mode)
         if (isFrameworkReady()) {
             RoutingInfo info = app.organicmaps.sdk.routing.RoutingController.get().getCachedRoutingInfo();
-            getSyncLayer().updateNavigation(context, info, location);
-        }
-    };
-
-    private static long sLastLocalChangeTime = 0;
-    private static long sLastRemoteAppliedTime = 0;
-
-    public static void onLocalTrafficSent() {
-        sLastLocalChangeTime = System.currentTimeMillis();
-    }
-
-    private static final android.content.SharedPreferences.OnSharedPreferenceChangeListener sPrefsListener = (prefs, key) -> {
-        if (key == null) return;
-        if (key.startsWith("pref_wear_os_") && !key.equals("pref_wear_os_last_sync_timestamp")) {
-            if (SettingsSyncManager.getInstance(app.organicmaps.MwmApplication.sInstance).isApplyingRemoteUpdates()) {
-                return;
-            }
+            long now = android.os.SystemClock.elapsedRealtime();
             
-            ISyncLayer syncLayer = getSyncLayer();
-            if (syncLayer.isIgnoringPreferenceChanges()) {
-                return;
+            boolean isNavigating = app.organicmaps.sdk.routing.RoutingController.get().isNavigating();
+            boolean forceUpdate = (now - sLastNavStatusTime > 10000); // 10s keep-alive
+            
+            if (!forceUpdate) {
+                if (isNavigating && info != null) {
+                    // Active navigation: update if street changed or significant distance change (5m)
+                    double currentDist = info.distToTurn.mDistance;
+                    if (!info.nextStreet.equals(sLastSentNextStreet) || Math.abs(currentDist - sLastSentDistanceToTurn) > 5) {
+                        forceUpdate = true;
+                    }
+                } else if (sLastSentLocation != null) {
+                    // Stationary: update if moved > 10 meters
+                    if (location.distanceTo(sLastSentLocation) > 10) {
+                        forceUpdate = true;
+                    }
+                } else {
+                    forceUpdate = true;
+                }
             }
 
-            Object value = prefs.getAll().get(key);
-            SettingsSyncManager.getInstance(app.organicmaps.MwmApplication.sInstance).onSettingChanged(key, value, true);
-            syncPreferences(app.organicmaps.MwmApplication.sInstance);
+            if (forceUpdate) {
+                getSyncLayer().updateNavigation(context, info, location);
+                sLastSentLocation = new Location(location);
+                sLastNavStatusTime = now;
+                if (info != null) {
+                    sLastSentNextStreet = info.nextStreet;
+                    sLastSentDistanceToTurn = (int) info.distToTurn.mDistance;
+                }
+            }
         }
     };
 
@@ -150,17 +353,13 @@ public class WearSyncService {
                     .getString("pref_wear_os_backend", "GMS");
         }
         
-        // IDEMPOTENCY GUARD: Don't recreate if already matching
         if (sSyncLayer != null) {
             if ("BLUETOOTH".equals(backend) && sSyncLayer instanceof BluetoothSyncLayer) return;
             if ("GMS".equals(backend) && sSyncLayer instanceof GmsSyncLayer) return;
         }
 
-        android.util.Log.d("WearSync", "initSyncLayer executing. New Backend: " + backend + ". Previous: " + (sSyncLayer != null ? sSyncLayer.getClass().getSimpleName() : "null"));
-
         if (sSyncLayer != null) {
             if (context != null) {
-                android.util.Log.d("WearSync", "Notifying watch about backend switch to: " + backend);
                 sSyncLayer.sendBackendSwitch(context, backend);
             }
             sSyncLayer.stop();
@@ -175,13 +374,11 @@ public class WearSyncService {
         }
 
         if ("BLUETOOTH".equals(backend)) {
-            android.util.Log.d("WearSync", "Selecting Bluetooth backend");
             sSyncLayer = new BluetoothSyncLayer();
             if (context != null) {
                 context.startService(new Intent(context, BluetoothMessageListenerService.class));
             }
         } else {
-            android.util.Log.d("WearSync", "Selecting GMS backend");
             sSyncLayer = new GmsSyncLayer();
             if (context != null) {
                 context.stopService(new Intent(context, BluetoothMessageListenerService.class));
@@ -190,21 +387,27 @@ public class WearSyncService {
         
         if (context != null) {
             sSyncLayer.sendBackendSwitch(context, backend);
-        }
-        
-        // Initial sync ONLY if not already applying
-        if (context != null) {
-            ISyncLayer syncLayer = getSyncLayer();
-            if (!syncLayer.isIgnoringPreferenceChanges()) {
+            if (!getSyncLayer().isIgnoringPreferenceChanges()) {
                 syncPreferences(context);
             }
         }
 
-        // Re-register all listeners to the new sync layer
         for (ISyncLayer.MessageListener listener : sListeners) {
             sSyncLayer.addMessageListener(listener);
         }
     }
+
+    private static final android.content.SharedPreferences.OnSharedPreferenceChangeListener sPrefsListener = (prefs, key) -> {
+        if (key == null) return;
+        if (key.startsWith("pref_wear_os_") && !key.equals("pref_wear_os_last_sync_timestamp")) {
+            if (SettingsSyncManager.getInstance(app.organicmaps.MwmApplication.sInstance).isApplyingRemoteUpdates()) return;
+            if (getSyncLayer().isIgnoringPreferenceChanges()) return;
+
+            Object value = prefs.getAll().get(key);
+            SettingsSyncManager.getInstance(app.organicmaps.MwmApplication.sInstance).onSettingChanged(key, value, true);
+            syncPreferences(app.organicmaps.MwmApplication.sInstance);
+        }
+    };
 
     public static synchronized void addMessageListener(ISyncLayer.MessageListener listener) {
         sListeners.add(listener);
@@ -221,25 +424,22 @@ public class WearSyncService {
             sHandler.post(() -> syncPreferences(context));
             return;
         }
-        
         sHandler.removeCallbacks(sSyncPrefsRunnable);
-        sHandler.postDelayed(sSyncPrefsRunnable, 100); // 100ms debounce for live feel
+        sHandler.postDelayed(sSyncPrefsRunnable, 100); 
     }
 
     public static void onRemotePreferencesApplied() {
-        sLastRemoteAppliedTime = System.currentTimeMillis();
     }
 
     public static void onConnectionEstablished(@NonNull Context context) {
-        Log.d("WearSync", "Connection established, syncing pending settings and handshake");
         getSyncLayer().sendHandshake(context);
         List<SettingsSyncManager.SettingUpdate> dirty = SettingsSyncManager.getInstance(context).getDirtyUpdates();
         if (!dirty.isEmpty()) {
             getSyncLayer().syncPreferenceUpdates(context, dirty);
         } else {
-            // Even if nothing is dirty, send a full sync periodically to ensure consistency
             getSyncLayer().syncPreferences(context);
         }
+        syncBookmarksNow();
     }
 
     public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
@@ -254,6 +454,11 @@ public class WearSyncService {
     public static void sendSearchState(@NonNull Context context, boolean isSearching) {
         if (isFrameworkReady())
             getSyncLayer().sendSearchState(context, isSearching);
+    }
+
+    public static void updateNavigation(@NonNull Context context, @Nullable RoutingInfo info, @Nullable Location location, @Nullable float[] lats, @Nullable float[] lons) {
+        if (isFrameworkReady())
+            getSyncLayer().updateNavigation(context, info, location);
     }
 
     public static void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results, boolean isSearching) {
@@ -294,11 +499,41 @@ public class WearSyncService {
     }
 
     public static void renameBookmarkCategory(@NonNull Context context, @NonNull String oldName, @NonNull String newName) {
+        sIsApplyingRemoteUpdate = true;
+        try {
+            for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
+                if (cat.getName().equals(oldName)) {
+                    cat.setName(newName);
+                    break;
+                }
+            }
+        } finally {
+            sIsApplyingRemoteUpdate = false;
+        }
+
         getSyncLayer().renameBookmarkCategory(context, oldName, newName);
+        
+        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE);
+        long ts = syncPrefs.getLong(oldName, 0);
+        syncPrefs.edit().remove(oldName).putLong(newName, ts > 0 ? ts : System.currentTimeMillis()).apply();
     }
 
     public static void deleteBookmarkCategory(@NonNull Context context, @NonNull String name) {
+        sIsApplyingRemoteUpdate = true;
+        try {
+            for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
+                if (cat.getName().equals(name)) {
+                    app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.deleteCategory(cat.getId());
+                    break;
+                }
+            }
+        } finally {
+            sIsApplyingRemoteUpdate = false;
+        }
+
         getSyncLayer().deleteBookmarkCategory(context, name);
+        context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
+               .edit().remove(name).apply();
     }
 
     public static void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId,
@@ -330,5 +565,9 @@ public class WearSyncService {
 
     public static boolean isWatchAppConnected() {
         return getSyncLayer().isLinked();
+    }
+
+    public static void onLocalTrafficSent() {
+        // Implement logic if needed
     }
 }

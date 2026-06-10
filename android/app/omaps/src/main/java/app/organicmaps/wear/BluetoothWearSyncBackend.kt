@@ -121,8 +121,9 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         val keys = all.map { it.key }
         val values = all.map { it.value }
         val timestamps = all.map { it.timestamp }
+        val versions = all.map { it.version }
 
-        val payload = WearProtocolDataConverter.encodePreferenceUpdates(keys, values, timestamps)
+        val payload = WearProtocolDataConverter.encodePreferenceUpdates(keys, values, timestamps, versions)
         sendMessage(context, WearProtocol.PATH_PREFERENCES_WATCH, payload, WearProtocol.TYPE_PREFERENCES)
         manager.markAsSynced(all)
     }
@@ -134,8 +135,9 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         val keys = updates.map { it.key }
         val values = updates.map { it.value }
         val timestamps = updates.map { it.timestamp }
+        val versions = updates.map { it.version }
 
-        val payload = WearProtocolDataConverter.encodePreferenceUpdates(keys, values, timestamps)
+        val payload = WearProtocolDataConverter.encodePreferenceUpdates(keys, values, timestamps, versions)
         sendMessage(context, WearProtocol.PATH_PREFERENCES_UPDATES, payload, WearProtocol.TYPE_PREFERENCES_UPDATES)
         SettingsSyncManager.getInstance(context).markAsSynced(updates)
     }
@@ -242,6 +244,20 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_UPDATE, buffer.array())
     }
 
+    override fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean) {
+        val nameBytes = categoryName.toByteArray(StandardCharsets.UTF_8)
+        val buffer = ByteBuffer.allocate(1 + 4 + nameBytes.size + data.size)
+        buffer.put(if (isLast) 1.toByte() else 0.toByte())
+        buffer.putInt(nameBytes.size)
+        buffer.put(nameBytes)
+        buffer.put(data)
+        sendMessage(context, WearProtocol.PATH_BOOKMARK_FILE, buffer.array(), WearProtocol.TYPE_BOOKMARK_FILE)
+    }
+
+    override fun sendBookmarksMetadata(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_BOOKMARKS_METADATA, payload, WearProtocol.TYPE_BOOKMARKS_METADATA)
+    }
+
     override fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) {
         val nameBytes = mwmName.toByteArray(StandardCharsets.UTF_8)
         val buffer = ByteBuffer.allocate(4 + nameBytes.size + 8 + 4)
@@ -257,8 +273,6 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
     }
 
     override fun launchPhoneApp(context: Context) {
-        // Bluetooth (Standalone OSS) can't easily wake up a dead process.
-        // Best effort: Log and notify user if possible.
         Log.d(TAG, "Best effort: Phone app launch requested via Bluetooth")
     }
 

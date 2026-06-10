@@ -51,6 +51,8 @@ public class WearMessageRouter {
     private static final String PATH_SEARCH_RESULTS = WearProtocol.PATH_SEARCH_RESULTS;
     private static final String PATH_SEARCH_HISTORY = WearProtocol.PATH_SEARCH_HISTORY;
     private static final String PATH_BOOKMARKS = WearProtocol.PATH_BOOKMARKS;
+    private static final String PATH_BOOKMARKS_METADATA = WearProtocol.PATH_BOOKMARKS_METADATA;
+    private static final String PATH_BOOKMARK_FILE = WearProtocol.PATH_BOOKMARK_FILE;
 
     private static final Handler sMainHandler = new Handler(Looper.getMainLooper());
 
@@ -72,8 +74,10 @@ public class WearMessageRouter {
         int hash = path.hashCode() ^ java.util.Arrays.hashCode(payload);
         long now = System.currentTimeMillis();
         
-        // Robust deduplication (per path)
-        long window = path.equals(PATH_SEARCH_QUERY) ? DEDUPLICATION_WINDOW_SEARCH_MS : DEDUPLICATION_WINDOW_DEFAULT_MS;
+        long window = DEDUPLICATION_WINDOW_DEFAULT_MS;
+        if (path.equals(PATH_SEARCH_QUERY)) window = DEDUPLICATION_WINDOW_SEARCH_MS;
+        else if (path.endsWith("/request") || path.endsWith("/trigger") || path.equals(PATH_PING)) window = 50; // Very short for triggers
+        
         Long lastTime = sLastMsgTimes.get(path);
         Integer lastHash = sLastMsgHashes.get(path);
         
@@ -94,11 +98,7 @@ public class WearMessageRouter {
                 int remoteVersion = WearProtocolDataConverter.decodeHandshakeVersion(finalPayload);
                 Log.i(TAG, "DEBUG_WEAR_PIPELINE: Remote app version: " + remoteVersion);
                 
-                // Mutual handshake: Send ours if we haven't recently
-                // For simplicity, always send it back for now as a confirmation
                 WearSyncService.getSyncLayer().sendHandshake(context);
-                
-                // Also trigger settings sync to ensure consistency after reconnection
                 WearSyncService.getSyncLayer().syncPreferences(context.getApplicationContext());
                 break;
             case PATH_STOP_NAVIGATION:
@@ -255,7 +255,6 @@ public class WearMessageRouter {
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to show bookmark: " + bmkId);
                     app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId);
-                    // Also bring app to foreground if needed
                     Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
                     if (launchIntent != null) {
                         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -275,9 +274,14 @@ public class WearMessageRouter {
                 int color = updateBuf.getInt();
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to update bookmark: " + updateBmkId + " name: " + name + " color: " + color);
-                    app.organicmaps.sdk.bookmarks.data.BookmarkInfo info = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getBookmarkInfo(updateBmkId);
-                    if (info != null) {
-                        info.update(name, new app.organicmaps.sdk.bookmarks.data.Icon(color, 0), "");
+                    WearSyncService.setApplyingRemoteUpdate(true);
+                    try {
+                        app.organicmaps.sdk.bookmarks.data.BookmarkInfo info = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getBookmarkInfo(updateBmkId);
+                        if (info != null) {
+                            info.update(name, new app.organicmaps.sdk.bookmarks.data.Icon(color, 0), "");
+                        }
+                    } finally {
+                        WearSyncService.setApplyingRemoteUpdate(false);
                     }
                 });
                 break;
@@ -286,14 +290,19 @@ public class WearMessageRouter {
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_VISIBLE_TOGGLE");
                 String catName = new String(finalPayload, StandardCharsets.UTF_8);
                 sMainHandler.post(() -> {
-                    for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
-                        if (cat.getName().equals(catName)) {
-                            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch toggling visibility for cat: " + catName);
-                            cat.toggleVisibility();
-                            return;
+                    WearSyncService.setApplyingRemoteUpdate(true);
+                    try {
+                        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
+                            if (cat.getName().equals(catName)) {
+                                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch toggling visibility for cat: " + catName);
+                                cat.toggleVisibility();
+                                return;
+                            }
                         }
+                        Log.w(TAG, "DEBUG_WEAR_PIPELINE: Watch requested toggle for unknown cat: " + catName);
+                    } finally {
+                        WearSyncService.setApplyingRemoteUpdate(false);
                     }
-                    Log.w(TAG, "DEBUG_WEAR_PIPELINE: Watch requested toggle for unknown cat: " + catName);
                 });
                 break;
             case PATH_BOOKMARK_SYNC_REQUEST:
@@ -304,6 +313,7 @@ public class WearMessageRouter {
                     ensureFrameworkInitialized(context, () -> {
                         for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
                             if (cat.getName().equals(syncCatName)) {
+                                WearSyncService.setSilentSyncInProgress(true);
                                 app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.prepareCategoriesForSharing(
                                         new long[]{cat.getId()}, app.organicmaps.sdk.bookmarks.data.KmlFileType.Text);
                                 return;
@@ -328,11 +338,16 @@ public class WearMessageRouter {
                 String newName = new String(newBytes, StandardCharsets.UTF_8);
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to rename cat: " + oldName + " to " + newName);
-                    for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
-                        if (cat.getName().equals(oldName)) {
-                            cat.setName(newName);
-                            return;
+                    WearSyncService.setApplyingRemoteUpdate(true);
+                    try {
+                        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
+                            if (cat.getName().equals(oldName)) {
+                                cat.setName(newName);
+                                return;
+                            }
                         }
+                    } finally {
+                        WearSyncService.setApplyingRemoteUpdate(false);
                     }
                 });
                 break;
@@ -342,11 +357,16 @@ public class WearMessageRouter {
                 String delName = new String(finalPayload, StandardCharsets.UTF_8);
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to delete cat: " + delName);
-                    for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
-                        if (cat.getName().equals(delName)) {
-                            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.deleteCategory(cat.getId());
-                            return;
+                    WearSyncService.setApplyingRemoteUpdate(true);
+                    try {
+                        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
+                            if (cat.getName().equals(delName)) {
+                                app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.deleteCategory(cat.getId());
+                                return;
+                            }
                         }
+                    } finally {
+                        WearSyncService.setApplyingRemoteUpdate(false);
                     }
                 });
                 break;
@@ -440,8 +460,6 @@ public class WearMessageRouter {
                     String countryId = new String(cBytes, StandardCharsets.UTF_8);
                     int progress = buffer.getInt();
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch map progress received: " + countryId + " -> " + progress + "%");
-                    // We can reuse the serving notification for phone-initiated streams, 
-                    // or show a new one if it's a watch-initiated download progress.
                     WearCompanionNotificationManager.showServingNotification(context, countryId, progress);
                 });
                 break;
@@ -454,15 +472,10 @@ public class WearMessageRouter {
                         long dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion();
                         Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested metadata for: " + mwmName + " size: " + size + " version: " + dataVersion);
                         if (size > 0) {
-                            // OPTIMIZATION: Send the MWM header AND footer together with metadata.
-                            // This allows the watch to "open" and validate the file immediately after mounting.
-                            
-                            // 1. Footer: always needed for FilesContainer (last 64KB)
                             int footerSize = (int) Math.min(size, 64 * 1024);
                             long footerOffset = size - footerSize;
                             byte[] footerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, footerOffset, footerSize);
                             
-                            // 2. Header: contains version info (first 10KB usually enough for many sections)
                             int headerSize = (int) Math.min(size, 16 * 1024);
                             byte[] headerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, 0, headerSize);
                             
@@ -487,17 +500,14 @@ public class WearMessageRouter {
 
                 sMainHandler.post(() -> {
                     ensureFrameworkInitialized(context, () -> {
-                        // Stability: Cap size to stay within transport limits (GMS: ~100KB)
                         int safeSize = Math.min(size, 85 * 1024); 
                         byte[] mwmData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, offset, safeSize);
                         if (mwmData != null && mwmData.length > 0) {
                             Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending MWM bytes: " + mwmName + " offset: " + offset + " size: " + mwmData.length + " (requested: " + size + ")");
-                            // Optimization: ISyncLayer implementations will handle compression if beneficial
                             WearSyncService.getSyncLayer().sendMwmBytes(context.getApplicationContext(), mwmName, offset, mwmData);
                         } else {
                             long fileSize = app.organicmaps.sdk.Framework.nativeGetMwmSize(mwmName);
                             Log.w(TAG, "DEBUG_WEAR_PIPELINE: Failed to get MwmBytes for: " + mwmName + " at " + offset + " (MWM file size: " + fileSize + ")");
-                            // We don't send a response, watch has a timeout to clear pending state
                         }
                     });
                 });
@@ -511,10 +521,15 @@ public class WearMessageRouter {
                     android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
                     WearSyncService.getSyncLayer().parsePreferences(context, finalPayload, prefs);
                     
-                    // Notify UI to refresh
                     Intent intent = new Intent("app.organicmaps.wear.SETTINGS_CHANGED");
                     context.sendBroadcast(intent);
                 });
+                break;
+            case PATH_BOOKMARKS_METADATA:
+                sMainHandler.post(() -> WearSyncService.handleIncomingBookmarksMetadata(context, finalPayload));
+                break;
+            case PATH_BOOKMARK_FILE:
+                sMainHandler.post(() -> WearSyncService.handleIncomingBookmarkFile(context, finalPayload));
                 break;
         }
     }

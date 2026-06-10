@@ -126,6 +126,7 @@ public class GmsSyncLayer implements ISyncLayer {
         for (BaseSettingsSyncManager.SettingUpdate update : all) {
             putValue(map, update.key, update.value);
             map.putLong("ts_" + update.key, update.timestamp);
+            map.putLong("v_" + update.key, update.version);
         }
         
         map.putLong("timestamp", System.currentTimeMillis());
@@ -151,6 +152,7 @@ public class GmsSyncLayer implements ISyncLayer {
             DataMap item = new DataMap();
             putValue(item, "v", update.value);
             item.putLong("t", update.timestamp);
+            item.putLong("ver", update.version);
             map.putDataMap(update.key, item);
         }
         
@@ -312,6 +314,19 @@ public class GmsSyncLayer implements ISyncLayer {
 
     @Override
     public void sendMwmMetadata(@NonNull Context context, @NonNull String mwmName, long totalSize, @Nullable byte[] header, @Nullable byte[] footer) {
+        byte[] nameBytes = mwmName.getBytes(StandardCharsets.UTF_8);
+        int headerLen = (header != null) ? header.length : 0;
+        int footerLen = (footer != null) ? footer.length : 0;
+        ByteBuffer buffer = ByteBuffer.allocate(4 + nameBytes.length + 8 + 4 + headerLen + 4 + footerLen);
+        buffer.putInt(nameBytes.length);
+        buffer.put(nameBytes);
+        buffer.putLong(totalSize);
+        buffer.putInt(headerLen);
+        if (header != null) buffer.put(header);
+        buffer.putInt(footerLen);
+        if (footer != null) buffer.put(footer);
+
+        sendMessage(context, WearProtocol.PATH_VIRTUAL_MWM_MOUNT, buffer.array());
     }
 
     @Override
@@ -334,6 +349,14 @@ public class GmsSyncLayer implements ISyncLayer {
     private void sendMessage(Context context, String path, byte[] data) {
         app.organicmaps.wear.WearSyncService.onLocalTrafficSent();
         sendMessageInternal(context, path, data);
+    }
+
+    @Override
+    public void sendRawMessage(@NonNull Context context, byte type, byte[] payload) {
+        String path = WearProtocol.getPath(type);
+        if (path != null) {
+            sendMessage(context, path, payload);
+        }
     }
 
     private void sendMessageInternal(Context context, String path, byte[] data) {
@@ -594,62 +617,46 @@ public class GmsSyncLayer implements ISyncLayer {
         mIsApplyingPreferences = true;
         try {
             app.organicmaps.wear.SettingsSyncManager manager = app.organicmaps.wear.SettingsSyncManager.getInstance(context);
-            android.content.SharedPreferences.Editor editor = prefs.edit();
-            editor.putLong("pref_wear_os_last_sync_timestamp", timestamp);
-
-            String oldBackend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
-
+            
+            List<BaseSettingsSyncManager.SettingUpdate> updates = new ArrayList<>();
             java.util.Map<String, String> mapping = manager.getCanonicalToLocalMapping();
-            for (java.util.Map.Entry<String, String> entry : mapping.entrySet()) {
-                String canonicalKey = entry.getKey();
-                String localKey = entry.getValue();
-                
+            
+            for (String canonicalKey : mapping.keySet()) {
                 if (dataMap.containsKey(canonicalKey)) {
                     Object value = dataMap.get(canonicalKey);
-                    if (canonicalKey.equals("measurementUnits") && value instanceof Integer) {
-                        putIfChanged(editor, prefs, localKey, String.valueOf(value));
-                    } else {
-                        putIfChanged(editor, prefs, localKey, value);
+                    long ts = dataMap.getLong("ts_" + canonicalKey, 0);
+                    long ver = dataMap.getLong("v_" + canonicalKey, 0);
+                    if (value != null) {
+                        updates.add(new BaseSettingsSyncManager.SettingUpdate(canonicalKey, value, ts, ver));
                     }
                 }
             }
             
-            if (dataMap.containsKey("locationSource")) putIfChanged(editor, prefs, "locationSource", dataMap.get("locationSource"));
-            if (dataMap.containsKey("poiCategoriesMask")) putIfChanged(editor, prefs, "poiCategoriesMask", dataMap.get("poiCategoriesMask"));
-            if (dataMap.containsKey("pref_sync_notifications")) putIfChanged(editor, prefs, "pref_sync_notifications", dataMap.get("pref_sync_notifications"));
-            if (dataMap.containsKey("pref_track_recording_active")) putIfChanged(editor, prefs, "pref_track_recording_active", dataMap.get("pref_track_recording_active"));
-            if (dataMap.containsKey("pref_track_recording_start_time")) putIfChanged(editor, prefs, "pref_track_recording_start_time", dataMap.get("pref_track_recording_start_time"));
-
-            editor.apply();
-            app.organicmaps.wear.WearSyncService.onRemotePreferencesApplied();
-
-            String newBackend = prefs.getString(context.getString(app.organicmaps.R.string.pref_wear_os_backend), "GMS");
-            if (!newBackend.equals(oldBackend)) {
-                app.organicmaps.wear.WearSyncService.initSyncLayer(context);
+            for (String key : dataMap.keySet()) {
+                Object val = dataMap.get(key);
+                if (val instanceof DataMap item) {
+                    if (item.containsKey("v") && item.containsKey("t")) {
+                         Object innerVal = item.get("v");
+                         if (innerVal != null) {
+                             updates.add(new BaseSettingsSyncManager.SettingUpdate(key, innerVal, item.getLong("t"), item.getLong("ver", 0)));
+                         }
+                    }
+                }
             }
-            context.sendBroadcast(new android.content.Intent("app.organicmaps.wear.SETTINGS_CHANGED"));
 
+            if (!updates.isEmpty()) {
+                if (manager.applyRemoteUpdates(updates)) {
+                    android.content.SharedPreferences.Editor editor = prefs.edit();
+                    editor.putLong("pref_wear_os_last_sync_timestamp", timestamp);
+                    editor.apply();
+                    app.organicmaps.wear.WearSyncService.initSyncLayer(context);
+                    context.sendBroadcast(new android.content.Intent("app.organicmaps.wear.SETTINGS_CHANGED"));
+                }
+            }
         } finally {
             mIsApplyingPreferences = false;
         }
     }
-
-    private void putIfChanged(android.content.SharedPreferences.Editor editor, android.content.SharedPreferences prefs, String key, Object value) {
-        if (value instanceof Boolean) {
-            if (!prefs.contains(key) || prefs.getBoolean(key, !((Boolean) value)) != (Boolean) value) {
-                editor.putBoolean(key, (Boolean) value);
-            }
-        } else if (value instanceof String) {
-            if (!prefs.contains(key) || !value.equals(prefs.getString(key, null))) {
-                editor.putString(key, (String) value);
-            }
-        } else if (value instanceof Integer) {
-            if (!prefs.contains(key) || prefs.getInt(key, ((Integer) value) + 1) != (Integer) value) {
-                editor.putInt(key, (Integer) value);
-            }
-        }
-    }
-
 
     @Override
     public boolean isIgnoringPreferenceChanges() {
@@ -689,7 +696,6 @@ public class GmsSyncLayer implements ISyncLayer {
             return;
         }
 
-        // Diagnostic: Log what the source node is
         if (sLocalNodeId == null) {
             app.organicmaps.sdk.sync.WearLog.v("PHONE GMS: Received message before local ID known. Source=" + sourceNodeId + " Path=" + path);
         }

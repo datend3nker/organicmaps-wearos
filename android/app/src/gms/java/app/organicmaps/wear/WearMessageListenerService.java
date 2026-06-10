@@ -68,7 +68,7 @@ public class WearMessageListenerService extends WearableListenerService {
                                 if (key.equals("_trigger") || key.equals("protocolVersion")) continue;
                                 DataMap item = dataMap.getDataMap(key);
                                 if (item != null) {
-                                    updates.add(new SettingsSyncManager.SettingUpdate(key, item.get("v"), item.getLong("t")));
+                                    updates.add(new SettingsSyncManager.SettingUpdate(key, item.get("v"), item.getLong("t"), item.getLong("ver", 0)));
                                 }
                             }
                             SettingsSyncManager.getInstance(this).applyRemoteUpdates(updates);
@@ -76,10 +76,11 @@ public class WearMessageListenerService extends WearableListenerService {
                         } else {
                             List<SettingsSyncManager.SettingUpdate> updates = new ArrayList<>();
                             for (String key : dataMap.keySet()) {
-                                if (key.startsWith("ts_")) continue;
+                                if (key.startsWith("ts_") || key.startsWith("v_")) continue;
                                 if (key.equals("timestamp") || key.equals("protocolVersion")) continue;
                                 long ts = dataMap.getLong("ts_" + key, dataMap.getLong("timestamp", 0));
-                                updates.add(new SettingsSyncManager.SettingUpdate(key, dataMap.get(key), ts));
+                                long ver = dataMap.getLong("v_" + key, 0);
+                                updates.add(new SettingsSyncManager.SettingUpdate(key, dataMap.get(key), ts, ver));
                             }
                             SettingsSyncManager.getInstance(this).applyRemoteUpdates(updates);
                             WearSyncService.onRemotePreferencesApplied();

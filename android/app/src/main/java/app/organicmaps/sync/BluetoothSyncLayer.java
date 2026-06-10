@@ -1,12 +1,11 @@
 package app.organicmaps.sync;
 
 import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.location.Location;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -19,18 +18,14 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import app.organicmaps.sdk.routing.RoutingInfo;
-import app.organicmaps.sdk.routing.RoutingOptions;
-import app.organicmaps.sdk.settings.RoadType;
 import app.organicmaps.sdk.search.SearchRecents;
 import app.organicmaps.sdk.search.SearchResult;
 import app.organicmaps.sdk.sync.BluetoothSyncConnection;
@@ -54,7 +49,6 @@ public class BluetoothSyncLayer implements ISyncLayer {
     private BluetoothServerSocket mServerSocket = null;
     private java.net.ServerSocket mTcpServerSocket = null;
     private final List<MessageListener> mListeners = new CopyOnWriteArrayList<>();
-    private boolean mIsListening = false;
     private boolean mIsServerRunning = false;
     private long mLastReceivedTime = 0;
     private long mLastPingSentTime = 0;
@@ -65,7 +59,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
     private final Runnable mHeartbeatRunnable = new Runnable() {
         @Override
         public void run() {
-            long now = System.currentTimeMillis();
+            long now = SystemClock.elapsedRealtime();
             boolean isAlive = (now - mLastReceivedTime) < CONNECTION_TIMEOUT;
             
             if (isAlive) {
@@ -122,13 +116,15 @@ public class BluetoothSyncLayer implements ISyncLayer {
         List<String> keys = new ArrayList<>();
         List<Object> values = new ArrayList<>();
         List<Long> timestamps = new ArrayList<>();
+        List<Long> versions = new ArrayList<>();
         for (BaseSettingsSyncManager.SettingUpdate update : all) {
             keys.add(update.key);
             values.add(update.value);
             timestamps.add(update.timestamp);
+            versions.add(update.version);
         }
 
-        byte[] payload = WearProtocolDataConverter.encodePreferenceUpdates(keys, values, timestamps);
+        byte[] payload = WearProtocolDataConverter.encodePreferenceUpdates(keys, values, timestamps, versions);
         sendRawMessage(context, WearProtocol.TYPE_PREFERENCES, payload);
         manager.markAsSynced(all);
     }
@@ -141,13 +137,15 @@ public class BluetoothSyncLayer implements ISyncLayer {
         List<String> keys = new ArrayList<>();
         List<Object> values = new ArrayList<>();
         List<Long> timestamps = new ArrayList<>();
+        List<Long> versions = new ArrayList<>();
         for (BaseSettingsSyncManager.SettingUpdate update : updates) {
             keys.add(update.key);
             values.add(update.value);
             timestamps.add(update.timestamp);
+            versions.add(update.version);
         }
 
-        byte[] payload = WearProtocolDataConverter.encodePreferenceUpdates(keys, values, timestamps);
+        byte[] payload = WearProtocolDataConverter.encodePreferenceUpdates(keys, values, timestamps, versions);
         sendRawMessage(context, WearProtocol.TYPE_PREFERENCES_UPDATES, payload);
         app.organicmaps.wear.SettingsSyncManager.getInstance(context).markAsSynced(updates);
     }
@@ -312,13 +310,12 @@ public class BluetoothSyncLayer implements ISyncLayer {
     @Override
     public void sendDownloadedMaps(@NonNull Context context, @NonNull List<String> mapIds) {
         Log.d(TAG, "DEBUG_BT: Sending downloaded maps list (" + mapIds.size() + ")");
-        byte[] payload = WearProtocolDataConverter.encodeSearchHistory(mapIds, 100); // Reusing search history encoding (Int count + [Int len + string]*)
+        byte[] payload = WearProtocolDataConverter.encodeSearchHistory(mapIds, 100); 
         sendRawMessage(context, WearProtocol.TYPE_MAP_PHONE_DOWNLOADED, payload);
     }
 
     @Override
     public void requestMwmMetadata(@NonNull Context context, @NonNull String mwmName) {
-        // Phone doesn't usually request this
     }
 
     @Override
@@ -488,7 +485,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
             synchronized (this) {
                 connection = mActiveConnection;
             }
-            boolean appAlive = (System.currentTimeMillis() - mLastReceivedTime) < CONNECTION_TIMEOUT;
+            boolean appAlive = (SystemClock.elapsedRealtime() - mLastReceivedTime) < CONNECTION_TIMEOUT;
             if (connection != null && connection.isConnected() && appAlive) {
                 callback.onConnectionResult(true, ConnectionType.BLUETOOTH);
             } else {
@@ -504,7 +501,6 @@ public class BluetoothSyncLayer implements ISyncLayer {
             mIsApplyingPreferences = true;
             try {
                 if (app.organicmaps.wear.SettingsSyncManager.getInstance(context).applyRemoteUpdates(updates)) {
-                    // Re-initialize sync layer if backend changed, and notify UI
                     app.organicmaps.wear.WearSyncService.initSyncLayer(context);
                     context.sendBroadcast(new android.content.Intent("app.organicmaps.wear.SETTINGS_CHANGED"));
                 }
@@ -529,12 +525,13 @@ public class BluetoothSyncLayer implements ISyncLayer {
             if (buffer.remaining() < 5) break;
             byte type = buffer.get();
             int valLen = buffer.getInt();
-            if (buffer.remaining() < valLen + 8) break;
+            if (buffer.remaining() < valLen + 8 + 8) break;
             byte[] vb = new byte[valLen];
             buffer.get(vb);
             Object value = WearProtocolDataConverter.deserializeValue(type, vb);
             long ts = buffer.getLong();
-            if (value != null) updates.add(new app.organicmaps.wear.SettingsSyncManager.SettingUpdate(key, value, ts));
+            long ver = buffer.getLong();
+            if (value != null) updates.add(new app.organicmaps.wear.SettingsSyncManager.SettingUpdate(key, value, ts, ver));
         }
         return updates;
     }
@@ -554,7 +551,8 @@ public class BluetoothSyncLayer implements ISyncLayer {
         mListeners.remove(listener);
     }
 
-    private void sendRawMessage(@NonNull Context context, byte type, byte[] payload) {
+    @Override
+    public void sendRawMessage(@NonNull Context context, byte type, byte[] payload) {
         if (mExecutor.isShutdown()) return;
         int priority = WearProtocol.getPriority(type);
         mExecutor.execute(new PriorityRunnable(priority, () -> {
@@ -609,11 +607,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
         mIsServerRunning = true;
         new Thread(() -> {
             Log.d(TAG, "REF_TCP_RFCOMM_SUCCESS: Starting Server connection listener threads");
-            
-            // Start TCP server in its own thread (always, to support adb forward for emulators)
             new Thread(this::runTcpServer).start();
-            
-            // Start RFCOMM server if not an emulator
             boolean isEmulator = android.os.Build.PRODUCT.contains("sdk") || android.os.Build.PRODUCT.contains("vbox");
             if (!isEmulator) {
                 runRfcommServer();
@@ -694,7 +688,6 @@ public class BluetoothSyncLayer implements ISyncLayer {
         mActiveConnection = connection;
         startListening(connection);
 
-        // Handshake: Trigger sync immediately when app link established
         Context context = app.organicmaps.MwmApplication.sInstance;
         if (context != null) {
             app.organicmaps.wear.WearSyncService.onConnectionEstablished(context);
@@ -703,10 +696,6 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     private void sleep(long ms) {
         try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
-    }
-
-    private synchronized SyncConnection getOrConnectConnection(@NonNull Context context) {
-        return mActiveConnection;
     }
 
     private synchronized void closeConnection() {
@@ -767,7 +756,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
                         throw new IOException("Protocol version mismatch");
                     }
 
-                    if (len < 0 || len > 15 * 1024 * 1024 || type < 0 || type > 20) {
+                    if (len < 0 || len > 15 * 1024 * 1024 || type < 0 || type > 25) {
                         Log.e(TAG, "DEBUG_BT_PIPELINE: Invalid message header: type=" + type + ", len=" + len + ". Stream desync?");
                         throw new IOException("Protocol desync");
                     }
@@ -783,6 +772,8 @@ public class BluetoothSyncLayer implements ISyncLayer {
                         notifyMessageReceived(WearProtocol.PATH_PREFERENCES_WATCH, payload, "bluetooth_watch");
                     } else if (type == WearProtocol.TYPE_MAP_DOWNLOAD_PROGRESS) {
                         notifyMessageReceived(WearProtocol.PATH_MAP_DOWNLOAD_PROGRESS, payload, "bluetooth_watch");
+                    } else if (type == WearProtocol.TYPE_BOOKMARKS_METADATA) {
+                        notifyMessageReceived(WearProtocol.PATH_BOOKMARKS_METADATA, payload, "bluetooth_watch");
                     }
                 }
             } catch (IOException e) {
@@ -806,7 +797,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void notifyMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId) {
-        mLastReceivedTime = System.currentTimeMillis();
+        mLastReceivedTime = SystemClock.elapsedRealtime();
         app.organicmaps.sdk.sync.WearLog.logReceived("PHONE", "BLUETOOTH", path, data.length);
         for (MessageListener listener : mListeners) {
             listener.onMessageReceived(path, data, sourceNodeId);
@@ -831,6 +822,6 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public boolean isLinked() {
-        return (System.currentTimeMillis() - mLastReceivedTime) < CONNECTION_TIMEOUT;
+        return (SystemClock.elapsedRealtime() - mLastReceivedTime) < CONNECTION_TIMEOUT;
     }
 }

@@ -57,6 +57,33 @@ fun BookmarksScreen(isVisible: Boolean) {
             }
         }
 
+        item {
+            val isAnySyncing = categories.any { it.isSyncing }
+            Chip(
+                onClick = {
+                    app.organicmaps.wear.WatchBookmarkSyncManager.requestSync(context)
+                },
+                label = { Text(if (isAnySyncing) "Syncing..." else "Sync with Phone") },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Sync,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp)
+                    )
+                },
+                colors = if (isAnySyncing) {
+                    ChipDefaults.chipColors(
+                        backgroundColor = MaterialTheme.colors.secondary,
+                        contentColor = Color.Black
+                    )
+                } else {
+                    ChipDefaults.primaryChipColors()
+                },
+                enabled = !isAnySyncing && navState.isPhoneConnected && !navState.standaloneMode,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            )
+        }
+
         if (categories.isEmpty()) {
             item {
                 Text(
@@ -82,32 +109,6 @@ fun BookmarksScreen(isVisible: Boolean) {
                     onToggleVisibility = {
                         WearCommandService.toggleBookmarkCategory(context, category.name)
                     }
-                )
-            }
-            item {
-                val isAnySyncing = categories.any { it.isSyncing }
-                Chip(
-                    onClick = {
-                        categories.forEach { WearCommandService.syncCategory(context, it.name) }
-                    },
-                    label = { Text(if (isAnySyncing) "Syncing..." else "Sync all to Watch") },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Sync,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    },
-                    colors = if (isAnySyncing) {
-                        ChipDefaults.chipColors(
-                            backgroundColor = MaterialTheme.colors.secondary,
-                            contentColor = Color.Black
-                        )
-                    } else {
-                        ChipDefaults.primaryChipColors()
-                    },
-                    enabled = !isAnySyncing,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                 )
             }
         }
@@ -147,7 +148,9 @@ fun BookmarkCategoryChip(category: BookmarkCategoryItem, onClick: () -> Unit, on
 fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
     val context = LocalContext.current
     
-    val bookmarks = remember(category.name) {
+    var bookmarks by remember { mutableStateOf<List<app.organicmaps.sdk.bookmarks.data.BookmarkInfo>>(emptyList()) }
+
+    fun refreshBookmarks() {
         val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
         val cat = manager.getCategories().find { it.name.equals(category.name, ignoreCase = true) }
         if (cat != null) {
@@ -156,8 +159,21 @@ fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
                 val bmkId = cat.getBookmarkIdByPosition(i)
                 manager.getBookmarkInfo(bmkId)?.let { list.add(it) }
             }
-            list
-        } else emptyList()
+            bookmarks = list
+        } else {
+            bookmarks = emptyList()
+        }
+    }
+
+    DisposableEffect(category.name) {
+        refreshBookmarks()
+        val listener = app.organicmaps.sdk.bookmarks.data.DataChangedListener {
+            refreshBookmarks()
+        }
+        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addCategoriesUpdatesListener(listener)
+        onDispose {
+            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.removeCategoriesUpdatesListener(listener)
+        }
     }
 
     var editingBookmark by remember { mutableStateOf<app.organicmaps.sdk.bookmarks.data.BookmarkInfo?>(null) }
@@ -187,14 +203,6 @@ fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
                     style = MaterialTheme.typography.caption2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
-            item {
-                Chip(
-                    onClick = { WearCommandService.syncCategory(context, category.name) },
-                    label = { Text("Sync from phone") },
-                    icon = { Icon(Icons.Default.Sync, contentDescription = null) },
-                    modifier = Modifier.fillMaxWidth()
                 )
             }
         } else {

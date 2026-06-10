@@ -66,8 +66,8 @@
     <androidx.preference.ListPreference
       android:key="@string/pref_wear_os_munits"
       android:title="@string/measurement_units"
-      android:entries="@array/measument_units"
-      android:entryValues="@array/measument_units_values"
+      android:entries="@array/measurement_units"
+      android:entryValues="@array/measurement_units_values"
       android:defaultValue="0" />
   </androidx.preference.PreferenceCategory>
 

@@ -37,6 +37,11 @@ class BookmarkFileHandler(
 
     private fun saveBookmarkChunk(context: Context, categoryName: String, data: ByteArray, isLast: Boolean) {
         try {
+            if (data.isNotEmpty()) {
+                val hexStr = data.take(minOf(data.size, 16)).joinToString(" ") { "%02X".format(it) }
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Chunk for $categoryName. Header bytes (hex): $hexStr")
+            }
+
             val fileName = categoryName.replace("[\\\\/:*?\"<>|]", "_") + ".kml"
             val fos = bookmarkOutputStreams.getOrPut(categoryName) {
                 val file = File(context.cacheDir, fileName + ".tmp")
@@ -53,7 +58,6 @@ class BookmarkFileHandler(
                 
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Finalizing bookmark file: $fileName (Total size: ${tmpFile.length()} bytes)")
                 
-                // Use more robust move/rename
                 if (finalFile.exists()) finalFile.delete()
                 val renamed = tmpFile.renameTo(finalFile)
                 if (!renamed) {
@@ -78,29 +82,29 @@ class BookmarkFileHandler(
                         val wearApp = context.applicationContext as app.organicmaps.wear.WearApplication
                         if (!wearApp.isFullyInitialized) {
                             Log.w(TAG, "DEBUG_WEAR_PIPELINE: Native framework not yet initialized. Postponing bookmark load.")
-                            // We still mark it as not syncing so user can try again or wait for auto-init
-                            NavigationStateHolder.update { current ->
-                                val updated = current.bookmarkCategories.map {
-                                    if (it.name.equals(categoryName, ignoreCase = true)) it.copy(isSyncing = false) else it
-                                }
-                                current.copy(bookmarkCategories = updated)
-                            }
                             return@post
                         }
 
                         val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
-                        
-                        // Robust category removal - try by name
                         val existingByName = manager.getCategories().find { it.name.equals(categoryName, ignoreCase = true) }
-                        if (existingByName != null) {
-                            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Deleting existing category '$categoryName' (ID: ${existingByName.id}) before importing update")
-                            manager.deleteCategory(existingByName.id)
-                        }
+                        
+                        app.organicmaps.wear.WatchBookmarkSyncManager.isApplyingRemoteUpdate = true
+                        try {
+                            if (existingByName != null) {
+                                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Deleting existing category '$categoryName' (ID: ${existingByName.id}) before importing update")
+                                manager.deleteCategory(existingByName.id)
+                            }
 
-                        if (finalFile.exists()) {
-                            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Loading bookmarks from file: ${finalFile.absolutePath}")
-                            manager.loadBookmarksFile(finalFile.absolutePath, true)
-                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmarks synchronized"))
+                            if (finalFile.exists()) {
+                                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Loading bookmarks from file: ${finalFile.absolutePath} (Size: ${finalFile.length()})")
+                                manager.loadBookmarksFile(finalFile.absolutePath, true)
+                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmarks synchronized"))
+                                
+                                context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
+                                    .edit().putLong("last_synced_$categoryName", System.currentTimeMillis()).apply()
+                            }
+                        } finally {
+                            app.organicmaps.wear.WatchBookmarkSyncManager.isApplyingRemoteUpdate = false
                         }
                         
                         NavigationStateHolder.update { current ->
@@ -129,7 +133,6 @@ class BookmarkFileHandler(
                                  else finalCats.add(newCat)
                              }
                              
-                             // Clear syncing flag for the one we just processed
                              val processedIdx = finalCats.indexOfFirst { it.name.equals(categoryName, ignoreCase = true) }
                              if (processedIdx != -1) {
                                  finalCats[processedIdx] = finalCats[processedIdx].copy(isSyncing = false)

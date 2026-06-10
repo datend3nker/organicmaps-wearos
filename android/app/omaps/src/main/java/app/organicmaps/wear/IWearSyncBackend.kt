@@ -33,6 +33,8 @@ interface IWearSyncBackend {
     fun deleteBookmarkCategory(context: Context, name: String)
     fun showBookmarkOnPhone(context: Context, bmkId: Long)
     fun updateBookmarkOnPhone(context: Context, bmkId: Long, name: String, color: Int)
+    fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean)
+    fun sendBookmarksMetadata(context: Context, payload: ByteArray)
     fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int)
     fun launchPhoneApp(context: Context)
     fun sendHandshake(context: Context)

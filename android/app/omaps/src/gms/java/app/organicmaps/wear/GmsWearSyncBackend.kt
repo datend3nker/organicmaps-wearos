@@ -100,6 +100,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         for (update in all) {
             putValue(map, update.key, update.value)
             map.putLong("ts_" + update.key, update.timestamp)
+            map.putLong("v_" + update.key, update.version)
         }
         
         map.putLong("timestamp", System.currentTimeMillis())
@@ -128,6 +129,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
             val item = com.google.android.gms.wearable.DataMap()
             putValue(item, "v", update.value)
             item.putLong("t", update.timestamp)
+            item.putLong("ver", update.version)
             map.putDataMap(update.key, item)
         }
         
@@ -171,8 +173,9 @@ class GmsWearSyncBackend : IWearSyncBackend {
         putDataMapReq.dataMap.putByte("protocolVersion", WearProtocol.PROTOCOL_VERSION)
         putDataMapReq.dataMap.putStringArrayList("history", history)
         putDataMapReq.dataMap.putLong("timestamp", System.currentTimeMillis())
-        putDataMapReq.setUrgent()
-        com.google.android.gms.wearable.Wearable.getDataClient(context).putDataItem(putDataMapReq.asPutDataRequest())
+        val putDataReq = putDataMapReq.asPutDataRequest()
+        putDataReq.setUrgent()
+        com.google.android.gms.wearable.Wearable.getDataClient(context).putDataItem(putDataReq)
     }
 
     override fun startNavigation(context: Context) {
@@ -200,7 +203,6 @@ class GmsWearSyncBackend : IWearSyncBackend {
                     Log.d("GmsWearSync", "DEBUG_GMS: Found phone via capability: $nodeName")
                     callback(true, nodeName)
                 } else {
-                    // FALLBACK: Physical nodes
                     val physicalNodes = Wearable.getNodeClient(context).connectedNodes.await()
                     val hasPhone = physicalNodes.any { !it.displayName.contains("Watch", ignoreCase = true) }
                     if (hasPhone) {
@@ -237,8 +239,9 @@ class GmsWearSyncBackend : IWearSyncBackend {
         putDataMapReq.dataMap.putByte("protocolVersion", WearProtocol.PROTOCOL_VERSION)
         putDataMapReq.dataMap.putString("countryId", mapId)
         putDataMapReq.dataMap.putInt("progress", progress)
-        putDataMapReq.setUrgent()
-        Wearable.getDataClient(context).putDataItem(putDataMapReq.asPutDataRequest())
+        val putDataReq = putDataMapReq.asPutDataRequest()
+        putDataReq.setUrgent()
+        Wearable.getDataClient(context).putDataItem(putDataReq)
     }
 
     override fun toggleTrackRecording(context: Context) {
@@ -288,6 +291,20 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_UPDATE, buffer.array())
     }
 
+    override fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean) {
+        val nameBytes = categoryName.toByteArray(StandardCharsets.UTF_8)
+        val buffer = ByteBuffer.allocate(1 + 4 + nameBytes.size + data.size)
+        buffer.put(if (isLast) 1.toByte() else 0.toByte())
+        buffer.putInt(nameBytes.size)
+        buffer.put(nameBytes)
+        buffer.put(data)
+        sendMessage(context, WearProtocol.PATH_BOOKMARK_FILE, buffer.array())
+    }
+
+    override fun sendBookmarksMetadata(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_BOOKMARKS_METADATA, payload)
+    }
+
     override fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) {
         val nameBytes = mwmName.toByteArray(StandardCharsets.UTF_8)
         val buffer = ByteBuffer.allocate(4 + nameBytes.size + 8 + 4)
@@ -309,13 +326,12 @@ class GmsWearSyncBackend : IWearSyncBackend {
                 val nodes = nodeClient.connectedNodes.await()
                 if (nodes.isEmpty()) return@launch
                 
-                // Determine target package based on our own flavor
                 val phonePackage = if (BuildConfig.APPLICATION_ID.endsWith(".debug")) 
                                      "app.organicmaps.debug" 
                                    else "app.organicmaps"
 
                 val remoteActivityHelper = androidx.wear.remote.interactions.RemoteActivityHelper(context)
-                val result = remoteActivityHelper.startRemoteActivity(
+                remoteActivityHelper.startRemoteActivity(
                     android.content.Intent(android.content.Intent.ACTION_MAIN)
                         .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
                         .setComponent(android.content.ComponentName(phonePackage, "app.organicmaps.SplashActivity")),
@@ -373,16 +389,6 @@ class GmsWearSyncBackend : IWearSyncBackend {
                 }
             }
 
-            app.organicmaps.sdk.sync.WearLog.d("Target nodes search for $path. Total nodes seen: ${targetNodes.size}")
-            targetNodes.forEach { 
-                val isSelf = it.id == localNodeId
-                val isWatch = it.displayName.contains("Watch", ignoreCase = true) || 
-                              it.displayName.contains("Round", ignoreCase = true) ||
-                              it.displayName.contains("Square", ignoreCase = true) ||
-                              it.displayName.contains("Wear", ignoreCase = true)
-                app.organicmaps.sdk.sync.WearLog.d("  - Node: ${it.displayName} ID: ${it.id} [Self=$isSelf, Watch=$isWatch]") 
-            }
-
             val validTargets = targetNodes.filter { 
                 val isSelf = it.id == localNodeId
                 val name = it.displayName.lowercase()
@@ -391,14 +397,6 @@ class GmsWearSyncBackend : IWearSyncBackend {
                               name.contains("square") ||
                               name.contains("wear")
                 !isSelf && !isWatch 
-            }
-            
-            if (validTargets.isEmpty()) {
-                app.organicmaps.sdk.sync.WearLog.w("NO VALID TARGETS found for $path")
-            } else {
-                validTargets.forEach { 
-                    app.organicmaps.sdk.sync.WearLog.d("Targeting node: ${it.displayName} (${it.id}) for $path")
-                }
             }
             
             for (node in validTargets) {

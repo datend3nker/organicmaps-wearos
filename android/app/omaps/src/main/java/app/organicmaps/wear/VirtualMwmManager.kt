@@ -8,16 +8,16 @@ import java.util.BitSet
 import java.util.concurrent.ConcurrentHashMap
 import app.organicmaps.sdk.settings.StoragePathManager
 import app.organicmaps.sdk.Framework
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Manage the local sparse-cache and bridge the JNI calls to the Transport layer.
  */
 object VirtualMwmManager {
     private const val TAG = "VirtualMwmManager"
-    private const val BLOCK_SIZE = 64 * 1024 // 64KB blocks for tracking
+    private const val BLOCK_SIZE = 64 * 1024 
     
     private val mwmFiles = ConcurrentHashMap<String, RandomAccessFile>()
     private val mwmPaths = ConcurrentHashMap<String, String>()
@@ -37,7 +37,6 @@ object VirtualMwmManager {
     fun onDataRequired(mwmNameWithExt: String, offset: Long, size: Int) {
         try {
             val mwmName = if (mwmNameWithExt.endsWith(".mwm")) mwmNameWithExt.substringBeforeLast(".") else mwmNameWithExt
-            // Efficiency: Check what we actually need from this range
             val tracker = mwmBlockTrackers.getOrPut(mwmName) { BitSet() }
             val pending = mwmPendingTrackers.getOrPut(mwmName) { BitSet() }
             
@@ -58,14 +57,11 @@ object VirtualMwmManager {
 
             if (!anyMissing) {
                 if (hasData(mwmName, offset, size)) {
-                    Log.v(TAG, "DEBUG_WEAR_PIPELINE: Native requested data already present for $mwmName: offset=$offset, size=$size")
-                    // Use launch to avoid recursion on the same thread
-                    CoroutineScope(Dispatchers.Main).launch {
-                        try {
-                            nativeDataArrived(mwmName, offset, size)
-                        } catch (e: Throwable) {
-                            Log.e(TAG, "Native crash in arrived data: ${e.message}")
-                        }
+                    Log.v(TAG, "DEBUG_WEAR_PIPELINE: Native requested data already present for $mwmName: offset=$offset, size=$size. Notifying synchronously.")
+                    try {
+                        nativeDataArrived(mwmName, offset, size)
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "Native crash in arrived data: ${e.message}")
                     }
                 } else {
                     Log.v(TAG, "DEBUG_WEAR_PIPELINE: Native requested data pending for $mwmName: offset=$offset, size=$size")
@@ -75,7 +71,6 @@ object VirtualMwmManager {
 
             Log.d(TAG, "DEBUG_WEAR_PIPELINE: Native requested data from phone: $mwmName, offset=$offset, size=$size (Blocks: $startBlock-$endBlock)")
             
-            // BACKBURNER: Skip chunk requests if map is already being fully pulled
             if (WearMapDownloader.currentMap.value == mwmName && 
                 WearMapDownloader.downloadState.value == WearMapDownloader.DownloadState.STREAMING_FROM_PHONE) {
                 Log.v(TAG, "DEBUG_WEAR_PIPELINE: Skipping chunk request for map currently being fully PULLED: $mwmName")
@@ -87,13 +82,12 @@ object VirtualMwmManager {
             val context = WearApplication.instance
             WearCommandService.requestMwmBytes(context, mwmName, offset, size)
             
-            // Resilience: timeout to clear pending state if phone doesn't respond
             saveHandler.postDelayed({
                 if (isPending(mwmName, offset, size)) {
                     Log.w(TAG, "DEBUG_WEAR_PIPELINE: Request TIMEOUT for $mwmName at $offset ($size)")
                     clearPending(mwmName, offset, size)
                 }
-            }, 15000) // 15s timeout
+            }, 15000) 
         } catch (e: Throwable) {
             Log.e(TAG, "Exception in onDataRequired: ${e.message}", e)
         }
@@ -103,7 +97,7 @@ object VirtualMwmManager {
     @Synchronized
     fun onBytesReceived(mwmNameWithExt: String, offset: Long, data: ByteArray) {
         val mwmName = if (mwmNameWithExt.endsWith(".mwm")) mwmNameWithExt.substringBeforeLast(".") else mwmNameWithExt
-        clearPending(mwmName, offset, data.size.toInt())
+        clearPending(mwmName, offset, data.size)
 
         if (hasData(mwmName, offset, data.size)) {
             Log.v(TAG, "DEBUG_WEAR_PIPELINE: Ignoring duplicate data for $mwmName at $offset (size=${data.size})")
@@ -120,16 +114,12 @@ object VirtualMwmManager {
                 }
                 markDataReceived(mwmName, offset, data.size)
                 
-                // FIX: BREAK THE CALL CHAIN - Use async dispatch to avoid native re-entrancy
-                CoroutineScope(Dispatchers.Main).launch {
-                    try {
-                        nativeDataArrived(mwmName, offset, data.size)
-                    } catch (e: Throwable) {
-                        Log.e(TAG, "Native crash prevented in nativeDataArrived: ${e.message}")
-                    }
+                try {
+                    nativeDataArrived(mwmName, offset, data.size)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Native crash prevented in nativeDataArrived: ${e.message}")
                 }
                 
-                // If this is the footer, trigger a map reload so the engine can pick it up
                 val totalSize = raf.length()
                 val lastBlock = ((totalSize - 1) / BLOCK_SIZE).toInt()
                 val receivedStartBlock = (offset / BLOCK_SIZE).toInt()
@@ -224,7 +214,7 @@ object VirtualMwmManager {
             }
         }.let {
             saveHandler.removeCallbacks(it)
-            saveHandler.postDelayed(it, 5000) // Debounce 5s
+            saveHandler.postDelayed(it, 5000) 
         }
     }
 
@@ -247,11 +237,7 @@ object VirtualMwmManager {
         if (!bitsFile.exists()) return null
         try {
             val bytes = bitsFile.readBytes()
-            val tracker = BitSet.valueOf(bytes)
-            synchronized(tracker) {
-                // Ensure initial state is loaded under synchronization if ever used immediately
-                return tracker
-            }
+            return BitSet.valueOf(bytes)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load bitset for $mwmPath: ${e.message}")
             return null
@@ -278,15 +264,11 @@ object VirtualMwmManager {
         mountedMwms.toList().forEach { unmount(it) }
     }
 
-    /**
-     * Delete old virtual maps and bitsets that haven't been modified recently.
-     */
     fun prune(context: Context, maxAgeDays: Int = 7) {
         Log.d(TAG, "DEBUG_WEAR_PIPELINE: Pruning virtual files...")
         try {
             val storageDir = File(StoragePathManager.findMapsStorage(context))
             
-            // Try to get version from native, fallback to scanning directories if native not ready
             val dataVersion = try {
                 val v = Framework.nativeGetDataVersion()
                 if (v > 0) v.toString() else null
@@ -307,8 +289,6 @@ object VirtualMwmManager {
                         val mwmName = file.name.substringBefore(".")
                         if (isMounted(mwmName)) return@forEach
                         
-                        // VALIDATION: Check if this file was fully streamed or at least has the footer.
-                        // If not, it will cause "IO error" on next scan.
                         val bitsFile = File(file.absolutePath + ".bits")
                         val isComplete = if (bitsFile.exists()) {
                             try {
@@ -318,9 +298,7 @@ object VirtualMwmManager {
                                 lastBlock >= 0 && tracker.get(lastBlock)
                             } catch (e: Exception) { false }
                         } else {
-                            // No bits file but .mwm exists? Might be a real download or a failure.
-                            // If it's small, it's likely a failed virtual mount.
-                            file.length() > 1024 * 1024 // assume >1MB is real map
+                            file.length() > 1024 * 1024 
                         }
 
                         if (!isComplete) {
@@ -333,7 +311,6 @@ object VirtualMwmManager {
                             if (bitsFile.exists()) bitsFile.delete()
                         }
                     } else if (file.name.endsWith(".bits")) {
-                        // Cleanup orphan bits files
                         val mwmFile = File(file.absolutePath.substringBeforeLast("."))
                         if (!mwmFile.exists()) file.delete()
                     }
@@ -344,100 +321,90 @@ object VirtualMwmManager {
         }
     }
 
-    fun mount(context: Context, mwmNameWithExt: String, totalSize: Long, headerData: ByteArray? = null, footerData: ByteArray? = null): String? {
+    suspend fun mount(context: Context, mwmNameWithExt: String, totalSize: Long, headerData: ByteArray? = null, footerData: ByteArray? = null): String? {
         val mwmName = if (mwmNameWithExt.endsWith(".mwm")) mwmNameWithExt.substringBeforeLast(".") else mwmNameWithExt
-        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Mounting virtual MWM: $mwmName, size: $totalSize (Header: ${headerData?.size ?: 0}, Footer: ${footerData?.size ?: 0})")
-        // Resilience: If already mounted, unmount first to ensure clean state
+        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Mounting virtual MWM: $mwmName, size: $totalSize")
+        
         if (mountedMwms.contains(mwmName)) {
             unmount(mwmName)
         }
-        try {
-            val storageDir = File(StoragePathManager.findMapsStorage(context))
-            val dataVersion = Framework.nativeGetDataVersion()
-            val versionDir = File(storageDir, dataVersion.toString())
-            if (!versionDir.exists()) {
-                Log.d(TAG, "Creating version directory: ${versionDir.absolutePath}")
-                versionDir.mkdirs()
-            }
-            
-            val mwmFile = File(versionDir, "$mwmName.mwm")
-            val path = mwmFile.absolutePath
-            
-            // Resilience: If file exists but size differs, reset it
-            if (mwmFile.exists() && mwmFile.length() != totalSize) {
-                Log.w(TAG, "DEBUG_WEAR_PIPELINE: MWM file size mismatch ($mwmName), resetting: $path (Expected: $totalSize, Actual: ${mwmFile.length()})")
-                mwmFiles.remove(mwmName)?.close()
-                mwmFile.delete()
-                File("$path.bits").delete()
-                mwmBlockTrackers.remove(mwmName)
-            }
-
-            val raf = RandomAccessFile(mwmFile, "rw")
+        
+        return withContext(Dispatchers.IO) {
             try {
-                if (raf.length() != totalSize) {
-                    Log.d(TAG, "Setting length for $mwmName to $totalSize")
-                    raf.setLength(totalSize)
+                val storageDir = File(StoragePathManager.findMapsStorage(context))
+                val dataVersion = withContext(Dispatchers.Main) { Framework.nativeGetDataVersion() }
+                val versionDir = File(storageDir, dataVersion.toString())
+                if (!versionDir.exists()) {
+                    versionDir.mkdirs()
                 }
-
-                // Restore tracker from disk or create new BEFORE marking as mounted
-                if (!mwmBlockTrackers.containsKey(mwmName)) {
-                    val loaded = loadTracker(path) ?: BitSet()
-                    mwmBlockTrackers.putIfAbsent(mwmName, loaded)
-                }
-
-                mwmFiles[mwmName] = raf
-                mwmPaths[mwmName] = path
-                mountedMwms.add(mwmName)
                 
-                // Write header if provided
-                if (headerData != null && headerData.isNotEmpty()) {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Writing received header for $mwmName")
-                    synchronized(raf) {
-                        raf.seek(0)
-                        raf.write(headerData)
+                val mwmFile = File(versionDir, "$mwmName.mwm")
+                val path = mwmFile.absolutePath
+                
+                if (mwmFile.exists() && mwmFile.length() != totalSize) {
+                    mwmFiles.remove(mwmName)?.close()
+                    mwmFile.delete()
+                    File("$path.bits").delete()
+                    mwmBlockTrackers.remove(mwmName)
+                }
+
+                val raf = RandomAccessFile(mwmFile, "rw")
+                try {
+                    if (raf.length() != totalSize) {
+                        raf.setLength(totalSize)
                     }
-                    markDataReceived(mwmName, 0, headerData.size)
-                }
 
-                // Write footer if provided
-                if (footerData != null && footerData.isNotEmpty()) {
-                    val footerOffset = totalSize - footerData.size
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Writing received footer for $mwmName at $footerOffset")
-                    synchronized(raf) {
-                        raf.seek(footerOffset)
-                        raf.write(footerData)
+                    if (!mwmBlockTrackers.containsKey(mwmName)) {
+                        val loaded = loadTracker(path) ?: BitSet()
+                        mwmBlockTrackers.putIfAbsent(mwmName, loaded)
                     }
-                    markDataReceived(mwmName, footerOffset, footerData.size)
-                }
 
-                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Notifying native core about mounted virtual MWM: $mwmName")
-                CoroutineScope(Dispatchers.Main).launch {
-                    nativeNotifyMounted(mwmName, path, totalSize)
+                    mwmFiles[mwmName] = raf
+                    mwmPaths[mwmName] = path
+                    mountedMwms.add(mwmName)
+                    
+                    if (headerData != null && headerData.isNotEmpty()) {
+                        synchronized(raf) {
+                            raf.seek(0)
+                            raf.write(headerData)
+                        }
+                        markDataReceived(mwmName, 0, headerData.size)
+                    }
+
+                    if (footerData != null && footerData.isNotEmpty()) {
+                        val footerOffset = totalSize - footerData.size
+                        synchronized(raf) {
+                            raf.seek(footerOffset)
+                            raf.write(footerData)
+                        }
+                        markDataReceived(mwmName, footerOffset, footerData.size)
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        nativeNotifyMounted(mwmName, path, totalSize)
+                        
+                        val lastBlock = ((totalSize - 1) / BLOCK_SIZE).toInt()
+                        val tracker = mwmBlockTrackers[mwmName]
+                        if (tracker != null && !tracker.get(lastBlock)) {
+                            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Footer missing for $mwmName, requesting last block")
+                            val footerOffset = (lastBlock * BLOCK_SIZE).toLong()
+                            val footerSize = (totalSize - footerOffset).toInt()
+                            markPending(mwmName, footerOffset, footerSize)
+                            WearCommandService.requestMwmBytes(context, mwmName, footerOffset, footerSize)
+                        } else {
+                            ReloadWorldMapsDebouncer.reload()
+                        }
+                    }
+                    
+                    return@withContext path
+                } catch (e: Exception) {
+                    raf.close()
+                    throw e
                 }
-                
-                // CRITICAL: Ensure the MWM footer (section index) is available before reloading maps.
-                // The native FilesContainer needs the footer to open the file.
-                val lastBlock = ((totalSize - 1) / BLOCK_SIZE).toInt()
-                val tracker = mwmBlockTrackers[mwmName]
-                if (tracker != null && !tracker.get(lastBlock)) {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Footer missing for $mwmName, requesting last block ($lastBlock)")
-                    val footerOffset = (lastBlock * BLOCK_SIZE).toLong()
-                    val footerSize = (totalSize - footerOffset).toInt()
-                    markPending(mwmName, footerOffset, footerSize)
-                    WearCommandService.requestMwmBytes(context, mwmName, footerOffset, footerSize)
-                } else {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Mount successful for $mwmName, reloading world maps")
-                    ReloadWorldMapsDebouncer.reload()
-                }
-                
-                return path
             } catch (e: Exception) {
-                raf.close()
-                throw e
+                Log.e(TAG, "DEBUG_WEAR_PIPELINE: Failed to mount virtual MWM $mwmName: ${e.message}", e)
+                null
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "DEBUG_WEAR_PIPELINE: Failed to mount virtual MWM $mwmName: ${e.message}", e)
-            return null
         }
     }
 

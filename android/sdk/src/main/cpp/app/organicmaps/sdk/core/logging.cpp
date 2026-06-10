@@ -30,13 +30,24 @@ void AndroidMessage(LogLevel level, SrcPoint const & src, std::string const & s)
   case NUM_LOG_LEVELS: break;
   }
 
-  ScopedEnv env(jni::GetJVM());
-  static jmethodID const logMethod = jni::GetStaticMethodID(
-      env.get(), g_loggerClazz, "log", "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V");
-
   std::string const out = DebugPrint(src) + s;
-  jni::TScopedLocalRef msg(env.get(), jni::ToJavaString(env.get(), out));
-  env->CallStaticVoidMethod(g_loggerClazz, logMethod, pr, NULL, msg.get(), NULL);
+
+  ScopedEnv env(jni::GetJVM());
+  if (env && g_loggerClazz)
+  {
+    static jmethodID const logMethod = jni::GetStaticMethodID(
+        env.get(), g_loggerClazz, "log", "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V");
+
+    if (logMethod)
+    {
+      jni::TScopedLocalRef msg(env.get(), jni::ToJavaString(env.get(), out));
+      env->CallStaticVoidMethod(g_loggerClazz, logMethod, pr, NULL, msg.get(), NULL);
+      return;
+    }
+  }
+
+  // Fallback to system log if JNI is not available.
+  __android_log_print(pr, "OrganicMaps", "%s", out.c_str());
 }
 
 void AndroidLogMessage(LogLevel level, SrcPoint const & src, std::string const & s)

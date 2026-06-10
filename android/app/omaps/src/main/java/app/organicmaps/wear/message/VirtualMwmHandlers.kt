@@ -1,8 +1,11 @@
 package app.organicmaps.wear.message
 
 import android.content.Context
-import app.organicmaps.wear.VirtualMwmManager
 import app.organicmaps.sdk.util.GzipUtils
+import app.organicmaps.wear.VirtualMwmManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -14,7 +17,6 @@ class VirtualMwmDataHandler : WearMessageHandler {
         val mwmName = String(nameBytes, StandardCharsets.UTF_8)
         val offset = buffer.long
         
-        // Efficiency: Check compression flag
         val isCompressed = if (buffer.remaining() > 0) buffer.get().toInt() == 1 else false
         var mwmData = ByteArray(buffer.remaining())
         buffer.get(mwmData)
@@ -58,6 +60,9 @@ class VirtualMwmMountHandler : WearMessageHandler {
             } else null
         } else null
         
-        VirtualMwmManager.mount(context, mwmName, totalSize, headerData, footerData)
+        // FIX: native core initialization and mount checks must be on UI thread
+        CoroutineScope(Dispatchers.Main).launch {
+            VirtualMwmManager.mount(context, mwmName, totalSize, headerData, footerData)
+        }
     }
 }

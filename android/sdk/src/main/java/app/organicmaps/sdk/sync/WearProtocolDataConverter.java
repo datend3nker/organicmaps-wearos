@@ -181,7 +181,7 @@ public class WearProtocolDataConverter {
         return null;
     }
 
-    public static byte[] encodePreferenceUpdates(@NonNull List<String> keys, @NonNull List<Object> values, @NonNull List<Long> timestamps) {
+    public static byte[] encodePreferenceUpdates(@NonNull List<String> keys, @NonNull List<Object> values, @NonNull List<Long> timestamps, @NonNull List<Long> versions) {
         int count = keys.size();
         int totalSize = 4;
         List<byte[]> keyBytesList = new ArrayList<>();
@@ -192,7 +192,7 @@ public class WearProtocolDataConverter {
             keyBytesList.add(kb);
             byte[] vb = serializeValue(values.get(i));
             valBytesList.add(vb);
-            totalSize += 4 + kb.length + 1 + 4 + vb.length + 8;
+            totalSize += 4 + kb.length + 1 + 4 + vb.length + 8 + 8;
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(totalSize);
@@ -206,6 +206,7 @@ public class WearProtocolDataConverter {
             buffer.putInt(vb.length);
             buffer.put(vb);
             buffer.putLong(timestamps.get(i));
+            buffer.putLong(versions.get(i));
         }
         return buffer.array();
     }
