@@ -6,6 +6,9 @@ import android.util.Log
 import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.WearApplication
 import app.organicmaps.wear.presentation.Omaps
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -44,24 +47,27 @@ class NavStatusHandler : WearMessageHandler {
             
             // Still update location in native core if we got a valid one
             if (!newState.standaloneMode && lat != 0.0) {
-                try {
-                    app.organicmaps.sdk.location.LocationState.nativeLocationUpdated(
-                        System.currentTimeMillis(),
-                        lat, lon, 5.0f, 0.0, speed.toFloat(), bearing
-                    )
-                    
-                    // Automatically request/mount MWM even when not navigating
-                    if (!newState.watchLocalMode && newState.isPhoneConnected) {
-                        val countryId = app.organicmaps.sdk.downloader.MapManager.nativeFindCountry(lat, lon)
-                        if (!countryId.isNullOrEmpty() &&
-                            app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId) != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE &&
-                            !app.organicmaps.wear.VirtualMwmManager.isMounted(countryId)
-                        ) {
-                            Log.d("NavStatusHandler", "Requesting metadata for virtual MWM (idle): $countryId")
-                            app.organicmaps.wear.WearCommandService.requestMwmMetadata(context, countryId)
+                // Ensure UI thread for native core updates - FIX: Use launch to always post
+                CoroutineScope(Dispatchers.Main).launch {
+                    try {
+                        app.organicmaps.sdk.location.LocationState.nativeLocationUpdated(
+                            System.currentTimeMillis(),
+                            lat, lon, 5.0f, 0.0, speed.toFloat(), bearing
+                        )
+                        
+                        // Automatically request/mount MWM even when not navigating
+                        if (!newState.watchLocalMode && newState.isPhoneConnected) {
+                            val countryId = app.organicmaps.sdk.downloader.MapManager.nativeFindCountry(lat, lon)
+                            if (!countryId.isNullOrEmpty() &&
+                                app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId) != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE &&
+                                !app.organicmaps.wear.VirtualMwmManager.isMounted(countryId)
+                            ) {
+                                Log.d("NavStatusHandler", "Requesting metadata for virtual MWM (idle): $countryId")
+                                app.organicmaps.wear.WearCommandService.requestMwmMetadata(context, countryId)
+                            }
                         }
-                    }
-                } catch (_: Throwable) {}
+                    } catch (_: Throwable) {}
+                }
             }
             return
         }
@@ -110,29 +116,32 @@ class NavStatusHandler : WearMessageHandler {
 
         // Pass location to native core only if NOT in standalone mode
         if (!newState.standaloneMode) {
-            try {
-                // Removed System.loadLibrary("organicmaps") as it should be in WearApplication
-                app.organicmaps.sdk.location.LocationState.nativeLocationUpdated(
-                    System.currentTimeMillis(),
-                    lat, lon,
-                    5.0f, // hAcc
-                    0.0, // alt
-                    speed.toFloat(),
-                    bearing
-                )
+            // Ensure UI thread for native core updates - FIX: Use launch to always post
+            CoroutineScope(Dispatchers.Main).launch {
+                try {
+                    // Removed System.loadLibrary("organicmaps") as it should be in WearApplication
+                    app.organicmaps.sdk.location.LocationState.nativeLocationUpdated(
+                        System.currentTimeMillis(),
+                        lat, lon,
+                        5.0f, // hAcc
+                        0.0, // alt
+                        speed.toFloat(),
+                        bearing
+                    )
 
-                // COMPANION MODE: Automatically request/mount MWM for current location
-                if (!newState.watchLocalMode && newState.isPhoneConnected) {
-                    val countryId = app.organicmaps.sdk.downloader.MapManager.nativeFindCountry(lat, lon)
-                    if (!countryId.isNullOrEmpty() &&
-                        app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId) != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE &&
-                        !app.organicmaps.wear.VirtualMwmManager.isMounted(countryId)
-                    ) {
-                        Log.d("NavStatusHandler", "Requesting metadata for virtual MWM: $countryId")
-                        app.organicmaps.wear.WearCommandService.requestMwmMetadata(context, countryId)
+                    // COMPANION MODE: Automatically request/mount MWM for current location
+                    if (!newState.watchLocalMode && newState.isPhoneConnected) {
+                        val countryId = app.organicmaps.sdk.downloader.MapManager.nativeFindCountry(lat, lon)
+                        if (!countryId.isNullOrEmpty() &&
+                            app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId) != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE &&
+                            !app.organicmaps.wear.VirtualMwmManager.isMounted(countryId)
+                        ) {
+                            Log.d("NavStatusHandler", "Requesting metadata for virtual MWM: $countryId")
+                            app.organicmaps.wear.WearCommandService.requestMwmMetadata(context, countryId)
+                        }
                     }
-                }
-            } catch (_: Throwable) {}
+                } catch (_: Throwable) {}
+            }
         }
 
         if (!currentState.isActive) {

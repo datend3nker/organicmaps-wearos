@@ -3,7 +3,10 @@ package app.organicmaps.wear
 import android.content.Intent
 import app.organicmaps.wear.presentation.Omaps
 import android.util.Log
+import app.organicmaps.sdk.sync.BaseSettingsSyncManager
 import app.organicmaps.wear.ReloadWorldMapsDebouncer
+import app.organicmaps.sdk.sync.WearProtocol
+import app.organicmaps.sdk.sync.WearProtocolDataConverter
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -29,6 +32,33 @@ class WearDataListenerService : WearableListenerService() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "DEBUG_GMS: Watch WearDataListenerService.onCreate()")
+        
+        // Use synchronous Tasks.await in a background thread to ensure ID is available ASAP
+        scope.launch {
+            try {
+                val node = Wearable.getNodeClient(this@WearDataListenerService).localNode.await()
+                GmsWearSyncBackend.sLocalNodeId = node.id
+                app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Local node ID identified: ${node.id} (${node.displayName})")
+            } catch (e: Exception) {
+                app.organicmaps.sdk.sync.WearLog.e("Failed to identify local node ID", e)
+            }
+        }
+
+        // Log when phone app capability changes
+        Wearable.getCapabilityClient(this).addListener(
+            { capabilityInfo ->
+                Log.d(TAG, "DEBUG_GMS: Capability organic_maps_phone_app changed. Nodes: ${capabilityInfo.nodes.size}")
+                capabilityInfo.nodes.forEach { Log.d(TAG, "DEBUG_GMS:   - Node: ${it.displayName} ID: ${it.id}") }
+            },
+            "organic_maps_phone_app"
+        )
+
+        // Manual check on startup
+        Wearable.getCapabilityClient(this).getCapability("organic_maps_phone_app", com.google.android.gms.wearable.CapabilityClient.FILTER_ALL)
+            .addOnSuccessListener { capabilityInfo ->
+                Log.d(TAG, "DEBUG_GMS: Startup check - found ${capabilityInfo.nodes.size} phone nodes")
+            }
+
         checkPhoneConnection()
         scope.launch {
             delay(2000)
@@ -54,41 +84,100 @@ class WearDataListenerService : WearableListenerService() {
         checkPhoneConnection()
     }
 
-    private fun checkPhoneConnection() {
-        scope.launch {
-            try {
-                val capabilityInfo = Wearable.getCapabilityClient(this@WearDataListenerService)
-                    .getCapability("organic_maps_phone_app", com.google.android.gms.wearable.CapabilityClient.FILTER_REACHABLE)
-                    .await()
-                
-                val nodes = capabilityInfo.nodes
-                val connected = nodes.isNotEmpty()
-                
-                NavigationStateHolder.update { it.copy(isPhoneConnected = connected) }
+    private var lastCheckTime = 0L
 
-                if (connected) {
-                    WearCommandService.syncPreferences(this@WearDataListenerService)
-                    WearCommandService.requestPreferences(this@WearDataListenerService)
-                    WearCommandService.requestBookmarks(this@WearDataListenerService)
-                    WearCommandService.syncSearchHistory(this@WearDataListenerService)
-                    
-                    if (app.organicmaps.sdk.downloader.MapManager.nativeGetStatus("World") != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
-                        WearCommandService.requestMwmMetadata(this@WearDataListenerService, "World")
-                    }
-                } else {
-                    val allNodes = Wearable.getNodeClient(this@WearDataListenerService).connectedNodes.await()
-                    if (allNodes.isEmpty()) {
-                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = false))
-                    }
-                }
+    private fun checkPhoneConnection() {
+        val now = System.currentTimeMillis()
+        if (now - lastCheckTime < 5000) {
+            Log.d(TAG, "DEBUG_GMS: checkPhoneConnection skipped (throttled)")
+            return
+        }
+        lastCheckTime = now
+        Log.d(TAG, "DEBUG_GMS: checkPhoneConnection checking for organic_maps_phone_app")
+        
+        // Diagnostic
+        Wearable.getNodeClient(this).connectedNodes.addOnSuccessListener { nodes ->
+            Log.d(TAG, "DEBUG_GMS: Physical nodes found: ${nodes.size}")
+            nodes.forEach { Log.d(TAG, "DEBUG_GMS:   - Node: ${it.displayName} ID: ${it.id} Nearby: ${it.isNearby}") }
+        }
+
+        scope.launch {
+            // Try capability lookup first — falls back to connected nodes if it fails or returns empty
+            // (microG may not support capability discovery but can still route GMS messages)
+            val capabilityNodes = try {
+                Wearable.getCapabilityClient(this@WearDataListenerService)
+                    .getCapability("organic_maps_phone_app", com.google.android.gms.wearable.CapabilityClient.FILTER_ALL)
+                    .await().nodes
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to check phone capability", e)
+                Log.w(TAG, "DEBUG_GMS: Capability lookup failed, falling back to connected nodes: ${e.message}")
+                null
+            }
+
+            val connected = when {
+                capabilityNodes != null && capabilityNodes.isNotEmpty() -> {
+                    Log.d(TAG, "DEBUG_GMS: checkPhoneConnection found ${capabilityNodes.size} nodes with capability")
+                    true
+                }
+                else -> {
+                    val physicalNodes = try {
+                        Wearable.getNodeClient(this@WearDataListenerService).connectedNodes.await()
+                    } catch (e: Exception) { emptyList() }
+                    Log.d(TAG, "DEBUG_GMS: No capability nodes — physical nodes found: ${physicalNodes.size}")
+                    physicalNodes.isNotEmpty()
+                }
+            }
+
+            if (connected) {
+                (application as WearApplication).onActivityReceived()
+
+                WearCommandService.syncPreferences(this@WearDataListenerService)
+                WearCommandService.requestPreferences(this@WearDataListenerService)
+                WearCommandService.requestBookmarks(this@WearDataListenerService)
+                WearCommandService.requestSearchHistory(this@WearDataListenerService)
+                WearCommandService.syncSearchHistory(this@WearDataListenerService)
+                WearCommandService.requestDownloadedMaps(this@WearDataListenerService)
+
+                if (app.organicmaps.sdk.downloader.MapManager.nativeGetStatus("World") != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
+                    WearCommandService.requestMwmMetadata(this@WearDataListenerService, "World")
+                }
+            } else {
+                Log.d(TAG, "DEBUG_GMS_PIPELINE: No phone found (capability or physical), waiting for timeout")
             }
         }
     }
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
-        WearMessageRouter.onMessageReceived(this, messageEvent.path, messageEvent.data, messageEvent.sourceNodeId)
+        val currentLocalId = GmsWearSyncBackend.sLocalNodeId
+        
+        if (currentLocalId != null && messageEvent.sourceNodeId == currentLocalId) {
+            app.organicmaps.sdk.sync.WearLog.v("Ignoring local loopback message at ${messageEvent.path}")
+            return
+        }
+
+        // Safety: If ID is not yet known, check by display name if available
+        // Note: MessageEvent doesn't have display name, but we can't do much else than wait
+        if (currentLocalId == null) {
+             app.organicmaps.sdk.sync.WearLog.w("Received message before local node ID identified. Path: ${messageEvent.path}")
+        }
+
+        val data = messageEvent.data ?: ByteArray(0)
+        
+        (application as WearApplication).onActivityReceived()
+        GmsWearSyncBackend.activePeerId = messageEvent.sourceNodeId
+        
+        if (data.isNotEmpty()) {
+            val version = data[0]
+            if (version == WearProtocol.PROTOCOL_VERSION) {
+                val payload = if (data.size > 1) data.copyOfRange(1, data.size) else ByteArray(0)
+                WearMessageRouter.onMessageReceived(this, messageEvent.path, payload, messageEvent.sourceNodeId, currentLocalId)
+            } else {
+                app.organicmaps.sdk.sync.WearLog.e("Protocol version mismatch at ${messageEvent.path}: received=$version, expected=${WearProtocol.PROTOCOL_VERSION}")
+                // Fallback: try routing raw data
+                WearMessageRouter.onMessageReceived(this, messageEvent.path, data, messageEvent.sourceNodeId, currentLocalId)
+            }
+        } else {
+            WearMessageRouter.onMessageReceived(this, messageEvent.path, data, messageEvent.sourceNodeId, currentLocalId)
+        }
     }
 
     override fun onChannelOpened(channel: com.google.android.gms.wearable.ChannelClient.Channel) {
@@ -97,41 +186,34 @@ class WearDataListenerService : WearableListenerService() {
             val channelClient = Wearable.getChannelClient(this)
             WearMapDownloader.setStreamingMap(mapId)
             
+            Log.d(TAG, "DEBUG_GMS_PIPELINE: GMS Channel opened for pulling map: $mapId")
             scope.launch {
                 try {
                     (application as WearApplication).waitForInitializationSuspend()
                     val storagePath = app.organicmaps.sdk.settings.StoragePathManager.findMapsStorage(this@WearDataListenerService)
                     val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
                     val versionedPath = File(storagePath, dataVersion.toString())
-                    if (!versionedPath.exists()) versionedPath.mkdirs()
+                    if (!versionedPath.exists()) {
+                        Log.d(TAG, "DEBUG_GMS_PIPELINE: Creating versioned storage directory: ${versionedPath.absolutePath}")
+                        versionedPath.mkdirs()
+                    }
+                    val finalFile = File(versionedPath, "$mapId.mwm")
                     val tempFile = File(versionedPath, "$mapId.mwm.tmp")
-
-                    channelClient.getInputStream(channel).await().use { input ->
-                        if (app.organicmaps.wear.VirtualMwmManager.isMounted(mapId)) {
-                            Log.d(TAG, "GMS: Streaming directly into mounted virtual MWM: $mapId")
-                            val buffer = ByteArray(64 * 1024)
-                            var offset = 0L
-                            var bytesRead: Int
-                            while (input.read(buffer).also { bytesRead = it } != -1) {
-                                app.organicmaps.wear.VirtualMwmManager.onBytesReceived(mapId, offset, buffer.copyOf(bytesRead))
-                                offset += bytesRead
-                            }
-                        } else {
-                            FileOutputStream(tempFile).use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                    }
                     
-                    if (!app.organicmaps.wear.VirtualMwmManager.isMounted(mapId)) {
-                        val finalFile = File(versionedPath, "$mapId.mwm")
-                        if (finalFile.exists()) finalFile.delete()
-                        tempFile.renameTo(finalFile)
-                    }
+                    // Ensure the parent directory exists for the temp file
+                    tempFile.parentFile?.mkdirs()
+
+                    Log.d(TAG, "DEBUG_GMS_PIPELINE: GMS Receiving file into: ${tempFile.absolutePath}")
+                    channelClient.receiveFile(channel, android.net.Uri.fromFile(tempFile), false).await()
+                    
+                    Log.d(TAG, "GMS Pull completed, renaming $mapId to ${finalFile.name}")
+                    if (finalFile.exists()) finalFile.delete()
+                    tempFile.renameTo(finalFile)
+                    
                     WearMapDownloader.onDownloadCompleted()
                     ReloadWorldMapsDebouncer.reload()
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to receive map stream for $mapId", e)
+                    Log.e(TAG, "DEBUG_GMS_PIPELINE: Failed to pull map $mapId", e)
                     WearMapDownloader.onDownloadCancelled()
                 } finally {
                     channelClient.close(channel)
@@ -148,15 +230,19 @@ class WearDataListenerService : WearableListenerService() {
             val uri = event.dataItem.uri
             if (event.type == DataEvent.TYPE_CHANGED) {
                 val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                if (dataMap.containsKey("protocolVersion") && dataMap.getByte("protocolVersion") != IWearSyncBackend.PROTOCOL_VERSION) {
+                if (dataMap.containsKey("protocolVersion") && dataMap.getByte("protocolVersion") != WearProtocol.PROTOCOL_VERSION) {
                     Log.e(TAG, "Protocol version mismatch in DataItem at ${uri.path}: ${dataMap.getByte("protocolVersion")}")
                     continue
                 }
 
                 when (uri.path) {
-                    "/preferences", "/preferences/phone", "/preferences/watch" -> handlePreferences(dataMap)
-                    "/preferences/updates" -> handlePreferenceUpdates(dataMap)
-                    "/map/download/progress" -> {
+                    WearProtocol.PATH_PREFERENCES_PHONE, WearProtocol.PATH_PREFERENCES_WATCH -> handlePreferences(dataMap)
+                    WearProtocol.PATH_PREFERENCES_UPDATES -> handlePreferenceUpdates(dataMap)
+                    WearProtocol.PATH_MAP_PHONE_DOWNLOADED -> {
+                        val ids = dataMap.getStringArrayList("mapIds")?.toSet() ?: emptySet()
+                        NavigationStateHolder.update { it.copy(phoneDownloadedMaps = ids) }
+                    }
+                    WearProtocol.PATH_MAP_DOWNLOAD_PROGRESS -> {
                         val countryId = dataMap.getString("countryId") ?: return
                         val progress = dataMap.getInt("progress", 0)
                         if (countryId == WearMapDownloader.currentMap.value) {
@@ -169,26 +255,28 @@ class WearDataListenerService : WearableListenerService() {
     }
 
     private fun handlePreferences(dataMap: com.google.android.gms.wearable.DataMap) {
-        val updates = mutableListOf<SettingsSyncManager.SettingUpdate>()
+        val manager = SettingsSyncManager.getInstance(this)
+        val updates = mutableListOf<BaseSettingsSyncManager.SettingUpdate>()
         val globalTs = dataMap.getLong("timestamp", 0L)
         for (key in dataMap.keySet()) {
             if (key.startsWith("ts_") || key == "timestamp" || key == "protocolVersion") continue
             val ts = dataMap.getLong("ts_$key", globalTs)
             val value = dataMap.get<Any>(key) ?: continue
-            updates.add(SettingsSyncManager.SettingUpdate(key, value, ts))
+            updates.add(BaseSettingsSyncManager.SettingUpdate(key, value, ts))
         }
-        SettingsSyncManager.applyRemoteUpdates(this, updates)
+        manager.applyRemoteUpdates(updates)
     }
 
     private fun handlePreferenceUpdates(dataMap: com.google.android.gms.wearable.DataMap) {
-        val updates = mutableListOf<SettingsSyncManager.SettingUpdate>()
+        val manager = SettingsSyncManager.getInstance(this)
+        val updates = mutableListOf<BaseSettingsSyncManager.SettingUpdate>()
         for (key in dataMap.keySet()) {
             if (key == "_trigger" || key == "protocolVersion") continue
             val item = dataMap.getDataMap(key) ?: continue
             val value = item.get<Any>("v") ?: continue
-            updates.add(SettingsSyncManager.SettingUpdate(key, value, item.getLong("t")))
+            updates.add(BaseSettingsSyncManager.SettingUpdate(key, value, item.getLong("t")))
         }
-        SettingsSyncManager.applyRemoteUpdates(this, updates)
+        manager.applyRemoteUpdates(updates)
     }
 
     private fun launchOmaps() {

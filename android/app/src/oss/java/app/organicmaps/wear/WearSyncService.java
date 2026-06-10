@@ -30,6 +30,13 @@ public class WearSyncService {
         }
     };
 
+    private static final Runnable sSyncBookmarksRunnable = () -> {
+        android.util.Log.d("WearSync", "Debounced sendBookmarkCategories executing");
+        Context context = app.organicmaps.MwmApplication.sInstance;
+        if (context == null) return;
+        sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
+    };
+
     private static long sLastRemoteAppliedTime = 0;
 
     private static final app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksSharingListener sSharingListener = (result) -> {
@@ -70,7 +77,10 @@ public class WearSyncService {
         }
     };
 
-    private static final app.organicmaps.sdk.bookmarks.data.DataChangedListener sBookmarkListener = () -> sendBookmarkCategories(app.organicmaps.MwmApplication.sInstance, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
+    private static final app.organicmaps.sdk.bookmarks.data.DataChangedListener sBookmarkListener = () -> {
+        sHandler.removeCallbacks(sSyncBookmarksRunnable);
+        sHandler.postDelayed(sSyncBookmarksRunnable, 1000);
+    };
 
     private static final app.organicmaps.sdk.location.LocationListener sLocationListener = (location) -> {
         Context context = app.organicmaps.MwmApplication.sInstance;
@@ -116,6 +126,9 @@ public class WearSyncService {
     public static synchronized void initSyncLayer(@Nullable Context context) {
         if (sSyncLayer != null) {
             sSyncLayer.stop();
+            if (context != null) {
+                context.stopService(new android.content.Intent(context, BluetoothMessageListenerService.class));
+            }
         }
 
         if (!sListenersRegistered && context != null) {
@@ -128,6 +141,10 @@ public class WearSyncService {
 
         sSyncLayer = new BluetoothSyncLayer();
         
+        if (context != null) {
+            context.startService(new android.content.Intent(context, BluetoothMessageListenerService.class));
+        }
+
         // Initial sync
         if (context != null) {
             syncPreferences(context);

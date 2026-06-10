@@ -39,9 +39,12 @@ JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv *
   {
     g_framework.Assign(new android::Framework([onComplete = jni::make_global_ref_safe(onComplete)]()
     {
-      JNIEnv * env = jni::GetEnv();
-      jmethodID const methodId = jni::GetMethodID(env, *onComplete, "run", "()V");
-      env->CallVoidMethod(*onComplete, methodId);
+      GetPlatform().RunTask(Platform::Thread::Gui, [onComplete]()
+      {
+        JNIEnv * env = jni::GetEnv();
+        jmethodID const methodId = jni::GetMethodID(env, *onComplete, "run", "()V");
+        env->CallVoidMethod(*onComplete, methodId);
+      });
     }));
   }
 }

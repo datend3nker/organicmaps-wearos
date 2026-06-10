@@ -40,6 +40,7 @@ public final class Config
   private static final String KEY_MISC_DISCLAIMER_ACCEPTED = "IsDisclaimerApproved";
 
   private static final String KEY_MISC_LOCATION_REQUESTED = "LocationRequested";
+  private static final String KEY_MISC_BLUETOOTH_REQUESTED = "BluetoothRequested";
   private static final String KEY_MISC_USE_MOBILE_DATA = "UseMobileData";
   private static final String KEY_MISC_USE_MOBILE_DATA_TIMESTAMP = "UseMobileDataTimestamp";
   private static final String KEY_MISC_USE_MOBILE_DATA_ROAMING = "UseMobileDataRoaming";
@@ -265,6 +266,16 @@ public final class Config
   public static void setLocationRequested()
   {
     setBool(KEY_MISC_LOCATION_REQUESTED);
+  }
+
+  public static boolean isBluetoothRequested()
+  {
+    return getBool(KEY_MISC_BLUETOOTH_REQUESTED);
+  }
+
+  public static void setBluetoothRequested()
+  {
+    setBool(KEY_MISC_BLUETOOTH_REQUESTED);
   }
 
   public static class UiTheme

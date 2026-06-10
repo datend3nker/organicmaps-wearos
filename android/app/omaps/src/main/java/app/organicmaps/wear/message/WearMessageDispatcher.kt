@@ -2,51 +2,34 @@ package app.organicmaps.wear.message
 
 import android.content.Context
 import android.util.Log
+import app.organicmaps.sdk.sync.WearProtocol
 import app.organicmaps.wear.SyncStateManager
 import java.nio.ByteBuffer
 
 class WearMessageDispatcher {
     companion object {
         private const val TAG = "WearMessageDispatcher"
-        
-        // Mapping from GMS Paths to Bluetooth Types
-        private val PATH_TO_TYPE = mapOf(
-            "/navigation/status" to 1.toByte(),
-            "/search/results" to 2.toByte(),
-            "/search/history" to 3.toByte(),
-            "/preferences/watch" to 4.toByte(),
-            "/preferences/updates" to 19.toByte(),
-            "/map/download/request" to 5.toByte(),
-            "/map/download/progress" to 7.toByte(),
-            "/navigation/route_build_progress" to 16.toByte(),
-            "/track/recording" to 8.toByte(),
-            "/bookmarks" to 9.toByte(),
-            "/bookmark/file" to 12.toByte(),
-            "/bookmark/rename" to 17.toByte(),
-            "/bookmark/delete" to 18.toByte(),
-            "/virtual_mwm/data" to 14.toByte(),
-            "/virtual_mwm/mount" to 15.toByte()
-        )
     }
 
     private val handlers = mapOf<Byte, WearMessageHandler>(
-        1.toByte() to NavStatusHandler(),
-        2.toByte() to SearchResultsHandler(),
-        3.toByte() to SearchHistoryHandler(),
-        4.toByte() to PreferenceHandler(),
-        19.toByte() to PreferenceHandler(),
-        5.toByte() to MapDownloadHandler(),
-        7.toByte() to MapProgressHandler(),
-        16.toByte() to RouteBuildProgressHandler(),
-        8.toByte() to TrackRecordingHandler(),
-        9.toByte() to BookmarksHandler(),
-        10.toByte() to CommandHandler(),
-        11.toByte() to MapChunkHandler(SyncStateManager.mapOutputStreams),
-        12.toByte() to BookmarkFileHandler(SyncStateManager.bookmarkOutputStreams),
-        17.toByte() to BookmarkRenameHandler(),
-        18.toByte() to BookmarkDeleteHandler(),
-        14.toByte() to VirtualMwmDataHandler(),
-        15.toByte() to VirtualMwmMountHandler()
+        WearProtocol.TYPE_NAV_STATUS to NavStatusHandler(),
+        WearProtocol.TYPE_SEARCH_RESULTS to SearchResultsHandler(),
+        WearProtocol.TYPE_SEARCH_HISTORY to SearchHistoryHandler(),
+        WearProtocol.TYPE_PREFERENCES to PreferenceHandler(),
+        WearProtocol.TYPE_PREFERENCES_UPDATES to PreferenceHandler(),
+        WearProtocol.TYPE_MAP_DOWNLOAD_REQUEST to MapDownloadHandler(),
+        WearProtocol.TYPE_MAP_DOWNLOAD_PROGRESS to MapProgressHandler(),
+        WearProtocol.TYPE_ROUTE_BUILD_PROGRESS to RouteBuildProgressHandler(),
+        WearProtocol.TYPE_TRACK_RECORDING to TrackRecordingHandler(),
+        WearProtocol.TYPE_BOOKMARKS to BookmarksHandler(),
+        WearProtocol.TYPE_COMMAND to CommandHandler(),
+        WearProtocol.TYPE_MAP_CHUNK to MapChunkHandler(),
+        WearProtocol.TYPE_BOOKMARK_FILE to BookmarkFileHandler(SyncStateManager.bookmarkOutputStreams),
+        WearProtocol.TYPE_MAP_PHONE_DOWNLOADED to DownloadedMapsHandler(),
+        WearProtocol.TYPE_BOOKMARK_RENAME to BookmarkRenameHandler(),
+        WearProtocol.TYPE_BOOKMARK_DELETE to BookmarkDeleteHandler(),
+        WearProtocol.TYPE_VIRTUAL_MWM_DATA to VirtualMwmDataHandler(),
+        WearProtocol.TYPE_VIRTUAL_MWM_MOUNT to VirtualMwmMountHandler()
     )
 
     fun dispatch(type: Byte, payload: ByteArray, context: Context) {
@@ -64,14 +47,7 @@ class WearMessageDispatcher {
     }
 
     fun dispatch(path: String, payload: ByteArray, context: Context) {
-        val type = PATH_TO_TYPE[path]
-        if (type != null) {
-            dispatch(type, payload, context)
-        } else {
-            // Some paths might need special handling or are handled by CommandHandler fallback
-            // But usually CommandHandler is for Bluetooth wrapping paths.
-            // For GMS, we can handle them directly if we add them to the map.
-            Log.d(TAG, "Unknown path $path, checking fallback")
-        }
+        val type = WearProtocol.getMessageType(path)
+        dispatch(type, payload, context)
     }
 }

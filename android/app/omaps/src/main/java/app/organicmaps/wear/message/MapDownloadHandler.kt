@@ -2,12 +2,15 @@ package app.organicmaps.wear.message
 
 import android.content.Context
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import app.organicmaps.wear.NavigationStateHolder
+import app.organicmaps.wear.UiEvent
 import app.organicmaps.wear.WearApplication
 import app.organicmaps.wear.presentation.Omaps
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -29,12 +32,13 @@ class MapDownloadHandler : WearMessageHandler {
 
         prefs.edit().putBoolean("forceWatchLocalMode", true).apply()
         
-        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(openMapManager = true, watchLocalMode = true))
+        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(watchLocalMode = true))
+        NavigationStateHolder.emitEvent(UiEvent.OpenMapManager)
         
-        Handler(Looper.getMainLooper()).post {
+        ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.Main) {
             try {
                 val wearApp = context.applicationContext as WearApplication
-                wearApp.waitForInitializationBlocking()
+                wearApp.waitForInitializationSuspend()
                 
                 val status = app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId)
                 if (status != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE && 

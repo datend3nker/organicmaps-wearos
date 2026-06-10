@@ -30,14 +30,28 @@ android {
 
     flavorDimensions = ['default']
     productFlavors {
+        oss {
+            dimension 'default'
+        }
         google {
             dimension 'default'
         }
         fdroid {
             dimension 'default'
         }
-        oss {
-            dimension 'default'
+    }
+
+    tasks.register('deployWatchOss') {
+        dependsOn 'assembleOssDebug'
+        doLast {
+            def serial = "emulator-5556"
+            def apk = "build/outputs/apk/oss/debug/omaps-oss-debug.apk"
+            exec { commandLine "adb", "-s", serial, "uninstall", "app.organicmaps.debug" }
+            exec { commandLine "adb", "-s", serial, "install", apk }
+            exec { commandLine "adb", "-s", serial, "shell", "pm", "grant", "app.organicmaps.debug", "android.permission.BLUETOOTH_CONNECT" }
+            exec { commandLine "adb", "-s", serial, "shell", "pm", "grant", "app.organicmaps.debug", "android.permission.BLUETOOTH_SCAN" }
+            exec { commandLine "adb", "-s", serial, "shell", "pm", "grant", "app.organicmaps.debug", "android.permission.ACCESS_FINE_LOCATION" }
+            exec { commandLine "adb", "-s", serial, "shell", "am", "start", "-n", "app.organicmaps.debug/app.organicmaps.wear.presentation.Omaps" }
         }
     }
 
@@ -159,6 +173,7 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.10.0'
     implementation 'androidx.lifecycle:lifecycle-process:2.10.0'
+    implementation 'androidx.preference:preference:1.2.1'
 
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'

@@ -39,6 +39,25 @@ class VirtualMwmMountHandler : WearMessageHandler {
         buffer.get(nameBytes)
         val mwmName = String(nameBytes, StandardCharsets.UTF_8)
         val totalSize = buffer.long
-        VirtualMwmManager.mount(context, mwmName, totalSize)
+        
+        val headerData = if (buffer.remaining() >= 4) {
+            val hLen = buffer.int
+            if (hLen > 0 && buffer.remaining() >= hLen) {
+                val hb = ByteArray(hLen)
+                buffer.get(hb)
+                hb
+            } else null
+        } else null
+        
+        val footerData = if (buffer.remaining() >= 4) {
+            val fLen = buffer.int
+            if (fLen > 0 && buffer.remaining() >= fLen) {
+                val fb = ByteArray(fLen)
+                buffer.get(fb)
+                fb
+            } else null
+        } else null
+        
+        VirtualMwmManager.mount(context, mwmName, totalSize, headerData, footerData)
     }
 }

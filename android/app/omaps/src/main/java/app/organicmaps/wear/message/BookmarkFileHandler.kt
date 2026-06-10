@@ -4,9 +4,9 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.widget.Toast
 import app.organicmaps.wear.BookmarkCategoryItem
 import app.organicmaps.wear.NavigationStateHolder
+import app.organicmaps.wear.UiEvent
 import app.organicmaps.wear.WearMapDownloader
 import java.io.File
 import java.io.FileOutputStream
@@ -37,7 +37,7 @@ class BookmarkFileHandler(
 
     private fun saveBookmarkChunk(context: Context, categoryName: String, data: ByteArray, isLast: Boolean) {
         try {
-            val fileName = categoryName.replace("[\\\\/:*?\"<>|]", "_") + ".kmz"
+            val fileName = categoryName.replace("[\\\\/:*?\"<>|]", "_") + ".kml"
             val fos = bookmarkOutputStreams.getOrPut(categoryName) {
                 val file = File(context.cacheDir, fileName + ".tmp")
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Starting new bookmark file reception: $fileName")
@@ -75,6 +75,19 @@ class BookmarkFileHandler(
                 
                 Handler(Looper.getMainLooper()).post {
                     try {
+                        val wearApp = context.applicationContext as app.organicmaps.wear.WearApplication
+                        if (!wearApp.isFullyInitialized) {
+                            Log.w(TAG, "DEBUG_WEAR_PIPELINE: Native framework not yet initialized. Postponing bookmark load.")
+                            // We still mark it as not syncing so user can try again or wait for auto-init
+                            NavigationStateHolder.update { current ->
+                                val updated = current.bookmarkCategories.map {
+                                    if (it.name.equals(categoryName, ignoreCase = true)) it.copy(isSyncing = false) else it
+                                }
+                                current.copy(bookmarkCategories = updated)
+                            }
+                            return@post
+                        }
+
                         val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
                         
                         // Robust category removal - try by name
@@ -87,10 +100,18 @@ class BookmarkFileHandler(
                         if (finalFile.exists()) {
                             Log.d(TAG, "DEBUG_WEAR_PIPELINE: Loading bookmarks from file: ${finalFile.absolutePath}")
                             manager.loadBookmarksFile(finalFile.absolutePath, true)
-                            Toast.makeText(context, "Bookmarks synchronized", Toast.LENGTH_SHORT).show()
+                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmarks synchronized"))
                         }
                         
                         NavigationStateHolder.update { current ->
+                             val oldCatForTimestamp = current.bookmarkCategories.find { it.name.equals(categoryName, ignoreCase = true) }
+                             val timestampToPersist = oldCatForTimestamp?.lastModified ?: 0L
+                             if (timestampToPersist > 0) {
+                                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Persisting sync timestamp for $categoryName: $timestampToPersist")
+                                 context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
+                                     .edit().putLong(categoryName, timestampToPersist).apply()
+                             }
+
                              val updatedCats = manager.getCategories().map { cat ->
                                  val oldCat = current.bookmarkCategories.find { it.name.equals(cat.name, ignoreCase = true) }
                                  BookmarkCategoryItem(

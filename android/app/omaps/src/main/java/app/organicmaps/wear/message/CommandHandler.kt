@@ -14,7 +14,7 @@ class CommandHandler : WearMessageHandler {
             val path = String(pathBytes, StandardCharsets.UTF_8)
             val cmdData = ByteArray(buffer.remaining())
             buffer.get(cmdData)
-            WearMessageRouter.onMessageReceived(context, path, cmdData, "bluetooth_phone")
+            WearMessageRouter.onMessageReceived(context, path, cmdData, "bluetooth_phone", null)
         }
     }
 }

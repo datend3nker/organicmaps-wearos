@@ -42,6 +42,13 @@ public class WearSyncService {
         }
     };
 
+    private static final Runnable sSyncBookmarksRunnable = () -> {
+        Log.d("WearSync", "Debounced sendBookmarkCategories executing");
+        Context context = app.organicmaps.MwmApplication.sInstance;
+        if (context == null) return;
+        sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
+    };
+
     private static final app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksSharingListener sSharingListener = (result) -> {
         android.util.Log.d("WearSync", "onPreparedFileForSharing: " + result.getCode() + " path: " + result.getSharingPath());
         if (result.getCode() == app.organicmaps.sdk.bookmarks.data.BookmarkSharingResult.SUCCESS) {
@@ -58,6 +65,7 @@ public class WearSyncService {
             java.io.File file = new java.io.File(path);
             long length = file.length();
             long sent = 0;
+            android.util.Log.i("WearSync", "Starting to send bookmark file: " + catName + " (Size: " + length + " bytes)");
             try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
                 byte[] buffer = new byte[32 * 1024];
                 int read;
@@ -65,23 +73,27 @@ public class WearSyncService {
                     sent += read;
                     boolean isLast = sent >= length;
                     byte[] chunk = read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read);
-                    android.util.Log.d("WearSync", "Sending bookmark chunk for " + catName + " isLast=" + isLast);
+                    android.util.Log.d("WearSync", "Sending bookmark chunk for " + catName + " size=" + chunk.length + " isLast=" + isLast);
                     getSyncLayer().sendBookmarkFile(app.organicmaps.MwmApplication.sInstance, catName, chunk, isLast);
                     
                     // Report progress back to watch so UI can show it
                     int progress = (int) (sent * 100 / length);
                     getSyncLayer().sendMapProgress(app.organicmaps.MwmApplication.sInstance, "Bookmarks: " + catName, progress);
                 }
+                android.util.Log.i("WearSync", "Finished sending bookmark file: " + catName);
             }
-catch (java.io.IOException e) {
-                android.util.Log.e("WearSync", "Failed to send bookmark file", e);
+            catch (java.io.IOException e) {
+                android.util.Log.e("WearSync", "Failed to send bookmark file: " + catName, e);
             }
         } else {
             android.util.Log.w("WearSync", "Bookmark preparation failed with code: " + result.getCode());
         }
     };
 
-    private static final app.organicmaps.sdk.bookmarks.data.DataChangedListener sBookmarkListener = () -> sendBookmarkCategories(app.organicmaps.MwmApplication.sInstance, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
+    private static final app.organicmaps.sdk.bookmarks.data.DataChangedListener sBookmarkListener = () -> {
+        sHandler.removeCallbacks(sSyncBookmarksRunnable);
+        sHandler.postDelayed(sSyncBookmarksRunnable, 1000);
+    };
 
     private static final app.organicmaps.sdk.location.LocationListener sLocationListener = (location) -> {
         Context context = app.organicmaps.MwmApplication.sInstance;
@@ -132,19 +144,24 @@ catch (java.io.IOException e) {
     }
 
     public static synchronized void initSyncLayer(@Nullable Context context) {
-        android.util.Log.d("WearSync", "initSyncLayer called. Flavor: " + BuildConfig.FLAVOR);
-
         String backend = "GMS";
         if (context != null) {
-            android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
-            backend = prefs.getString("pref_wear_os_backend", "GMS");
+            backend = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+                    .getString("pref_wear_os_backend", "GMS");
         }
+        
+        // IDEMPOTENCY GUARD: Don't recreate if already matching
+        if (sSyncLayer != null) {
+            if ("BLUETOOTH".equals(backend) && sSyncLayer instanceof BluetoothSyncLayer) return;
+            if ("GMS".equals(backend) && sSyncLayer instanceof GmsSyncLayer) return;
+        }
+
+        android.util.Log.d("WearSync", "initSyncLayer executing. New Backend: " + backend + ". Previous: " + (sSyncLayer != null ? sSyncLayer.getClass().getSimpleName() : "null"));
 
         if (sSyncLayer != null) {
             if (context != null) {
                 android.util.Log.d("WearSync", "Notifying watch about backend switch to: " + backend);
                 sSyncLayer.sendBackendSwitch(context, backend);
-                sSyncLayer.syncPreferences(context);
             }
             sSyncLayer.stop();
         }
@@ -157,30 +174,22 @@ catch (java.io.IOException e) {
             sListenersRegistered = true;
         }
 
-        if (BuildConfig.FLAVOR.equals("oss")) {
+        if ("BLUETOOTH".equals(backend)) {
+            android.util.Log.d("WearSync", "Selecting Bluetooth backend");
             sSyncLayer = new BluetoothSyncLayer();
+            if (context != null) {
+                context.startService(new Intent(context, BluetoothMessageListenerService.class));
+            }
         } else {
+            android.util.Log.d("WearSync", "Selecting GMS backend");
+            sSyncLayer = new GmsSyncLayer();
             if (context != null) {
-                android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
-                backend = prefs.getString("pref_wear_os_backend", "GMS");
+                context.stopService(new Intent(context, BluetoothMessageListenerService.class));
             }
-
-            if ("BLUETOOTH".equals(backend)) {
-                android.util.Log.d("WearSync", "Selecting BLUETOOTH backend");
-                sSyncLayer = new BluetoothSyncLayer();
-                if (context != null) {
-                    context.startService(new Intent(context, BluetoothMessageListenerService.class));
-                }
-            } else {
-                android.util.Log.d("WearSync", "Selecting GMS backend");
-                sSyncLayer = new GmsSyncLayer();
-                if (context != null) {
-                    context.stopService(new Intent(context, BluetoothMessageListenerService.class));
-                }
-            }
-            if (context != null) {
-                sSyncLayer.sendBackendSwitch(context, backend);
-            }
+        }
+        
+        if (context != null) {
+            sSyncLayer.sendBackendSwitch(context, backend);
         }
         
         // Initial sync ONLY if not already applying
@@ -188,10 +197,6 @@ catch (java.io.IOException e) {
             ISyncLayer syncLayer = getSyncLayer();
             if (!syncLayer.isIgnoringPreferenceChanges()) {
                 syncPreferences(context);
-            }
-            if (isFrameworkReady()) {
-                sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
-                sendSearchHistory(context);
             }
         }
 
@@ -226,7 +231,8 @@ catch (java.io.IOException e) {
     }
 
     public static void onConnectionEstablished(@NonNull Context context) {
-        Log.d("WearSync", "Connection established, syncing pending settings");
+        Log.d("WearSync", "Connection established, syncing pending settings and handshake");
+        getSyncLayer().sendHandshake(context);
         List<SettingsSyncManager.SettingUpdate> dirty = SettingsSyncManager.getInstance(context).getDirtyUpdates();
         if (!dirty.isEmpty()) {
             getSyncLayer().syncPreferenceUpdates(context, dirty);
@@ -320,5 +326,9 @@ catch (java.io.IOException e) {
 
     public static void launchWatchApp(@NonNull Context context) {
         getSyncLayer().launchWatchApp(context);
+    }
+
+    public static boolean isWatchAppConnected() {
+        return getSyncLayer().isLinked();
     }
 }

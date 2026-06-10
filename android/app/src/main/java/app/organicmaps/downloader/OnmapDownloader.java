@@ -195,7 +195,7 @@ public class OnmapDownloader implements MwmActivity.LeftAnimationTrackListener
       if (mCurrentCountry == null)
         return;
 
-      MapManager.nativeCancel(mCurrentCountry.id);
+      MapManager.cancel(mCurrentCountry.id);
       setAutodownloadLocked(true);
     });
     mButton.setOnClickListener(

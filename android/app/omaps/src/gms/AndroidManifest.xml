@@ -1,14 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+
+    <queries>
+        <package android:name="app.organicmaps" />
+        <package android:name="app.organicmaps.debug" />
+    </queries>
+
     <application>
+        <meta-data
+            android:name="com.google.android.gms.wearable.capabilities"
+            android:resource="@xml/wearable_capabilities" />
+
+        <uses-library
+            android:name="com.google.android.wearable"
+            android:required="false" />
+
         <service
             android:name="app.organicmaps.wear.WearDataListenerService"
-            android:exported="true"
-            android:permission="com.google.android.gms.permission.BIND_LISTENER">
+            android:exported="true">
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/" />
+            </intent-filter>
+            <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/" />
+            </intent-filter>
+            <intent-filter>
                 <action android:name="com.google.android.gms.wearable.CHANNEL_EVENT" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/" />
             </intent-filter>

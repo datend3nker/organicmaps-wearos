@@ -144,12 +144,22 @@ public class MwmApplication extends Application implements Application.ActivityL
     NavigationService.createNotificationChannel(this);
     TrackRecordingService.createNotificationChannel(this);
 
+    // FIX: Pre-initialize framework singletons on Main thread to establish thread ownership
+    Object unused1 = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE;
+    Object unused2 = app.organicmaps.sdk.routing.RoutingController.get();
+    Object unused3 = app.organicmaps.sdk.search.SearchEngine.INSTANCE;
+
     registerActivityLifecycleCallbacks(this);
     mDisplayManager = new DisplayManager();
 
     // Initialize Wear OS sync layer early so it can respond to background messages from the watch.
     // Native framework initialization happens later in initOrganicMaps().
     android.util.Log.i(TAG, "Initializing WearSyncService");
+    android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this);
+    if (!prefs.getBoolean("pref_wear_os_gms_default_set_v2", false))
+    {
+      prefs.edit().putString("pref_wear_os_backend", "GMS").putBoolean("pref_wear_os_gms_default_set_v2", true).apply();
+    }
     app.organicmaps.wear.WearSyncService.initSyncLayer(this);
     
     Logger.i(TAG, "Application created");

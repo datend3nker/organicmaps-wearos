@@ -5,6 +5,7 @@ import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import app.organicmaps.sdk.Framework;
+import app.organicmaps.sdk.sync.WearLog;
 import app.organicmaps.sdk.util.Language;
 import app.organicmaps.sdk.util.concurrency.UiThread;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +23,7 @@ public enum SearchEngine implements SearchListener, MapSearchListener,
   @Override
   public void onResultsUpdate(@NonNull final SearchResult[] results, final long timestamp)
   {
+    WearLog.logState("SDK", "onResultsUpdate: Received " + results.length + " results at " + timestamp);
     UiThread.run(() -> {
       for (SearchListener listener : mListeners)
         listener.onResultsUpdate(results, timestamp);
@@ -31,6 +33,7 @@ public enum SearchEngine implements SearchListener, MapSearchListener,
   @Override
   public void onResultsEnd(final long timestamp)
   {
+    WearLog.logState("SDK", "onResultsEnd at " + timestamp);
     UiThread.run(() -> {
       for (SearchListener listener : mListeners)
         listener.onResultsEnd(timestamp);
@@ -200,7 +203,7 @@ public enum SearchEngine implements SearchListener, MapSearchListener,
 
   public void initialize()
   {
-    nativeInit();
+    UiThread.run(this::nativeInit);
   }
 
   private native void nativeInit();

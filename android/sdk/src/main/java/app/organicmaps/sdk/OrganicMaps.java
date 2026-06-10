@@ -23,6 +23,7 @@ import app.organicmaps.sdk.sound.TtsPlayer;
 import app.organicmaps.sdk.util.Config;
 import app.organicmaps.sdk.util.SharedPropertiesUtils;
 import app.organicmaps.sdk.util.StorageUtils;
+import app.organicmaps.sdk.util.concurrency.UiThread;
 import app.organicmaps.sdk.util.log.Logger;
 import app.organicmaps.sdk.util.log.LogsManager;
 import java.io.IOException;
@@ -116,8 +117,23 @@ public final class OrganicMaps implements DefaultLifecycleObserver
    */
   public boolean init(@NonNull Runnable onComplete) throws IOException
   {
+    if (!UiThread.isUiThread())
+    {
+      UiThread.run(() -> {
+        try
+        {
+          init(onComplete);
+        }
+        catch (IOException e)
+        {
+          Logger.e(TAG, "Failed to initialize native core: " + e.getMessage());
+        }
+      });
+      return true;
+    }
+
     initNativePlatform();
-    return initNativeFramework(onComplete);
+    return initNativeFramework(() -> UiThread.run(onComplete));
   }
 
   public boolean arePlatformAndCoreInitialized()

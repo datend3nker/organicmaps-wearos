@@ -2,6 +2,7 @@ package app.organicmaps.wear.message
 
 import android.content.Context
 import app.organicmaps.wear.SettingsSyncManager
+import app.organicmaps.sdk.sync.BaseSettingsSyncManager
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -10,12 +11,12 @@ class PreferenceHandler : WearMessageHandler {
         if (buffer.remaining() < 4) return
         val updates = parseUpdates(buffer)
         if (updates.isNotEmpty()) {
-            SettingsSyncManager.applyRemoteUpdates(context, updates)
+            SettingsSyncManager.getInstance(context).applyRemoteUpdates(updates)
         }
     }
 
-    private fun parseUpdates(buffer: ByteBuffer): List<SettingsSyncManager.SettingUpdate> {
-        val updates = mutableListOf<SettingsSyncManager.SettingUpdate>()
+    private fun parseUpdates(buffer: ByteBuffer): List<BaseSettingsSyncManager.SettingUpdate> {
+        val updates = mutableListOf<BaseSettingsSyncManager.SettingUpdate>()
         if (buffer.remaining() < 4) return updates
         val count = buffer.int
         for (i in 0 until count) {
@@ -33,7 +34,7 @@ class PreferenceHandler : WearMessageHandler {
             buffer.get(vb)
             val value = deserializeValue(type, vb)
             val ts = buffer.long
-            if (value != null) updates.add(SettingsSyncManager.SettingUpdate(key, value, ts))
+            if (value != null) updates.add(BaseSettingsSyncManager.SettingUpdate(key, value, ts))
         }
         return updates
     }

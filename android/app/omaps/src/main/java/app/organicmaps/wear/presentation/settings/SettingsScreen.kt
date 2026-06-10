@@ -18,6 +18,8 @@ import androidx.wear.compose.material.*
 import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.WearCommandService
 import app.organicmaps.sdk.Framework
+import app.organicmaps.sdk.sync.WearProtocol
+import app.organicmaps.sdk.sync.SyncSettingsRegistry
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
@@ -73,6 +75,8 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
         app.organicmaps.wear.WearCommandService.requestPreferences(context)
         app.organicmaps.wear.WearCommandService.sendPing(context)
     }
+
+    fun getK(canonical: String) = SyncSettingsRegistry.getLocalKey(canonical, true)
     
     // Listen for remote updates to briefly disable local syncing
     DisposableEffect(context) {
@@ -120,7 +124,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                 checked = mapEnabled,
                 onCheckedChange = { newVal ->
                     NavigationStateHolder.updateSettings { current ->
-                        prefs.edit().putBoolean("mapEnabled", newVal).commit()
+                        prefs.edit().putBoolean(getK(WearProtocol.SETTING_MAP_ENABLED), newVal).commit()
                         current.copy(mapEnabled = newVal)
                     }
                     app.organicmaps.wear.WearCommandService.syncPreferences(context)
@@ -159,11 +163,10 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
             Chip(
                 onClick = {
                     NavigationStateHolder.updateSettings { current ->
-                        val styleValues = listOf("default", "night", "auto", "nav_auto")
                         val currentIdx = styleValues.indexOf(current.mapStyle).coerceAtLeast(0)
                         val nextIdx = (currentIdx + 1) % styleValues.size
                         val nextStyle = styleValues[nextIdx]
-                        prefs.edit().putString("pref_wear_os_map_style", nextStyle).commit()
+                        prefs.edit().putString(getK(WearProtocol.SETTING_MAP_STYLE), nextStyle).commit()
                         current.copy(mapStyle = nextStyle)
                     }
                     app.organicmaps.wear.WearCommandService.syncPreferences(context)
@@ -180,7 +183,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                 checked = navState.is3dEnabled,
                 onCheckedChange = { newVal ->
                     NavigationStateHolder.updateSettings { current ->
-                        prefs.edit().putBoolean("pref_wear_os_3d", newVal).commit()
+                        prefs.edit().putBoolean(getK(WearProtocol.SETTING_3D_ENABLED), newVal).commit()
                         Framework.nativeSet3dMode(newVal, current.is3dBuildingsEnabled)
                         current.copy(is3dEnabled = newVal)
                     }
@@ -200,7 +203,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                 checked = navState.is3dBuildingsEnabled,
                 onCheckedChange = { newVal ->
                     NavigationStateHolder.updateSettings { current ->
-                        prefs.edit().putBoolean("pref_wear_os_3d_buildings", newVal).commit()
+                        prefs.edit().putBoolean(getK(WearProtocol.SETTING_3D_BUILDINGS_ENABLED), newVal).commit()
                         Framework.nativeSet3dMode(current.is3dEnabled, newVal)
                         current.copy(is3dBuildingsEnabled = newVal)
                     }
@@ -220,7 +223,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                 checked = navState.isAutoZoomEnabled,
                 onCheckedChange = { newVal ->
                     NavigationStateHolder.updateSettings { current ->
-                        prefs.edit().putBoolean("pref_wear_os_auto_zoom", newVal).commit()
+                        prefs.edit().putBoolean(getK(WearProtocol.SETTING_AUTO_ZOOM_ENABLED), newVal).commit()
                         Framework.nativeSetAutoZoomEnabled(newVal)
                         current.copy(isAutoZoomEnabled = newVal)
                     }
@@ -280,8 +283,8 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
 
                         // 2. Local prefs
                         prefs.edit()
-                            .putString("pref_wear_os_backend", nextBackend)
-                            .putBoolean("disconnectFromPhone", isStandalone)
+                            .putString(getK(WearProtocol.SETTING_BACKEND), nextBackend)
+                            .putBoolean(getK(WearProtocol.SETTING_STANDALONE_MODE), isStandalone)
                             .apply()
                             
                         // 3. Re-init
@@ -305,7 +308,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                     checked = watchLocalMode,
                     onCheckedChange = { newVal ->
                         NavigationStateHolder.updateSettings { current ->
-                            prefs.edit().putBoolean("watchLocalMode", newVal).commit()
+                            prefs.edit().putBoolean(getK(WearProtocol.SETTING_WATCH_LOCAL_MODE), newVal).commit()
                             current.copy(watchLocalMode = newVal)
                         }
                         app.organicmaps.wear.WearCommandService.syncPreferences(context)
@@ -325,11 +328,10 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                 Chip(
                     onClick = {
                         NavigationStateHolder.updateSettings { current ->
-                            val modeValues = listOf("PHONE_SYNC", "INTERNET")
                             val currentIdx = modeValues.indexOf(current.mapDownloadMode).coerceAtLeast(0)
                             val nextIdx = (currentIdx + 1) % modeValues.size
                             val nextMode = modeValues[nextIdx]
-                            prefs.edit().putString("mapDownloadMode", nextMode).commit()
+                            prefs.edit().putString(getK(WearProtocol.SETTING_MAP_DOWNLOAD_MODE), nextMode).commit()
                             current.copy(mapDownloadMode = nextMode)
                         }
                         app.organicmaps.wear.WearCommandService.syncPreferences(context)
@@ -370,7 +372,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                     checked = autoDownload,
                     onCheckedChange = { newVal ->
                         NavigationStateHolder.updateSettings { current ->
-                            prefs.edit().putBoolean("pref_wear_os_auto_download_route_maps", newVal).commit()
+                            prefs.edit().putBoolean(getK(WearProtocol.SETTING_AUTO_DOWNLOAD), newVal).commit()
                             current.copy(autoDownloadRouteMaps = newVal)
                         }
                         app.organicmaps.wear.WearCommandService.syncPreferences(context)
@@ -389,7 +391,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                     checked = navState.syncNotificationsEnabled,
                     onCheckedChange = { newVal ->
                         NavigationStateHolder.updateSettings { current ->
-                            prefs.edit().putBoolean("pref_sync_notifications", newVal).apply()
+                            prefs.edit().putBoolean(getK(WearProtocol.SETTING_SYNC_NOTIFICATIONS_ENABLED), newVal).apply()
                             current.copy(syncNotificationsEnabled = newVal)
                         }
                     },
@@ -430,11 +432,10 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                 Chip(
                     onClick = {
                         NavigationStateHolder.updateSettings { current ->
-                            val sourceValues = listOf("AUTO", "PHONE_ONLY")
                             val currentIdx = sourceValues.indexOf(current.locationSource).coerceAtLeast(0)
                             val nextIdx = (currentIdx + 1) % sourceValues.size
                             val nextSource = sourceValues[nextIdx]
-                            prefs.edit().putString("locationSource", nextSource).commit()
+                            prefs.edit().putString(getK(WearProtocol.SETTING_LOCATION_SOURCE), nextSource).commit()
                             current.copy(locationSource = nextSource)
                         }
                         app.organicmaps.wear.WearCommandService.syncPreferences(context)
@@ -457,7 +458,7 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
                 onClick = {
                     NavigationStateHolder.updateSettings { current ->
                         val nextUnits = (current.measurementUnits + 1) % 2
-                        prefs.edit().putInt("pref_wear_os_munits", nextUnits).commit()
+                        prefs.edit().putInt(getK(WearProtocol.SETTING_MEASUREMENT_UNITS), nextUnits).commit()
                         current.copy(measurementUnits = nextUnits)
                     }
                     app.organicmaps.wear.WearCommandService.syncPreferences(context)

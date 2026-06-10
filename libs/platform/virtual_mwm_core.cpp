@@ -52,8 +52,12 @@ std::map<std::string, std::unique_ptr<MwmWaitInfo>> g_waitInfos;
 std::mutex g_waitInfosMutex;
 wear::TRequestDataFn g_requestDataHandler;
 
-MwmWaitInfo & GetWaitInfo(std::string const & mwmName)
+MwmWaitInfo & GetWaitInfo(std::string const & mwmNameWithExt)
 {
+  std::string mwmName = mwmNameWithExt;
+  if (mwmName.size() > 4 && mwmName.substr(mwmName.size() - 4) == ".mwm")
+    mwmName = mwmName.substr(0, mwmName.size() - 4);
+
   std::lock_guard<std::mutex> lock(g_waitInfosMutex);
   auto it = g_waitInfos.find(mwmName);
   if (it == g_waitInfos.end())

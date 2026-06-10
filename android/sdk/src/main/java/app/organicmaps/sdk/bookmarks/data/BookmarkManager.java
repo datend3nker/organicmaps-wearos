@@ -242,7 +242,7 @@ public enum BookmarkManager {
 
   public static void loadBookmarks()
   {
-    nativeLoadBookmarks();
+    UiThread.run(BookmarkManager::nativeLoadBookmarks);
   }
 
   public void deleteCategory(long catId)

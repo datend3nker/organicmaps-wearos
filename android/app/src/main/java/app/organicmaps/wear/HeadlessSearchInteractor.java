@@ -60,7 +60,21 @@ public class HeadlessSearchInteractor implements SearchListener {
     }
 
     private void performSearch(@NonNull String query, double lat, double lon) {
-        Log.d(TAG, "performSearch: " + query + " around " + lat + ", " + lon);
+        Log.i(TAG, "performSearch START: '" + query + "' at " + lat + ", " + lon);
+        
+        // Ensure engine is alive and initialized
+        SearchEngine.INSTANCE.initialize();
+        
+        String storagePath = app.organicmaps.sdk.settings.StoragePathManager.findMapsStorage(mContext);
+        Log.d(TAG, "Native storage path: " + storagePath);
+
+        int worldStatus = app.organicmaps.sdk.downloader.MapManager.nativeGetStatus("World");
+        Log.i(TAG, "DEBUG_WEAR_PIPELINE: World map status: " + worldStatus);
+        
+        if (worldStatus != 4) { // STATUS_DONE
+            Log.e(TAG, "CRITICAL: World map is missing or incomplete (Status: " + worldStatus + "). Search WILL fail.");
+        }
+
         WearSyncService.sendSearchState(mContext, true);
         mLastResults = null;
         mLastSearchTimestamp = System.nanoTime();
@@ -70,36 +84,31 @@ public class HeadlessSearchInteractor implements SearchListener {
         boolean hasLocation = (lat != 0.0 || lon != 0.0);
         if (!hasLocation) {
             Location loc = MwmApplication.from(mContext).getLocationHelper().getSavedLocation();
-            if (loc == null) {
-                try {
-                    android.location.LocationManager lm = (android.location.LocationManager) mContext.getSystemService(Context.LOCATION_SERVICE);
-                    if (lm != null) {
-                        Location lastGps = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER);
-                        Location lastNetwork = lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER);
-                        if (lastGps != null) loc = lastGps;
-                        else if (lastNetwork != null) loc = lastNetwork;
-                    }
-                } catch (SecurityException e) {
-                    Log.e(TAG, "No location permission for headless search");
-                }
-            }
             if (loc != null) {
                 lat = loc.getLatitude();
                 lon = loc.getLongitude();
                 hasLocation = true;
+                Log.d(TAG, "Using last saved position for headless search: " + lat + ", " + lon);
             }
         }
         
-        // Initialize the viewport for the search engine, otherwise searches are endlessly delayed
-        // since the search API waits for the map to be rendered and `OnViewportChanged` to be called.
-        // On headless Wear OS we never render the map, so we set a synthetic viewport.
-        int zoom = hasLocation ? 13 : 1; // Slightly tighter zoom for better address matching
-        Framework.nativeSetSearchViewport(lat, lon, zoom);
+        final double finalLat = lat;
+        final double finalLon = lon;
+        final boolean finalHasLocation = hasLocation;
 
-        boolean success = SearchEngine.INSTANCE.search(mContext, query, false, mLastSearchTimestamp, hasLocation, lat, lon);
-        Log.d(TAG, "SearchEngine.search success? " + success);
+        // Initialize the viewport for the search engine - FIX: Ensure rect is calculated
+        int zoom = hasLocation ? 13 : 1;
+        Log.d(TAG, "Setting search viewport: " + finalLat + ", " + finalLon + " zoom: " + zoom);
+        Framework.nativeSetSearchViewport(finalLat, finalLon, zoom);
+
+        Log.d(TAG, "Calling SearchEngine.search...");
+        boolean success = SearchEngine.INSTANCE.search(mContext, query, false, mLastSearchTimestamp, finalHasLocation, finalLat, finalLon);
+        
         if (!success) {
+            Log.w(TAG, "SearchEngine.search failed immediately.");
             WearSyncService.sendSearchState(mContext, false);
+        } else {
+            Log.i(TAG, "SearchEngine.search call success? true");
         }
     }
 
@@ -109,7 +118,7 @@ public class HeadlessSearchInteractor implements SearchListener {
             Log.w(TAG, "Ignoring stale results update");
             return;
         }
-        Log.d(TAG, "onResultsUpdate: " + results.length + " items");
+        Log.i(TAG, "onResultsUpdate: Received " + results.length + " results for query at " + timestamp);
         mLastResults = results;
         WearSyncService.sendSearchResults(mContext, results, true);
     }
@@ -120,11 +129,12 @@ public class HeadlessSearchInteractor implements SearchListener {
             Log.w(TAG, "Ignoring stale results end");
             return;
         }
-        Log.d(TAG, "onResultsEnd. Final count: " + (mLastResults != null ? mLastResults.length : 0));
+        Log.i(TAG, "onResultsEnd. Final count: " + (mLastResults != null ? mLastResults.length : 0));
         WearCompanionNotificationManager.hideNotification(mContext, WearCompanionNotificationManager.NOTIFICATION_ID_SEARCH);
         if (mLastResults != null) {
             WearSyncService.sendSearchResults(mContext, mLastResults, false);
         } else {
+            // Explicitly notify watch that search is DONE even if no results
             WearSyncService.sendSearchState(mContext, false);
         }
     }

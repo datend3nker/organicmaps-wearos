@@ -2,9 +2,13 @@ package app.organicmaps;
 
 import static android.Manifest.permission.ACCESS_COARSE_LOCATION;
 import static android.Manifest.permission.ACCESS_FINE_LOCATION;
+import static android.Manifest.permission.BLUETOOTH_ADVERTISE;
+import static android.Manifest.permission.BLUETOOTH_CONNECT;
+import static android.Manifest.permission.BLUETOOTH_SCAN;
 
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -16,6 +20,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -30,6 +35,8 @@ import app.organicmaps.util.SharingUtils;
 import app.organicmaps.util.Utils;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 public class SplashActivity extends AppCompatActivity
@@ -63,7 +70,10 @@ public class SplashActivity extends AppCompatActivity
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
       getSplashScreen().setOnExitAnimationListener(SplashScreenView::remove);
     mPermissionRequest = registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(),
-                                                   result -> Config.setLocationRequested());
+                                                   result -> {
+                                                     Config.setLocationRequested();
+                                                     Config.setBluetoothRequested();
+                                                   });
     mApiRequest = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
       setResult(result.getResultCode(), result.getData());
       finish();
@@ -83,10 +93,28 @@ public class SplashActivity extends AppCompatActivity
     super.onResume();
     if (mCanceled)
       return;
+
+    final List<String> permissions = new ArrayList<>();
     if (!Config.isLocationRequested() && !LocationUtils.checkLocationPermission(this))
     {
-      Logger.d(TAG, "Requesting location permissions");
-      mPermissionRequest.launch(new String[] {ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION});
+      permissions.add(ACCESS_COARSE_LOCATION);
+      permissions.add(ACCESS_FINE_LOCATION);
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !Config.isBluetoothRequested())
+    {
+      if (ContextCompat.checkSelfPermission(this, BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+        permissions.add(BLUETOOTH_CONNECT);
+      if (ContextCompat.checkSelfPermission(this, BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED)
+        permissions.add(BLUETOOTH_SCAN);
+      if (ContextCompat.checkSelfPermission(this, BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED)
+        permissions.add(BLUETOOTH_ADVERTISE);
+    }
+
+    if (!permissions.isEmpty())
+    {
+      Logger.d(TAG, "Requesting permissions: " + permissions);
+      mPermissionRequest.launch(permissions.toArray(new String[0]));
       return;
     }
 

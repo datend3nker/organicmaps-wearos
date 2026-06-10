@@ -294,15 +294,18 @@ fun MapManagerScreen(isVisible: Boolean = true) {
 @Composable
 fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val navState by NavigationStateHolder.state.collectAsState()
     val isDownloading = item.status == CountryItem.STATUS_PROGRESS || item.status == CountryItem.STATUS_ENQUEUED || item.status == CountryItem.STATUS_APPLYING
     val isInstalled = item.status == CountryItem.STATUS_DONE || item.status == CountryItem.STATUS_PARTLY || item.present
+    val isOnPhone = navState.phoneDownloadedMaps.contains(item.id)
     
-    val statusText = when (item.status) {
-        CountryItem.STATUS_DONE -> "Installed"
-        CountryItem.STATUS_DOWNLOADABLE -> "Download (${java.lang.String.format(java.util.Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
-        CountryItem.STATUS_PROGRESS -> "Downloading ${item.progress.toInt()}%"
-        CountryItem.STATUS_ENQUEUED -> "Enqueued"
-        CountryItem.STATUS_FAILED -> "Error - Tap to retry"
+    val statusText = when {
+        item.status == CountryItem.STATUS_DONE -> "Installed"
+        isDownloading -> "Downloading ${item.progress.toInt()}%"
+        item.status == CountryItem.STATUS_ENQUEUED -> "Enqueued"
+        item.status == CountryItem.STATUS_FAILED -> "Error - Tap to retry"
+        isOnPhone -> "Pull from Phone (${java.lang.String.format(java.util.Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
+        item.status == CountryItem.STATUS_DOWNLOADABLE -> "Download (${java.lang.String.format(java.util.Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
         else -> if (item.isExpandable) "${item.totalChildCount} regions" else "Status: ${item.status}"
     }
 
@@ -310,7 +313,7 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
         onClick = {
             if (item.isExpandable) {
                 onPathStackChanged(pathStack + item.id)
-            } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED) {
+            } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED || isOnPhone) {
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
                     app.organicmaps.wear.WearMapDownloader.downloadOrStreamMap(context, item.id)
                 }
@@ -346,7 +349,7 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
             } else if (isInstalled) {
                 // Using Button as a wrapper for Delete icon to make it clickable independently is tricky in Chip icon.
                 // We'll use the chip's icon slot for the status or action.
-                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(24.dp).clickable { MapManager.nativeDelete(item.id) })
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(24.dp).clickable { MapManager.delete(item.id) })
             }
         }
     )

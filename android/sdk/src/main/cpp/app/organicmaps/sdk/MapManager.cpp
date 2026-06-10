@@ -15,9 +15,11 @@
 #include "platform/downloader_utils.hpp"
 #include "platform/local_country_file_utils.hpp"
 #include "platform/mwm_version.hpp"
+#include "platform/platform.hpp"
 
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -52,6 +54,7 @@ struct TBatchedData
 
 DECLARE_THREAD_CHECKER(g_batchingThreadChecker);
 std::unordered_map<jobject, std::pair<std::weak_ptr<jobject>, std::vector<TBatchedData>>> g_batchedCallbackData;
+std::mutex g_batchingMutex;
 bool g_isBatched;
 
 storage::Storage & GetStorage()
@@ -464,6 +467,7 @@ JNIEXPORT jboolean Java_app_organicmaps_sdk_downloader_MapManager_nativeIsDownlo
 static void StartBatchingCallbacks()
 {
   CHECK_THREAD_CHECKER(g_batchingThreadChecker, ("StartBatchingCallbacks"));
+  std::lock_guard<std::mutex> lock(g_batchingMutex);
   ASSERT(!g_isBatched, ());
   ASSERT(g_batchedCallbackData.empty(), ());
 
@@ -474,12 +478,19 @@ static void EndBatchingCallbacks(JNIEnv * env)
 {
   CHECK_THREAD_CHECKER(g_batchingThreadChecker, ("EndBatchingCallbacks"));
 
+  std::unordered_map<jobject, std::pair<std::weak_ptr<jobject>, std::vector<TBatchedData>>> batchedCallbackData;
+  {
+    std::lock_guard<std::mutex> lock(g_batchingMutex);
+    batchedCallbackData.swap(g_batchedCallbackData);
+    g_isBatched = false;
+  }
+
   auto const & listBuilder = jni::ListBuilder::Instance(env);
   static jclass batchDataClass =
       jni::GetGlobalClassRef(env, "app/organicmaps/sdk/downloader/MapManager$StorageCallbackData");
   static jmethodID batchDataCtor = jni::GetConstructorID(env, batchDataClass, "(Ljava/lang/String;IIZ)V");
 
-  for (auto const & [_, key] : g_batchedCallbackData)
+  for (auto const & [_, key] : batchedCallbackData)
   {
     auto ptr = key.first.lock();
     if (!ptr)
@@ -504,9 +515,6 @@ static void EndBatchingCallbacks(JNIEnv * env)
     jmethodID const method = jni::GetMethodID(env, *ptr, "onStatusChanged", "(Ljava/util/List;)V");
     env->CallVoidMethod(*ptr, method, list.get());
   }
-
-  g_batchedCallbackData.clear();
-  g_isBatched = false;
 }
 
 // static void nativeDownload(String root);
@@ -555,12 +563,20 @@ static void StatusChangedCallback(std::shared_ptr<jobject> const & listenerRef, 
   storage::NodeStatuses ns;
   GetStorage().GetNodeStatuses(countryId, ns);
 
-  auto & e = g_batchedCallbackData[*listenerRef];
-  e.first = listenerRef;
-  e.second.emplace_back(countryId, ns.m_status, ns.m_error, !ns.m_groupNode);
+  {
+    std::lock_guard<std::mutex> lock(g_batchingMutex);
+    auto & e = g_batchedCallbackData[*listenerRef];
+    e.first = listenerRef;
+    e.second.emplace_back(countryId, ns.m_status, ns.m_error, !ns.m_groupNode);
+  }
 
   if (!g_isBatched)
-    EndBatchingCallbacks(jni::GetEnv());
+  {
+    GetPlatform().RunTask(Platform::Thread::Gui, []()
+    {
+      EndBatchingCallbacks(jni::GetEnv());
+    });
+  }
 }
 
 static void ProgressChangedCallback(std::shared_ptr<jobject> const & listenerRef, storage::CountryId const & countryId,

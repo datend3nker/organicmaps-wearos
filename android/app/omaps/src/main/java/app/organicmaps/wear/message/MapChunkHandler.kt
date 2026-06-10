@@ -5,32 +5,34 @@ import android.util.Log
 import app.organicmaps.wear.ReloadWorldMapsDebouncer
 import app.organicmaps.wear.WearApplication
 import app.organicmaps.wear.WearMapDownloader
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.io.File
-import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
-class MapChunkHandler(
-    private val mapOutputStreams: MutableMap<String, FileOutputStream>
-) : WearMessageHandler {
+class MapChunkHandler : WearMessageHandler {
     companion object {
         private const val TAG = "MapChunkHandler"
     }
 
     override fun handle(buffer: ByteBuffer, data: ByteArray, context: Context) {
-        if (buffer.remaining() < 5) return
+        if (buffer.remaining() < 20) return // int(4) + long(8) + long(8)
         val mapIdLen = buffer.int
+        if (buffer.remaining() < mapIdLen + 16) return
         val mapIdBytes = ByteArray(mapIdLen)
         buffer.get(mapIdBytes)
         val mapId = String(mapIdBytes, StandardCharsets.UTF_8)
-        val isLast = buffer.get().toInt() == 1
+        val offset = buffer.long
+        val totalSize = buffer.long
         val chunk = ByteArray(buffer.remaining())
         buffer.get(chunk)
         
-        saveMapChunk(context, mapId, chunk, isLast)
+        saveMapChunk(context, mapId, chunk, offset, totalSize)
     }
 
-    private fun saveMapChunk(context: Context, mapId: String, data: ByteArray, isLast: Boolean) {
+    private fun saveMapChunk(context: Context, mapId: String, data: ByteArray, offset: Long, totalSize: Long) {
         val currentState = WearMapDownloader.downloadState.value
         val currentMap = WearMapDownloader.currentMap.value
         
@@ -39,64 +41,49 @@ class MapChunkHandler(
             return
         }
 
-        try {
-            val wearApp = context.applicationContext as WearApplication
-            wearApp.waitForInitializationBlocking()
-            
-            val storagePath = app.organicmaps.sdk.settings.StoragePathManager.findMapsStorage(context)
-            val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
-            val versionedPath = File(storagePath, dataVersion.toString())
-            if (!versionedPath.exists()) versionedPath.mkdirs()
-
-            // Calculate offset based on current file length or track it?
-            // Since it's a stream, we can probably just keep track of bytes written.
-            // But wait, if it's already mounted as a virtual MWM, we should use RandomAccessFile or similar.
-            
-            // Optimization: if it's mounted, write to it via VirtualMwmManager
-            if (app.organicmaps.wear.VirtualMwmManager.isMounted(mapId)) {
-                // We need to know the offset. Assuming sequential stream:
-                val offsetKey = "stream_offset_$mapId"
-                val prefs = context.getSharedPreferences("streaming_prefs", Context.MODE_PRIVATE)
-                val offset = prefs.getLong(offsetKey, 0L)
-                
-                app.organicmaps.wear.VirtualMwmManager.onBytesReceived(mapId, offset, data)
-                prefs.edit().putLong(offsetKey, offset + data.size).apply()
-                
-                if (isLast) {
-                    prefs.edit().remove(offsetKey).apply()
-                    WearMapDownloader.onDownloadCompleted()
-                    ReloadWorldMapsDebouncer.reload()
-                }
-                return
-            }
-
-            val fos = mapOutputStreams.getOrPut(mapId) {
-                val file = File(versionedPath, "$mapId.mwm.tmp")
-                WearMapDownloader.setStreamingMap(mapId)
-                FileOutputStream(file)
-            }
-            fos.write(data)
-            if (isLast) {
-                fos.close()
-                mapOutputStreams.remove(mapId)
-                val tmpFile = File(versionedPath, "$mapId.mwm.tmp")
-                val finalFile = File(versionedPath, "$mapId.mwm")
-                tmpFile.renameTo(finalFile)
-                WearMapDownloader.onDownloadCompleted()
-                Log.d(TAG, "Successfully received map via Bluetooth: $mapId")
-                
-                ReloadWorldMapsDebouncer.reload()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save map chunk: ${e.message}")
+        val wearApp = context.applicationContext as WearApplication
+        CoroutineScope(Dispatchers.IO).launch {
             try {
-                mapOutputStreams.remove(mapId)?.close()
+                wearApp.waitForInitializationSuspend()
+                
                 val storagePath = app.organicmaps.sdk.settings.StoragePathManager.findMapsStorage(context)
                 val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
-                val tempFile = File(File(storagePath, dataVersion.toString()), "$mapId.mwm.tmp")
-                if (tempFile.exists()) tempFile.delete()
-            } catch (_: Throwable) {}
-            WearMapDownloader.onDownloadCancelled()
+                val versionedPath = File(storagePath, dataVersion.toString())
+                if (!versionedPath.exists()) versionedPath.mkdirs()
+
+                val tmpFile = File(versionedPath, "$mapId.mwm.tmp")
+                java.io.RandomAccessFile(tmpFile, "rw").use { raf ->
+                    if (offset == 0L && raf.length() > 0) {
+                        Log.i(TAG, "Resetting .tmp file for $mapId (offset 0 received)")
+                        raf.setLength(0)
+                    }
+                    raf.seek(offset)
+                    raf.write(data)
+                    
+                    val currentSize = offset + data.size
+                    val progress = currentSize.toFloat() / totalSize.toFloat()
+                    WearMapDownloader.setStreamingProgress(progress)
+
+                    if (currentSize >= totalSize) {
+                        Log.d(TAG, "Map transfer complete: $mapId. Finalizing...")
+                        
+                        // Ensure the file is not busy before renaming
+                        app.organicmaps.wear.VirtualMwmManager.unmount(mapId)
+                        
+                        val finalFile = File(versionedPath, "$mapId.mwm")
+                        if (finalFile.exists()) finalFile.delete()
+                        tmpFile.renameTo(finalFile)
+                        
+                        WearMapDownloader.onDownloadCompleted()
+                        Log.d(TAG, "Successfully received map via Bluetooth: $mapId")
+                        
+                        ReloadWorldMapsDebouncer.reload()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save map chunk: ${e.message}")
+                WearMapDownloader.onDownloadCancelled()
+            }
         }
     }
 }

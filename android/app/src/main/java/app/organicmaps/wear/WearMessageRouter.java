@@ -7,6 +7,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -15,51 +16,93 @@ import app.organicmaps.sdk.routing.RoutingController;
 import app.organicmaps.location.TrackRecordingService;
 import app.organicmaps.sync.BluetoothSyncLayer;
 import app.organicmaps.sync.ISyncLayer;
+import app.organicmaps.sdk.sync.WearProtocol;
+import app.organicmaps.sdk.sync.WearProtocolDataConverter;
+import app.organicmaps.sdk.util.ChecksumUtils;
 
 public class WearMessageRouter {
     private static final String TAG = "WearMessageRouter";
     private static final int SEARCH_SELECT_MIN_SIZE = 8 * 2 + 4;
+    private static final long DEDUPLICATION_WINDOW_SEARCH_MS = 200;
+    private static final long DEDUPLICATION_WINDOW_DEFAULT_MS = 500;
 
-    private static final String PATH_STOP_NAVIGATION = "/navigation/stop";
-    private static final String PATH_SEARCH_QUERY = "/search/query";
-    private static final String PATH_SEARCH_SELECT = "/search/select";
-    private static final String PATH_SEARCH_HISTORY_REQUEST = "/search/history/request";
-    private static final String PATH_PING = "/ping";
-    private static final String PATH_PREFERENCES_REQUEST = "/preferences/request";
-    private static final String PATH_START_NAVIGATION_REQUEST = "/navigation/start/request";
-    private static final String PATH_TRACK_RECORDING_TOGGLE = "/track/recording/toggle";
-    private static final String PATH_BOOKMARK_VISIBLE_TOGGLE = "/bookmark/visible/toggle";
-    private static final String PATH_BOOKMARK_SYNC_REQUEST = "/bookmark/sync/request";
-    private static final String PATH_BOOKMARKS_REQUEST = "/bookmarks/request";
-    private static final String PATH_BOOKMARK_SHOW = "/bookmark/show";
-    private static final String PATH_BOOKMARK_UPDATE = "/bookmark/update";
-    private static final String PATH_BOOKMARK_RENAME = "/bookmark/rename";
-    private static final String PATH_BOOKMARK_DELETE = "/bookmark/delete";
-    private static final String PATH_MAP_DOWNLOAD_REQUEST = "/map/download/request";
-    private static final String PATH_VIRTUAL_MWM_REQUEST = "/virtual_mwm/request";
-    private static final String PATH_VIRTUAL_MWM_METADATA_REQUEST = "/virtual_mwm/metadata_request";
-    private static final String PATH_MAP_PROGRESS = "/map/download/progress";
-    private static final String PATH_SEARCH_HISTORY_SYNC = "/search/history/sync";
+    private static final String PATH_STOP_NAVIGATION = WearProtocol.PATH_NAVIGATION_STOP;
+    private static final String PATH_SEARCH_QUERY = WearProtocol.PATH_SEARCH_QUERY;
+    private static final String PATH_SEARCH_SELECT = WearProtocol.PATH_SEARCH_SELECT;
+    private static final String PATH_SEARCH_HISTORY_REQUEST = WearProtocol.PATH_SEARCH_HISTORY_REQUEST;
+    private static final String PATH_PING = WearProtocol.PATH_PING;
+    private static final String PATH_PREFERENCES_REQUEST = WearProtocol.PATH_PREFERENCES_REQUEST;
+    private static final String PATH_START_NAVIGATION_REQUEST = WearProtocol.PATH_NAVIGATION_START;
+    private static final String PATH_TRACK_RECORDING_TOGGLE = WearProtocol.PATH_TRACK_RECORDING_TOGGLE;
+    private static final String PATH_BOOKMARK_VISIBLE_TOGGLE = WearProtocol.PATH_BOOKMARK_VISIBLE_TOGGLE;
+    private static final String PATH_BOOKMARK_SYNC_REQUEST = WearProtocol.PATH_BOOKMARK_SYNC_REQUEST;
+    private static final String PATH_BOOKMARKS_REQUEST = WearProtocol.PATH_BOOKMARKS_REQUEST;
+    private static final String PATH_BOOKMARK_SHOW = WearProtocol.PATH_BOOKMARK_SHOW;
+    private static final String PATH_BOOKMARK_UPDATE = WearProtocol.PATH_BOOKMARK_UPDATE;
+    private static final String PATH_BOOKMARK_RENAME = WearProtocol.PATH_BOOKMARK_RENAME;
+    private static final String PATH_BOOKMARK_DELETE = WearProtocol.PATH_BOOKMARK_DELETE;
+    private static final String PATH_MAP_DOWNLOAD_REQUEST = WearProtocol.PATH_MAP_DOWNLOAD_REQUEST;
+    private static final String PATH_DOWNLOADED_MAPS_REQUEST = WearProtocol.PATH_MAP_PHONE_DOWNLOADED_REQUEST;
+    private static final String PATH_VIRTUAL_MWM_REQUEST = WearProtocol.PATH_VIRTUAL_MWM_REQUEST;
+    private static final String PATH_VIRTUAL_MWM_METADATA_REQUEST = WearProtocol.PATH_VIRTUAL_MWM_METADATA_REQUEST;
+    private static final String PATH_MAP_PROGRESS = WearProtocol.PATH_MAP_DOWNLOAD_PROGRESS;
+    private static final String PATH_SEARCH_HISTORY_SYNC = WearProtocol.PATH_SEARCH_HISTORY_SYNC;
+    private static final String PATH_HANDSHAKE = WearProtocol.PATH_HANDSHAKE;
+    private static final String PATH_SEARCH_RESULTS = WearProtocol.PATH_SEARCH_RESULTS;
+    private static final String PATH_SEARCH_HISTORY = WearProtocol.PATH_SEARCH_HISTORY;
+    private static final String PATH_BOOKMARKS = WearProtocol.PATH_BOOKMARKS;
 
     private static final Handler sMainHandler = new Handler(Looper.getMainLooper());
 
-    private static long sLastMsgTime = 0;
-    private static int sLastMsgHash = 0;
+    private static final java.util.Map<String, Long> sLastMsgTimes = new java.util.HashMap<>();
+    private static final java.util.Map<String, Integer> sLastMsgHashes = new java.util.HashMap<>();
 
-    public static void onMessageReceived(@NonNull Context context, @NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId) {
-        int hash = path.hashCode() ^ java.util.Arrays.hashCode(data);
-        long now = System.currentTimeMillis();
-        // Robust deduplication (500ms)
-        if (hash == sLastMsgHash && (now - sLastMsgTime) < 500) {
-            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Message IGNORED (Deduplication): " + path);
+    public static void onMessageReceived(@NonNull Context context, @NonNull String path, @Nullable byte[] data, @NonNull String sourceNodeId) {
+        onMessageReceived(context, path, data, sourceNodeId, null);
+    }
+
+    public static void onMessageReceived(@NonNull Context context, @NonNull String path, @Nullable byte[] data, @NonNull String sourceNodeId, @Nullable String localNodeId) {
+        if (localNodeId != null && localNodeId.equals(sourceNodeId)) {
+            Log.v(TAG, "DEBUG_WEAR_PIPELINE: Ignoring local loopback message at " + path);
             return;
         }
-        sLastMsgHash = hash;
-        sLastMsgTime = now;
 
-        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Routing message: " + path + " from " + sourceNodeId + " (payload=" + data.length + " bytes)");
+        byte[] payload = data != null ? data : new byte[0];
+
+        int hash = path.hashCode() ^ java.util.Arrays.hashCode(payload);
+        long now = System.currentTimeMillis();
+        
+        // Robust deduplication (per path)
+        long window = path.equals(PATH_SEARCH_QUERY) ? DEDUPLICATION_WINDOW_SEARCH_MS : DEDUPLICATION_WINDOW_DEFAULT_MS;
+        Long lastTime = sLastMsgTimes.get(path);
+        Integer lastHash = sLastMsgHashes.get(path);
+        
+        if (lastHash != null && lastHash == hash && lastTime != null && (now - lastTime) < window) {
+            app.organicmaps.sdk.sync.WearLog.d("Message IGNORED (Deduplication): " + path);
+            return;
+        }
+        sLastMsgHashes.put(path, hash);
+        sLastMsgTimes.put(path, now);
+
+        app.organicmaps.sdk.sync.WearLog.logReceived("PHONE", "AUTO", path, payload.length);
+        
+        final byte[] finalPayload = payload;
+
         switch (path) {
+            case PATH_HANDSHAKE:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handshake received");
+                int remoteVersion = WearProtocolDataConverter.decodeHandshakeVersion(finalPayload);
+                Log.i(TAG, "DEBUG_WEAR_PIPELINE: Remote app version: " + remoteVersion);
+                
+                // Mutual handshake: Send ours if we haven't recently
+                // For simplicity, always send it back for now as a confirmation
+                WearSyncService.getSyncLayer().sendHandshake(context);
+                
+                // Also trigger settings sync to ensure consistency after reconnection
+                WearSyncService.getSyncLayer().syncPreferences(context.getApplicationContext());
+                break;
             case PATH_STOP_NAVIGATION:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_STOP_NAVIGATION");
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Stopping navigation per watch request");
                     RoutingController.get().cancel();
@@ -67,30 +110,54 @@ public class WearMessageRouter {
                 });
                 break;
             case PATH_SEARCH_QUERY: {
-                ByteBuffer buffer = ByteBuffer.wrap(data);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_SEARCH_QUERY. Payload size: " + finalPayload.length);
+                ByteBuffer buffer = ByteBuffer.wrap(finalPayload);
                 double lat = 0;
                 double lon = 0;
-                String query;
-                if (buffer.remaining() >= 16) {
-                    lat = buffer.getDouble();
-                    lon = buffer.getDouble();
-                    byte[] queryBytes = new byte[buffer.remaining()];
-                    buffer.get(queryBytes);
-                    query = new String(queryBytes, StandardCharsets.UTF_8);
+                String query = "";
+                
+                if (finalPayload.length >= 16) {
+                    try {
+                        lat = buffer.getDouble();
+                        lon = buffer.getDouble();
+                        
+                        int queryLen = finalPayload.length - 16;
+                        if (queryLen > 0) {
+                            byte[] queryBytes = new byte[queryLen];
+                            buffer.get(queryBytes);
+                            query = new String(queryBytes, StandardCharsets.UTF_8).trim();
+                        }
+                        Log.i(TAG, "DEBUG_WEAR_PIPELINE: Parsed search: '" + query + "' at " + lat + ", " + lon);
+                    } catch (Exception e) {
+                        Log.e(TAG, "DEBUG_WEAR_PIPELINE: Failed to parse search payload", e);
+                        query = new String(finalPayload, StandardCharsets.UTF_8).trim();
+                    }
                 } else {
-                    query = new String(data, StandardCharsets.UTF_8);
+                    query = new String(finalPayload, StandardCharsets.UTF_8).trim();
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Search payload too small for headers, using raw: '" + query + "'");
                 }
+                
                 final double finalLat = lat;
                 final double finalLon = lon;
                 final String finalQuery = query;
+                
+                if (finalQuery.isEmpty()) {
+                    Log.w(TAG, "DEBUG_WEAR_PIPELINE: Received EMPTY search query, ignoring");
+                    return;
+                }
+
                 sMainHandler.post(() -> {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Starting headless search for: " + finalQuery + " at " + finalLat + ", " + finalLon);
-                    HeadlessSearchInteractor.getInstance(context).startSearch(finalQuery, finalLat, finalLon);
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Starting headless search for: '" + finalQuery + "' at " + finalLat + ", " + finalLon);
+                    ensureFrameworkInitialized(context, () -> {
+                        app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize();
+                        HeadlessSearchInteractor.getInstance(context).startSearch(finalQuery, finalLat, finalLon);
+                    });
                 });
                 break;
             }
             case PATH_SEARCH_SELECT: {
-                ByteBuffer buffer = ByteBuffer.wrap(data);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_SEARCH_SELECT");
+                ByteBuffer buffer = ByteBuffer.wrap(finalPayload);
                 if (buffer.remaining() < SEARCH_SELECT_MIN_SIZE) {
                     Log.w(TAG, "DEBUG_WEAR_PIPELINE: Malformed search select payload.");
                     return;
@@ -105,20 +172,25 @@ public class WearMessageRouter {
 
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch selected result: " + name + " (" + lat + ", " + lon + ") Mode: " + routerType);
-                    app.organicmaps.sdk.search.SearchRecents.add(name, context);
-                    HeadlessRouteInteractor.getInstance(context).planRoute(lat, lon, routerType, name);
+                    ensureFrameworkInitialized(context, () -> {
+                        app.organicmaps.sdk.search.SearchRecents.add(name, context);
+                        HeadlessRouteInteractor.getInstance(context).planRoute(lat, lon, routerType, name);
+                    });
                 });
                 break;
             }
             case PATH_SEARCH_HISTORY_REQUEST:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_SEARCH_HISTORY_REQUEST");
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending search history to watch");
-                    WearSyncService.sendSearchHistory(context.getApplicationContext());
+                    ensureFrameworkInitialized(context, () -> WearSyncService.sendSearchHistory(context.getApplicationContext()));
                 });
                 break;
+            case PATH_SEARCH_HISTORY:
             case PATH_SEARCH_HISTORY_SYNC:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling " + path);
                 sMainHandler.post(() -> {
-                    ByteBuffer buffer = ByteBuffer.wrap(data);
+                    ByteBuffer buffer = ByteBuffer.wrap(finalPayload);
                     if (buffer.remaining() < 4) return;
                     int count = buffer.getInt();
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Receiving search history sync. Items: " + count);
@@ -132,21 +204,30 @@ public class WearMessageRouter {
                     }
                 });
                 break;
+            case PATH_SEARCH_RESULTS:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Received search results from watch (ignoring on phone)");
+                break;
+            case PATH_BOOKMARKS:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Received bookmarks from watch (ignoring on phone)");
+                break;
             case PATH_PING:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Ping received from " + sourceNodeId);
                 WearSyncService.getSyncLayer().sendPong(context.getApplicationContext(), sourceNodeId);
                 break;
             case PATH_PREFERENCES_REQUEST:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_PREFERENCES_REQUEST");
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested settings sync");
                 WearSyncService.getSyncLayer().syncPreferences(context.getApplicationContext());
                 break;
             case PATH_START_NAVIGATION_REQUEST:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_START_NAVIGATION_REQUEST");
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to start navigation");
                     RoutingController.get().start();
                 });
                 break;
             case PATH_TRACK_RECORDING_TOGGLE:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_TRACK_RECORDING_TOGGLE");
                 sMainHandler.post(() -> {
                     boolean isRecording = app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled();
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch toggling track recording. Current: " + isRecording);
@@ -160,15 +241,17 @@ public class WearMessageRouter {
                 });
                 break;
             case PATH_BOOKMARKS_REQUEST:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARKS_REQUEST");
                 sMainHandler.post(() -> {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested bookmark categories");
+                    Log.i(TAG, "DEBUG_WEAR_PIPELINE: Watch requested bookmark categories - triggering sync");
                     ensureFrameworkInitialized(context, () -> {
                         WearSyncService.sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
                     });
                 });
                 break;
             case PATH_BOOKMARK_SHOW: {
-                long bmkId = ByteBuffer.wrap(data).getLong();
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_SHOW");
+                long bmkId = ByteBuffer.wrap(finalPayload).getLong();
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to show bookmark: " + bmkId);
                     app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId);
@@ -182,7 +265,8 @@ public class WearMessageRouter {
                 break;
             }
             case PATH_BOOKMARK_UPDATE: {
-                ByteBuffer updateBuf = ByteBuffer.wrap(data);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_UPDATE");
+                ByteBuffer updateBuf = ByteBuffer.wrap(finalPayload);
                 long updateBmkId = updateBuf.getLong();
                 int nameLen = updateBuf.getInt();
                 byte[] nameB = new byte[nameLen];
@@ -199,7 +283,8 @@ public class WearMessageRouter {
                 break;
             }
             case PATH_BOOKMARK_VISIBLE_TOGGLE:
-                String catName = new String(data, StandardCharsets.UTF_8);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_VISIBLE_TOGGLE");
+                String catName = new String(finalPayload, StandardCharsets.UTF_8);
                 sMainHandler.post(() -> {
                     for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
                         if (cat.getName().equals(catName)) {
@@ -212,7 +297,8 @@ public class WearMessageRouter {
                 });
                 break;
             case PATH_BOOKMARK_SYNC_REQUEST:
-                String syncCatName = new String(data, StandardCharsets.UTF_8);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_SYNC_REQUEST");
+                String syncCatName = new String(finalPayload, StandardCharsets.UTF_8);
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested sync for cat: " + syncCatName);
                     ensureFrameworkInitialized(context, () -> {
@@ -227,7 +313,8 @@ public class WearMessageRouter {
                 });
                 break;
             case PATH_BOOKMARK_RENAME: {
-                ByteBuffer buffer = ByteBuffer.wrap(data);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_RENAME");
+                ByteBuffer buffer = ByteBuffer.wrap(finalPayload);
                 if (buffer.remaining() < 4) return;
                 int oldNameLen = buffer.getInt();
                 if (buffer.remaining() < oldNameLen + 4) return;
@@ -251,7 +338,8 @@ public class WearMessageRouter {
                 break;
             }
             case PATH_BOOKMARK_DELETE: {
-                String delName = new String(data, StandardCharsets.UTF_8);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_DELETE");
+                String delName = new String(finalPayload, StandardCharsets.UTF_8);
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to delete cat: " + delName);
                     for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
@@ -263,23 +351,87 @@ public class WearMessageRouter {
                 });
                 break;
             }
-            case PATH_MAP_DOWNLOAD_REQUEST:
-                String mapId = new String(data, StandardCharsets.UTF_8);
-                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested map streaming: " + mapId);
+            case PATH_DOWNLOADED_MAPS_REQUEST:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_DOWNLOADED_MAPS_REQUEST");
                 sMainHandler.post(() -> {
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested downloaded maps list");
                     ensureFrameworkInitialized(context, () -> {
-                        WearMapStreamingHelper.streamMapToWatch(context, sourceNodeId, mapId);
+                        java.util.List<app.organicmaps.sdk.downloader.CountryItem> downloaded = new java.util.ArrayList<>();
+                        app.organicmaps.sdk.downloader.MapManager.nativeListItems(null, 0, 0, false, true, downloaded);
+                        java.util.List<String> ids = new java.util.ArrayList<>();
+                        for (app.organicmaps.sdk.downloader.CountryItem item : downloaded) {
+                            if (item.present) ids.add(item.id);
+                        }
+                        WearSyncService.getSyncLayer().sendDownloadedMaps(context.getApplicationContext(), ids);
                     });
                 });
                 break;
-            case "/map/download/cancel":
-                String cancelMapId = new String(data, StandardCharsets.UTF_8);
+            case PATH_MAP_DOWNLOAD_REQUEST:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_MAP_DOWNLOAD_REQUEST");
+                ByteBuffer dlBuf = ByteBuffer.wrap(finalPayload);
+                String dlMapId;
+                long dlOffset = 0;
+                long dlChecksum = 0;
+                if (dlBuf.remaining() >= 4) {
+                    int nameLen = dlBuf.getInt();
+                    if (dlBuf.remaining() >= nameLen) {
+                        byte[] nameBytes = new byte[nameLen];
+                        dlBuf.get(nameBytes);
+                        dlMapId = new String(nameBytes, StandardCharsets.UTF_8);
+                        if (dlBuf.remaining() >= 8) {
+                            dlOffset = dlBuf.getLong();
+                        }
+                        if (dlBuf.remaining() >= 8) {
+                            dlChecksum = dlBuf.getLong();
+                        }
+                    } else {
+                        dlMapId = new String(finalPayload, StandardCharsets.UTF_8);
+                    }
+                } else {
+                    dlMapId = new String(finalPayload, StandardCharsets.UTF_8);
+                }
+                
+                final String finalDlMapId = dlMapId;
+                final long requestedOffset = dlOffset;
+                final long requestedChecksum = dlChecksum;
+
+                sMainHandler.post(() -> {
+                    ensureFrameworkInitialized(context, () -> {
+                        long validatedOffset = requestedOffset;
+                        if (validatedOffset > 0) {
+                            try {
+                                java.io.File localFile = WearMapStreamingHelper.findMapFile(context, finalDlMapId);
+                                if (localFile != null && localFile.exists()) {
+                                    long localChecksum = ChecksumUtils.calculateCRC32(localFile, validatedOffset);
+                                    if (localChecksum != requestedChecksum) {
+                                        Log.w(TAG, "Checksum mismatch for " + finalDlMapId + " at offset " + validatedOffset + ". Local: " + localChecksum + ", Remote: " + requestedChecksum + ". Forcing full re-download.");
+                                        validatedOffset = 0;
+                                    } else {
+                                        Log.i(TAG, "Checksum verified for " + finalDlMapId + " at offset " + validatedOffset + ". Resuming...");
+                                    }
+                                } else {
+                                    validatedOffset = 0;
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Failed to verify checksum for " + finalDlMapId, e);
+                                validatedOffset = 0;
+                            }
+                        }
+
+                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested map streaming: " + finalDlMapId + " from offset: " + validatedOffset);
+                        WearMapStreamingHelper.streamMapToWatch(context, sourceNodeId, finalDlMapId, validatedOffset);
+                    });
+                });
+                break;
+            case WearProtocol.PATH_MAP_DOWNLOAD_CANCEL:
+                String cancelMapId = new String(finalPayload, StandardCharsets.UTF_8);
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to cancel map streaming: " + cancelMapId);
                 WearSyncService.getSyncLayer().cancelStreaming(cancelMapId);
                 break;
             case PATH_MAP_PROGRESS:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_MAP_PROGRESS");
                 sMainHandler.post(() -> {
-                    ByteBuffer buffer = ByteBuffer.wrap(data);
+                    ByteBuffer buffer = ByteBuffer.wrap(finalPayload);
                     if (buffer.remaining() < 8) return;
                     int countryLen = buffer.getInt();
                     if (buffer.remaining() < countryLen + 4) return;
@@ -294,20 +446,38 @@ public class WearMessageRouter {
                 });
                 break;
             case PATH_VIRTUAL_MWM_METADATA_REQUEST: {
-                String mwmName = new String(data, StandardCharsets.UTF_8);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_VIRTUAL_MWM_METADATA_REQUEST");
+                String mwmName = new String(finalPayload, StandardCharsets.UTF_8);
                 sMainHandler.post(() -> {
                     ensureFrameworkInitialized(context, () -> {
                         long size = app.organicmaps.sdk.Framework.nativeGetMwmSize(mwmName);
-                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested metadata for: " + mwmName + " size: " + size);
+                        long dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion();
+                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested metadata for: " + mwmName + " size: " + size + " version: " + dataVersion);
                         if (size > 0) {
-                            WearSyncService.getSyncLayer().sendMwmMetadata(context.getApplicationContext(), mwmName, size);
+                            // OPTIMIZATION: Send the MWM header AND footer together with metadata.
+                            // This allows the watch to "open" and validate the file immediately after mounting.
+                            
+                            // 1. Footer: always needed for FilesContainer (last 64KB)
+                            int footerSize = (int) Math.min(size, 64 * 1024);
+                            long footerOffset = size - footerSize;
+                            byte[] footerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, footerOffset, footerSize);
+                            
+                            // 2. Header: contains version info (first 10KB usually enough for many sections)
+                            int headerSize = (int) Math.min(size, 16 * 1024);
+                            byte[] headerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, 0, headerSize);
+                            
+                            WearSyncService.getSyncLayer().sendMwmMetadata(context.getApplicationContext(), mwmName, size, headerData, footerData);
+                        } else {
+                            Log.w(TAG, "DEBUG_WEAR_PIPELINE: Map NOT FOUND on phone: " + mwmName + " (Checking storage...)");
+                            WearSyncService.getSyncLayer().sendMapNotFound(context.getApplicationContext(), mwmName);
                         }
                     });
                 });
                 break;
             }
             case PATH_VIRTUAL_MWM_REQUEST: {
-                ByteBuffer buffer = ByteBuffer.wrap(data);
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_VIRTUAL_MWM_REQUEST");
+                ByteBuffer buffer = ByteBuffer.wrap(finalPayload);
                 int nameLen = buffer.getInt();
                 byte[] nameBytes = new byte[nameLen];
                 buffer.get(nameBytes);
@@ -320,24 +490,26 @@ public class WearMessageRouter {
                         // Stability: Cap size to stay within transport limits (GMS: ~100KB)
                         int safeSize = Math.min(size, 85 * 1024); 
                         byte[] mwmData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, offset, safeSize);
-                        if (mwmData != null) {
+                        if (mwmData != null && mwmData.length > 0) {
                             Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending MWM bytes: " + mwmName + " offset: " + offset + " size: " + mwmData.length + " (requested: " + size + ")");
                             // Optimization: ISyncLayer implementations will handle compression if beneficial
                             WearSyncService.getSyncLayer().sendMwmBytes(context.getApplicationContext(), mwmName, offset, mwmData);
                         } else {
-                            Log.w(TAG, "DEBUG_WEAR_PIPELINE: Failed to get MwmBytes for: " + mwmName + " at " + offset);
+                            long fileSize = app.organicmaps.sdk.Framework.nativeGetMwmSize(mwmName);
+                            Log.w(TAG, "DEBUG_WEAR_PIPELINE: Failed to get MwmBytes for: " + mwmName + " at " + offset + " (MWM file size: " + fileSize + ")");
                             // We don't send a response, watch has a timeout to clear pending state
                         }
                     });
                 });
                 break;
             }
-            case "/preferences/watch":
-            case "/preferences/updates":
+            case WearProtocol.PATH_PREFERENCES_WATCH:
+            case WearProtocol.PATH_PREFERENCES_UPDATES:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_PREFERENCES (watch/updates)");
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch sent preferences update: " + path);
                 sMainHandler.post(() -> {
                     android.content.SharedPreferences prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context);
-                    WearSyncService.getSyncLayer().parsePreferences(context, data, prefs);
+                    WearSyncService.getSyncLayer().parsePreferences(context, finalPayload, prefs);
                     
                     // Notify UI to refresh
                     Intent intent = new Intent("app.organicmaps.wear.SETTINGS_CHANGED");

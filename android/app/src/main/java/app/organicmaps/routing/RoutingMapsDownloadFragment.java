@@ -103,7 +103,7 @@ public class RoutingMapsDownloadFragment extends BaseRoutingErrorDialogFragment
   {
     if (mCancelled)
       for (String item : mMaps)
-        MapManager.nativeCancel(item);
+        MapManager.cancel(item);
 
     super.onDismiss(dialog);
   }

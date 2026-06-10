@@ -8,6 +8,8 @@ import androidx.annotation.Nullable;
 import app.organicmaps.sdk.routing.RoutingInfo;
 import app.organicmaps.sdk.search.SearchResult;
 
+import app.organicmaps.sdk.sync.BaseSettingsSyncManager;
+
 /**
  * Abstraction for device-to-device synchronization.
  * Supports different transport layers (GMS Wearable, Bluetooth RFCOMM, etc.).
@@ -16,7 +18,7 @@ public interface ISyncLayer {
     byte PROTOCOL_VERSION = 1;
 
     void syncPreferences(@NonNull Context context);
-    void syncPreferenceUpdates(@NonNull Context context, @NonNull List<app.organicmaps.wear.SettingsSyncManager.SettingUpdate> updates);
+    void syncPreferenceUpdates(@NonNull Context context, @NonNull List<BaseSettingsSyncManager.SettingUpdate> updates);
     void updateNavigation(@NonNull Context context, @Nullable RoutingInfo info, @Nullable Location location);
     void startNavigation(@NonNull Context context);
     void stopNavigation(@NonNull Context context);
@@ -25,7 +27,7 @@ public interface ISyncLayer {
     void sendSearchHistory(@NonNull Context context);
     void requestMwmMetadata(@NonNull Context context, @NonNull String mwmName);
     void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId);
-    void sendMapChunk(@NonNull Context context, @NonNull String mapId, byte[] chunk, boolean isLast);
+    void sendMapChunk(@NonNull Context context, @NonNull String mapId, byte[] chunk, long offset, long totalSize);
     void sendPong(@NonNull Context context, @NonNull String nodeId);
     void sendMapProgress(@NonNull Context context, @NonNull String countryId, int progress);
     void sendRouteBuildProgress(@NonNull Context context, int progress);
@@ -38,11 +40,14 @@ public interface ISyncLayer {
     void deleteBookmarkCategory(@NonNull Context context, @NonNull String name);
     void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId, long requestId, @NonNull byte[] features);
     void sendMwmBytes(@NonNull Context context, @NonNull String mwmName, long offset, @NonNull byte[] data);
-    void sendMwmMetadata(@NonNull Context context, @NonNull String mwmName, long totalSize);
-    void streamMapFile(@NonNull Context context, @NonNull String nodeId, @NonNull String mapId, @NonNull java.io.File file);
+    void sendMwmMetadata(@NonNull Context context, @NonNull String mwmName, long totalSize, @Nullable byte[] header, @Nullable byte[] footer);
+    void sendDownloadedMaps(@NonNull Context context, @NonNull List<String> mapIds);
+    void streamMapFile(@NonNull Context context, @NonNull String nodeId, @NonNull String mapId, @NonNull java.io.File file, long offset);
     void cancelStreaming(@NonNull String mapId);
     void checkConnection(@NonNull Context context, @NonNull ConnectionCallback callback);
+    boolean isLinked();
     void launchWatchApp(@NonNull Context context);
+    void sendHandshake(@NonNull Context context);
 
     default boolean isIgnoringPreferenceChanges() {
         return false;

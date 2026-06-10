@@ -9,6 +9,8 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.tasks.await
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
@@ -90,9 +92,7 @@ object WearMapDownloader {
         if (_currentMap.value == mapId && _downloadState.value == DownloadState.STREAMING_FROM_PHONE) {
             _downloadState.value = DownloadState.FAILED
             NavigationStateHolder.update { it.copy(missingMapId = mapId) }
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(context, "Map '$mapId' not found on phone.", android.widget.Toast.LENGTH_LONG).show()
-            }
+            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$mapId' not found on phone.", android.widget.Toast.LENGTH_LONG))
         }
     }
 
@@ -197,6 +197,31 @@ object WearMapDownloader {
     private suspend fun streamFromPhone(context: Context, mapId: String) = withContext(Dispatchers.IO) {
         _downloadState.value = DownloadState.STREAMING_FROM_PHONE
         _downloadProgress.value = 0.0f
+
+        val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
+        val currentBackend = prefs.getString("pref_wear_os_backend", "GMS")
+
+        if (currentBackend == "GMS") {
+            Log.d(TAG, "Checking GMS availability before streaming...")
+            val nodes = withTimeoutOrNull(10000L) {
+                try {
+                    Wearable.getNodeClient(context).connectedNodes.await()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error checking GMS nodes", e)
+                    null
+                }
+            }
+
+            if (nodes.isNullOrEmpty()) {
+                NavigationStateHolder.emitEvent(UiEvent.ShowToast("GMS not available, falling back to Bluetooth"))
+                Log.w(TAG, "GMS nodes not found or timeout. Switching to BLUETOOTH backend.")
+                prefs.edit().putString("pref_wear_os_backend", "BLUETOOTH").apply()
+                withContext(Dispatchers.Main) {
+                    WearCommandService.initBackend(context)
+                }
+            }
+        }
+
         try {
             WearCommandService.sendMapDownloadRequest(context, mapId)
             Log.d(TAG, "Requested phone to stream $mapId over Bluetooth channel")

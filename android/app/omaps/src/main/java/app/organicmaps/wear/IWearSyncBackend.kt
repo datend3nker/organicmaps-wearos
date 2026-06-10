@@ -2,10 +2,9 @@ package app.organicmaps.wear
 
 import android.content.Context
 
+import app.organicmaps.sdk.sync.BaseSettingsSyncManager
+
 interface IWearSyncBackend {
-    companion object {
-        const val PROTOCOL_VERSION: Byte = 1
-    }
 
     fun stopNavigation(context: Context)
     fun search(context: Context, query: String, lat: Double, lon: Double)
@@ -15,15 +14,16 @@ interface IWearSyncBackend {
     fun sendPing(context: Context)
     fun sendPong(context: Context, nodeId: String)
     fun syncPreferences(context: Context)
-    fun syncPreferenceUpdates(context: Context, updates: List<SettingsSyncManager.SettingUpdate>)
+    fun syncPreferenceUpdates(context: Context, updates: List<BaseSettingsSyncManager.SettingUpdate>)
     fun requestPreferences(context: Context)
     fun syncSearchHistory(context: Context)
-    fun checkConnection(context: Context, callback: (Boolean) -> Unit)
+    fun checkConnection(context: Context, callback: (Boolean, String?) -> Unit)
     fun startNavigation(context: Context)
     fun showOnPhone(context: Context, result: SearchResultItem)
     fun cancelMapSync(context: Context, mapId: String)
+    fun requestDownloadedMaps(context: Context)
     fun sendBackendSwitch(context: Context, newBackend: String)
-    fun sendMapDownloadRequest(context: Context, mapId: String)
+    fun sendMapDownloadRequest(context: Context, mapId: String, offset: Long = 0, checksum: Long = 0)
     fun sendMapProgress(context: Context, mapId: String, progress: Int)
     fun toggleTrackRecording(context: Context)
     fun requestBookmarks(context: Context)
@@ -35,5 +35,6 @@ interface IWearSyncBackend {
     fun updateBookmarkOnPhone(context: Context, bmkId: Long, name: String, color: Int)
     fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int)
     fun launchPhoneApp(context: Context)
+    fun sendHandshake(context: Context)
     fun stop()
 }

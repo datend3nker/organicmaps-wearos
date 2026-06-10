@@ -3,10 +3,10 @@ package app.organicmaps.sdk.downloader;
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.UiThread;
+import app.organicmaps.sdk.util.concurrency.UiThread;
 import java.util.List;
 
-@UiThread
+@androidx.annotation.UiThread
 public final class MapManager
 {
   // Used by JNI.
@@ -53,7 +53,7 @@ public final class MapManager
    */
   public static void retryDownload(@NonNull String countryId)
   {
-    nativeRetry(countryId);
+    UiThread.run(() -> nativeRetry(countryId));
   }
 
   /**
@@ -61,7 +61,7 @@ public final class MapManager
    */
   public static void startUpdate(@NonNull String root)
   {
-    nativeUpdate(root);
+    UiThread.run(() -> nativeUpdate(root));
   }
 
   /**
@@ -69,10 +69,12 @@ public final class MapManager
    */
   public static void startDownload(String... countries)
   {
-    for (var countryId : countries)
-    {
-      nativeDownload(countryId);
-    }
+    UiThread.run(() -> {
+      for (var countryId : countries)
+      {
+        nativeDownload(countryId);
+      }
+    });
   }
 
   /**
@@ -80,7 +82,23 @@ public final class MapManager
    */
   public static void startDownload(@NonNull String countryId)
   {
-    nativeDownload(countryId);
+    UiThread.run(() -> nativeDownload(countryId));
+  }
+
+  /**
+   * Removes given currently downloading {@code root} node and its children from downloader.
+   */
+  public static void cancel(@NonNull String root)
+  {
+    UiThread.run(() -> nativeCancel(root));
+  }
+
+  /**
+   * Deletes given installed {@code root} node with its children.
+   */
+  public static void delete(@NonNull String root)
+  {
+    UiThread.run(() -> nativeDelete(root));
   }
 
   /**
@@ -197,12 +215,12 @@ public final class MapManager
   /**
    * Removes given currently downloading {@code root} node and its children from downloader.
    */
-  public static native void nativeCancel(String root);
+  private static native void nativeCancel(String root);
 
   /**
    * Deletes given installed {@code root} node with its children.
    */
-  public static native void nativeDelete(String root);
+  private static native void nativeDelete(String root);
 
   /**
    * Registers {@code callback} of storage status changed. Returns slot ID which should be used to unsubscribe in {@link

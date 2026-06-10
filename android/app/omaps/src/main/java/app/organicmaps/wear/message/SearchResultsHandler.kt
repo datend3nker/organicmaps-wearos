@@ -8,20 +8,25 @@ import java.nio.charset.StandardCharsets
 
 class SearchResultsHandler : WearMessageHandler {
     override fun handle(buffer: ByteBuffer, data: ByteArray, context: Context) {
+        if (buffer.remaining() < 1) return
         val isSearching = buffer.get().toInt() == 1
         val results = mutableListOf<SearchResultItem>()
-        while (buffer.hasRemaining()) {
+        android.util.Log.d("SearchResultsHandler", "Handling results. isSearching=$isSearching Remaining bytes=${buffer.remaining()}")
+        while (buffer.remaining() >= 4) {
             val nameLen = buffer.int
+            if (buffer.remaining() < nameLen) break
             val name = String(data, buffer.position(), nameLen, StandardCharsets.UTF_8)
             buffer.position(buffer.position() + nameLen)
             
-            val descLen = if (buffer.remaining() >= 4) buffer.int else 0
+            if (buffer.remaining() < 4) break
+            val descLen = buffer.int
             val desc = if (descLen > 0 && buffer.remaining() >= descLen) {
                 val s = String(data, buffer.position(), descLen, StandardCharsets.UTF_8)
                 buffer.position(buffer.position() + descLen)
                 s
             } else ""
             
+            if (buffer.remaining() < 16) break
             val lat = buffer.double
             val lon = buffer.double
 
@@ -51,6 +56,6 @@ class SearchResultsHandler : WearMessageHandler {
         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(
             searchResults = results,
             isSearching = isSearching
-        ))
+        ), force = true)
     }
 }

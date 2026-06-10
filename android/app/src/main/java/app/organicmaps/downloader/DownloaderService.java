@@ -51,7 +51,7 @@ public class DownloaderService extends Service implements MapManager.StorageCall
     if (ACTION_CANCEL_DOWNLOAD.equals(action))
     {
       Logger.d(TAG, "Cancel action received, aborting all downloads");
-      MapManager.nativeCancel(MapManager.nativeGetRoot());
+      MapManager.cancel(MapManager.nativeGetRoot());
       stopSelf();
       return START_NOT_STICKY;
     }

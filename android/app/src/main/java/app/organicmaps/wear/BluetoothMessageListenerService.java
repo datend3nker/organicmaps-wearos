@@ -52,6 +52,6 @@ public class BluetoothMessageListenerService extends Service implements ISyncLay
 
     @Override
     public void onMessageReceived(@NonNull String path, @NonNull byte[] data, @NonNull String sourceNodeId) {
-        WearMessageRouter.onMessageReceived(this, path, data, sourceNodeId);
+        WearMessageRouter.onMessageReceived(this, path, data, sourceNodeId, null);
     }
 }

@@ -15,6 +15,11 @@
 
     <uses-feature android:name="android.hardware.type.watch" />
 
+    <queries>
+        <package android:name="app.organicmaps" />
+        <package android:name="app.organicmaps.debug" />
+    </queries>
+
     <application
         android:name=".WearApplication"
         android:allowBackup="true"
@@ -77,6 +82,16 @@
                 android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
                 android:value="30" />
         </service>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider.wear"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

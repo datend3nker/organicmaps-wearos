@@ -3,37 +3,69 @@ package app.organicmaps.wear
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import app.organicmaps.sdk.sync.WearProtocol
 import app.organicmaps.wear.message.WearMessageDispatcher
 import app.organicmaps.wear.presentation.Omaps
 
 object WearMessageRouter {
     private const val TAG = "WearMessageRouter"
-    private const val PATH_PONG = "/pong"
+    private const val PATH_PONG = WearProtocol.PATH_PONG
     
     private val _dispatcher = WearMessageDispatcher()
     private fun getDispatcher(): WearMessageDispatcher {
         return _dispatcher
     }
 
-    fun onMessageReceived(context: Context, path: String, data: ByteArray, sourceNodeId: String) {
-        if (data.isEmpty()) {
-            Log.e(TAG, "Received empty message at $path")
-            return
-        }
-        val version = data[0]
-        if (version != IWearSyncBackend.PROTOCOL_VERSION) {
-            Log.e(TAG, "Protocol version mismatch at $path: received=$version, expected=${IWearSyncBackend.PROTOCOL_VERSION}")
-            return
-        }
-        val payload = data.copyOfRange(1, data.size)
+    private var sLastMsgHash = 0
+    private var sLastMsgTime = 0L
 
-        Log.d(TAG, "DEBUG_GMS: Watch routing message: $path from $sourceNodeId")
+    @JvmStatic
+    fun onMessageReceived(context: Context, path: String, data: ByteArray?, sourceNodeId: String, localNodeId: String? = null) {
+        if (localNodeId != null && localNodeId == sourceNodeId) {
+            app.organicmaps.sdk.sync.WearLog.v("Ignoring local loopback message at $path")
+            return
+        }
         
-        NavigationStateHolder.updateTimestamp(System.currentTimeMillis())
+        val currentLocalId = SyncStateManager.localNodeId
+        if (currentLocalId != null && sourceNodeId == currentLocalId) {
+            app.organicmaps.sdk.sync.WearLog.v("Ignoring local loopback message (backend ID match) at $path")
+            return
+        }
+
+        val payload = data ?: ByteArray(0)
+        
+        val hash = path.hashCode() xor java.util.Arrays.hashCode(payload)
+        val now = System.currentTimeMillis()
+        // Robust deduplication (500ms) to ignore redundant listeners
+        if (hash == sLastMsgHash && (now - sLastMsgTime) < 500) {
+            app.organicmaps.sdk.sync.WearLog.d("onMessageReceived IGNORED (Deduplication): $path")
+            return
+        }
+        sLastMsgHash = hash
+        sLastMsgTime = now
+
+        val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
+        val backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS"
+        app.organicmaps.sdk.sync.WearLog.logReceived("WATCH", backend, path, payload.size)
+        
+        // Notify activity confirmed connection for ANY valid message
         (context.applicationContext as WearApplication).onActivityReceived()
-        NavigationStateHolder.update { it.copy(isPhoneConnected = true) }
+        NavigationStateHolder.updateTimestamp(System.currentTimeMillis())
         
-        if (path == PATH_PONG) return
+        // Handshake: Send pong back to phone so it knows we are alive
+        if (path != PATH_PONG) {
+            WearCommandService.sendPong(context, sourceNodeId)
+        }
+
+        if (payload.isEmpty()) {
+            Log.d(TAG, "DEBUG_GMS: Watch routing heartbeat/trigger message: $path from $sourceNodeId")
+        } else {
+            Log.d(TAG, "DEBUG_GMS: Watch routing message: $path from $sourceNodeId (payload=${payload.size} bytes)")
+        }
+        
+        if (path == PATH_PONG) {
+            return
+        }
 
         if (path == "/launch") {
             launchOmaps(context)
@@ -41,29 +73,38 @@ object WearMessageRouter {
         }
 
         when (path) {
-            "/navigation/start" -> {
+            WearProtocol.PATH_HANDSHAKE -> {
+                Log.d(TAG, "Handshake received")
+                val remoteVersion = java.nio.ByteBuffer.wrap(payload).int
+                Log.i(TAG, "Remote app version: $remoteVersion")
+                
+                // On handshake, always request fresh preferences
+                WearCommandService.requestPreferences(context)
+                return
+            }
+            WearProtocol.PATH_NAVIGATION_START -> {
                 val currentState = NavigationStateHolder.state.value
                 NavigationStateHolder.update(currentState.copy(isActive = true, isMapUnlockedBeforeNav = currentState.isMapUnlocked, isMapUnlocked = false))
                 launchOmaps(context)
                 return
             }
-            "/map/download/not_found" -> {
+            WearProtocol.PATH_MAP_DOWNLOAD_NOT_FOUND -> {
                 val mapId = String(payload)
                 Log.w(TAG, "Phone reported map NOT FOUND: $mapId")
                 WearMapDownloader.onMapMissingOnPhone(context, mapId)
                 return
             }
-            "/backend/switch" -> {
+            WearProtocol.PATH_BACKEND_SWITCH -> {
                 handleBackendSwitch(context, String(payload))
                 return
             }
-            "/ping" -> {
+            WearProtocol.PATH_PING -> {
                 Log.d(TAG, "DEBUG_GMS: Ping received, sending pong")
                 WearCommandService.sendPong(context, sourceNodeId)
                 WearCommandService.requestPreferences(context)
                 return
             }
-            "/preferences/trigger" -> {
+            WearProtocol.PATH_PREFERENCES_TRIGGER -> {
                 Log.d(TAG, "DEBUG_GMS: Preferences trigger received")
                 WearCommandService.requestPreferences(context)
                 return

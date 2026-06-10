@@ -4,21 +4,16 @@
 
 namespace
 {
+jclass g_managerClass = nullptr;
+jmethodID g_onDataRequiredMethod = nullptr;
+
 void RequestDataFromJava(std::string const & mwmName, uint64_t offset, size_t size)
 {
   JNIEnv * env = jni::GetEnv();
-  if (!env) return;
-
-  jni::TScopedLocalClassRef const managerClass(env, env->FindClass("app/organicmaps/wear/VirtualMwmManager"));
-  if (!managerClass)
-  {
-      LOG(LERROR, ("Could not find VirtualMwmManager class"));
-      return;
-  }
-  jmethodID const methodId = jni::GetStaticMethodID(env, managerClass.get(), "onDataRequired", "(Ljava/lang/String;JI)V");
+  if (!env || !g_managerClass || !g_onDataRequiredMethod) return;
 
   jni::TScopedLocalRef const name(env, jni::ToJavaString(env, mwmName));
-  env->CallStaticVoidMethod(managerClass.get(), methodId, name.get(), (jlong)offset, (jint)size);
+  env->CallStaticVoidMethod(g_managerClass, g_onDataRequiredMethod, name.get(), (jlong)offset, (jint)size);
   jni::HandleJavaException(env);
 }
 } // namespace
@@ -32,12 +27,14 @@ Java_app_organicmaps_wear_VirtualMwmManager_nativeDataArrived(JNIEnv * env, jcla
 }
 
 JNIEXPORT void JNICALL
-Java_app_organicmaps_wear_VirtualMwmManager_nativeNotifyMounted(JNIEnv * env, jclass, jstring name, jstring path, jlong totalSize)
+Java_app_organicmaps_wear_VirtualMwmManager_nativeNotifyMounted(JNIEnv * env, jclass clazz, jstring name, jstring path, jlong totalSize)
 {
   // Initialize the core with our JNI-based request handler.
   static bool handlerSet = false;
   if (!handlerSet)
   {
+      g_managerClass = (jclass)env->NewGlobalRef(clazz);
+      g_onDataRequiredMethod = jni::GetStaticMethodID(env, g_managerClass, "onDataRequired", "(Ljava/lang/String;JI)V");
       wear::SetRequestDataHandler(&RequestDataFromJava);
       handlerSet = true;
   }

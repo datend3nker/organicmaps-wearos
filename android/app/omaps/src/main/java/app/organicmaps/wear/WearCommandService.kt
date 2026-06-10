@@ -26,7 +26,8 @@ object WearCommandService {
     @Synchronized
     fun initBackend(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val selectedBackend = prefs.getString("pref_wear_os_backend", "GMS")
+        val defaultBackend = if (BuildConfig.FLAVOR == "oss") "BLUETOOTH" else "GMS"
+        val selectedBackend = prefs.getString("pref_wear_os_backend", defaultBackend)
 
         backend?.stop()
         backend = null 
@@ -36,17 +37,10 @@ object WearCommandService {
         val isStandalone = selectedBackend == "STANDALONE"
         val useBluetooth = selectedBackend == "BLUETOOTH" && !isStandalone
         
-        backend = if (useBluetooth) {
+        backend = if (useBluetooth || isStandalone) {
             BluetoothWearSyncBackend()
-        } else if (isStandalone) {
-            BluetoothWearSyncBackend() 
         } else {
-            try {
-                Class.forName("app.organicmaps.wear.GmsWearSyncBackend")
-                    .getDeclaredConstructor().newInstance() as IWearSyncBackend
-            } catch (e: Exception) {
-                BluetoothWearSyncBackend()
-            }
+            BackendProvider.getGmsBackend()
         }
 
         val serviceIntent = Intent(context, BluetoothWearDataListenerService::class.java)
@@ -61,14 +55,30 @@ object WearCommandService {
     
     fun search(context: Context, query: String) {
         val navState = NavigationStateHolder.state.value
+        app.organicmaps.sdk.sync.WearLog.logState("WATCH", "UI Search Request: '$query'. Standalone=${navState.standaloneMode}, Connected=${navState.isPhoneConnected}")
+        
+        // Ensure search listener is ALWAYS registered so local fallbacks are captured
+        ensureSearchInitialized(context)
+        
         if (navState.standaloneMode || !navState.isPhoneConnected) {
-            ensureSearchInitialized(context)
             val hasLocation = navState.lat != 0.0
-            SearchEngine.INSTANCE.search(
-                context, query, false, System.currentTimeMillis(), 
-                hasLocation, navState.lat, navState.lon
+            val lat = navState.lat
+            val lon = navState.lon
+            
+            app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Standalone search at $lat, $lon (hasLocation=$hasLocation)")
+            
+            // CRITICAL: Set viewport so search engine knows WHERE to search
+            val zoom = if (hasLocation) 13 else 1
+            app.organicmaps.sdk.Framework.nativeSetSearchViewport(lat, lon, zoom)
+            
+            SearchEngine.INSTANCE.initialize()
+            val success = SearchEngine.INSTANCE.search(
+                context, query, false, System.nanoTime(), 
+                hasLocation, lat, lon
             )
+            Log.d(TAG, "DEBUG_WEAR_SEARCH: SearchEngine.search returned $success")
         } else {
+            app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Requesting phone search at ${navState.lat}, ${navState.lon}")
             getBackend(context).search(context, query, navState.lat, navState.lon)
         }
     }
@@ -88,10 +98,12 @@ object WearCommandService {
                         type = it.type
                     )
                 }
+                app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Received local results. Count: ${mapped.size}")
                 NavigationStateHolder.update { it.copy(searchResults = mapped, isSearching = true) }
             }
 
             override fun onResultsEnd(timestamp: Long) {
+                app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Local results END")
                 NavigationStateHolder.update { it.copy(isSearching = false) }
             }
         })
@@ -99,6 +111,7 @@ object WearCommandService {
     }
 
     fun requestSearchHistory(context: Context) = getBackend(context).requestSearchHistory(context)
+    fun requestDownloadedMaps(context: Context) = getBackend(context).requestDownloadedMaps(context)
     fun selectSearchResult(context: Context, result: SearchResultItem, routerType: Int) {
         val navState = NavigationStateHolder.state.value
         val isStandalone = navState.standaloneMode || !navState.isPhoneConnected
@@ -111,7 +124,7 @@ object WearCommandService {
                 val latestState = NavigationStateHolder.state.value
                 if (!latestState.isPhoneConnected && latestState.isActive && !latestState.isNavigating && !latestState.watchLocalMode) {
                     Log.d("WearCommand", "Phone failed to connect for routing - falling back to standalone")
-                    android.widget.Toast.makeText(context, "Phone unavailable. Calculating locally.", android.widget.Toast.LENGTH_LONG).show()
+                    NavigationStateHolder.emitEvent(UiEvent.ShowToast("Phone unavailable. Calculating locally."))
                     NavigationStateHolder.update { it.copy(watchLocalMode = true) }
                     selectSearchResult(context, result, routerType)
                 }
@@ -154,7 +167,8 @@ object WearCommandService {
     private val syncHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val syncRunnable = Runnable {
         val ctx = WearApplication.instance
-        val dirty = SettingsSyncManager.getDirtyUpdates(ctx)
+        val manager = SettingsSyncManager.getInstance(ctx)
+        val dirty = manager.getDirtyUpdates()
         if (dirty.isNotEmpty()) {
             getBackend(ctx).syncPreferenceUpdates(ctx, dirty)
         } else {
@@ -163,21 +177,22 @@ object WearCommandService {
     }
 
     fun sendPing(context: Context) = getBackend(context).sendPing(context)
+    fun sendHandshake(context: Context) = getBackend(context).sendHandshake(context)
     fun syncPreferences(context: Context) {
         syncHandler.removeCallbacks(syncRunnable)
         syncHandler.postDelayed(syncRunnable, 100) // 100ms debounce
     }
     fun requestPreferences(context: Context) = getBackend(context).requestPreferences(context)
     fun syncSearchHistory(context: Context) = getBackend(context).syncSearchHistory(context)
-    fun checkConnection(context: Context, callback: (Boolean) -> Unit) = getBackend(context).checkConnection(context, callback)
+    fun checkConnection(context: Context, callback: (Boolean, String?) -> Unit) = getBackend(context).checkConnection(context, callback)
     fun startNavigation(context: Context) = getBackend(context).startNavigation(context)
     fun showOnPhone(context: Context, result: SearchResultItem) = getBackend(context).showOnPhone(context, result)
     fun cancelMapSync(context: Context, mapId: String) = getBackend(context).cancelMapSync(context, mapId)
     fun sendBackendSwitch(context: Context, newBackend: String) = getBackend(context).sendBackendSwitch(context, newBackend)
-    fun sendMapDownloadRequest(context: Context, mapId: String) {
+    fun sendMapDownloadRequest(context: Context, mapId: String, offset: Long = 0, checksum: Long = 0) {
         val navState = NavigationStateHolder.state.value
         if (navState.mapDownloadMode == "PHONE_SYNC" && !navState.standaloneMode && navState.isPhoneConnected) {
-            getBackend(context).sendMapDownloadRequest(context, mapId)
+            getBackend(context).sendMapDownloadRequest(context, mapId, offset, checksum)
         } else {
             app.organicmaps.sdk.downloader.MapManager.startDownload(mapId)
         }
@@ -208,7 +223,8 @@ object WearCommandService {
         if (navState.standaloneMode || navState.watchLocalMode || wearApp.isFullyInitialized) {
             try {
                 app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId)
-                NavigationStateHolder.update { it.copy(openMap = true, isMapUnlocked = false) }
+                NavigationStateHolder.emitEvent(UiEvent.OpenMap)
+                NavigationStateHolder.update { it.copy(isMapUnlocked = false) }
             } catch (e: Throwable) {
                 Log.e(TAG, "Failed to show bookmark $bmkId locally", e)
             }

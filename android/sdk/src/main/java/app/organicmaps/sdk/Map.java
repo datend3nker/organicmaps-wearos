@@ -97,9 +97,6 @@ public final class Map
    */
   public void updateCompassOffset(final Context context, int offsetX, int offsetY, boolean forceRedraw)
   {
-    if (context.getPackageManager().hasSystemFeature("android.hardware.type.watch") && mDisplayType == DisplayType.Device)
-      return; // Ignore standard offsets on watch to keep our custom position
-
     final int x = offsetX < 0 ? mCurrentCompassOffsetX : offsetX;
     final int y = offsetY < 0 ? mCurrentCompassOffsetY : offsetY;
     final int navPadding = Utils.dimen(context, R.dimen.nav_frame_padding);
@@ -354,11 +351,11 @@ public final class Map
       // Compass: Move further inward from top-right to be visible and not blocked by lock icon
       // Positioned to the right edge, but lower than the lock icon (top:40dp)
       // Lock icon is at approx top=40dp, end=25dp. 
-      nativeSetupWidget(WIDGET_COMPASS, mWidth - (25 * density), (160 * density), ANCHOR_CENTER);
+      nativeSetupWidget(WIDGET_COMPASS, mWidth - (25 * density), (105 * density), ANCHOR_CENTER);
       
       // Ruler (Scale Bar): Move to bottom center, in the gap below the Recenter button
-      // Positioned higher to ensure visibility on round screens
-      nativeSetupWidget(WIDGET_RULER, (float) mWidth / 2, mHeight - (55 * density), ANCHOR_CENTER);
+      // Positioned higher to ensure visibility on round screens and avoid collision with buttons
+      nativeSetupWidget(WIDGET_RULER, (float) mWidth / 2, mHeight - (60 * density), ANCHOR_CENTER);
       
       if (mSurfaceCreated)
         nativeApplyWidgets();
@@ -410,6 +407,18 @@ public final class Map
   private boolean isThemeChangingProcess()
   {
     return mUiThemeOnPause != null && !mUiThemeOnPause.equals(Config.UiTheme.getCurrent());
+  }
+
+  public static void pauseSurfaceRendering()
+  {
+    if (nativeIsEngineCreated())
+      nativePauseSurfaceRendering();
+  }
+
+  public static void resumeSurfaceRendering()
+  {
+    if (nativeIsEngineCreated())
+      nativeResumeSurfaceRendering();
   }
 
   // Engine

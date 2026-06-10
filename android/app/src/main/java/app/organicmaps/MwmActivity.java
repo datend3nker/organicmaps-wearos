@@ -1193,23 +1193,26 @@ public class MwmActivity extends BaseMwmFragmentActivity
   private void updateWearStatusUI(boolean connected, ISyncLayer.ConnectionType type) {
     if (mWearStatusContainer == null) return;
 
-    if (connected && !mIsWearConnected) {
+    // Use ISyncLayer.isLinked() for definitive green status
+    boolean isLinked = WearSyncService.getSyncLayer().isLinked();
+    
+    if (isLinked && !mIsWearConnected) {
       expandWearStatus();
     }
-    mIsWearConnected = connected;
+    mIsWearConnected = isLinked;
 
-    if (connected) {
+    if (connected || isLinked) {
       mWearStatusContainer.setVisibility(View.VISIBLE);
       String backend = PreferenceManager.getDefaultSharedPreferences(this).getString("pref_wear_os_backend", "GMS");
       if ("BLUETOOTH".equals(backend)) {
         mWearStatusIcon.setImageResource(R.drawable.ic_wear_bluetooth);
-        mWearStatusText.setText("Watch connected via Bluetooth");
+        mWearStatusText.setText(isLinked ? "Watch connected via Bluetooth" : "Watch found, waiting for app...");
       } else {
         // GMS backend
         mWearStatusIcon.setImageResource(R.drawable.ic_wear_cloud);
-        mWearStatusText.setText("Watch connected via GMS");
+        mWearStatusText.setText(isLinked ? "Watch connected via GMS" : "Watch found, waiting for app...");
       }
-      mWearStatusIcon.setColorFilter(Color.GREEN);
+      mWearStatusIcon.setColorFilter(isLinked ? Color.GREEN : Color.YELLOW);
     } else {
       mWearStatusContainer.setVisibility(View.GONE);
     }

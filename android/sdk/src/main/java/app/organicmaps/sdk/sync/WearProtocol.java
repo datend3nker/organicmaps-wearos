@@ -1,0 +1,179 @@
+package app.organicmaps.sdk.sync;
+
+import androidx.annotation.NonNull;
+import java.util.HashMap;
+import java.util.Map;
+
+public class WearProtocol {
+    public static final byte PROTOCOL_VERSION = 1;
+
+    // GMS Paths
+    public static final String PATH_NAVIGATION_STATUS = "/navigation/status";
+    public static final String PATH_NAVIGATION_STOP = "/navigation/stop";
+    public static final String PATH_NAVIGATION_START = "/navigation/start";
+    public static final String PATH_SEARCH_RESULTS = "/search/results";
+    public static final String PATH_SEARCH_QUERY = "/search/query";
+    public static final String PATH_SEARCH_SELECT = "/search/select";
+    public static final String PATH_SEARCH_HISTORY = "/search/history";
+    public static final String PATH_SEARCH_HISTORY_REQUEST = "/search/history/request";
+    public static final String PATH_SEARCH_HISTORY_SYNC = "/search/history/sync";
+    public static final String PATH_PREFERENCES_PHONE = "/preferences/phone";
+    public static final String PATH_PREFERENCES_WATCH = "/preferences/watch";
+    public static final String PATH_PREFERENCES_REQUEST = "/preferences/request";
+    public static final String PATH_PREFERENCES_UPDATES = "/preferences/updates";
+    public static final String PATH_PREFERENCES_TRIGGER = "/preferences/trigger";
+    public static final String PATH_PING = "/ping";
+    public static final String PATH_PONG = "/pong";
+    public static final String PATH_LAUNCH = "/launch";
+    public static final String PATH_TRACK_RECORDING = "/track/recording";
+    public static final String PATH_TRACK_RECORDING_TOGGLE = "/track/recording/toggle";
+    public static final String PATH_BOOKMARKS = "/bookmarks";
+    public static final String PATH_BOOKMARKS_REQUEST = "/bookmarks/request";
+    public static final String PATH_BOOKMARK_FILE = "/bookmark/file";
+    public static final String PATH_BOOKMARK_RENAME = "/bookmark/rename";
+    public static final String PATH_BOOKMARK_DELETE = "/bookmark/delete";
+    public static final String PATH_BOOKMARK_SHOW = "/bookmark/show";
+    public static final String PATH_BOOKMARK_UPDATE = "/bookmark/update";
+    public static final String PATH_BOOKMARK_VISIBLE_TOGGLE = "/bookmark/visible/toggle";
+    public static final String PATH_BOOKMARK_SYNC_REQUEST = "/bookmark/sync/request";
+    public static final String PATH_MAP_TILE_RESPONSE = "/map/tile/response";
+    public static final String PATH_MAP_DOWNLOAD_REQUEST = "/map/download/request";
+    public static final String PATH_MAP_DOWNLOAD_PROGRESS = "/map/download/progress";
+    public static final String PATH_MAP_DOWNLOAD_CANCEL = "/map/download/cancel";
+    public static final String PATH_MAP_STREAM_DATA = "/map/stream/data/";
+    public static final String PATH_MAP_DOWNLOAD_NOT_FOUND = "/map/download/not_found";
+    public static final String PATH_MAP_PHONE_DOWNLOADED = "/map/phone/downloaded";
+    public static final String PATH_MAP_PHONE_DOWNLOADED_REQUEST = "/map/phone/downloaded/request";
+    public static final String PATH_VIRTUAL_MWM_REQUEST = "/virtual_mwm/request";
+    public static final String PATH_VIRTUAL_MWM_DATA = "/virtual_mwm/data";
+    public static final String PATH_VIRTUAL_MWM_MOUNT = "/virtual_mwm/mount";
+    public static final String PATH_VIRTUAL_MWM_METADATA_REQUEST = "/virtual_mwm/metadata_request";
+    public static final String PATH_BACKEND_SWITCH = "/backend/switch";
+    public static final String PATH_POI_SHOW = "/poi/show";
+    public static final String PATH_ROUTE_BUILD_PROGRESS = "/navigation/route_build_progress";
+    public static final String PATH_HANDSHAKE = "/handshake";
+
+    // Canonical Setting Keys
+    public static final String SETTING_MAP_ENABLED = "mapEnabled";
+    public static final String SETTING_WATCH_LOCAL_MODE = "watchLocalMode";
+    public static final String SETTING_STANDALONE_MODE = "standaloneMode";
+    public static final String SETTING_AUTO_DOWNLOAD = "autoDownload";
+    public static final String SETTING_MAP_DOWNLOAD_MODE = "mapDownloadMode";
+    public static final String SETTING_BACKEND = "backend";
+    public static final String SETTING_POI_MASK = "poiMask";
+    public static final String SETTING_3D_ENABLED = "is3dEnabled";
+    public static final String SETTING_3D_BUILDINGS_ENABLED = "is3dBuildingsEnabled";
+    public static final String SETTING_AUTO_ZOOM_ENABLED = "isAutoZoomEnabled";
+    public static final String SETTING_MEASUREMENT_UNITS = "measurementUnits";
+    public static final String SETTING_MAP_STYLE = "mapStyle";
+    public static final String SETTING_AVOID_TOLLS = "avoidTolls";
+    public static final String SETTING_AVOID_MOTORWAYS = "avoidMotorways";
+    public static final String SETTING_AVOID_FERRIES = "avoidFerries";
+    public static final String SETTING_AVOID_UNPAVED = "avoidUnpaved";
+    public static final String SETTING_TRANSIT_ENABLED = "transitEnabled";
+    public static final String SETTING_BIKING_ENABLED = "bikingEnabled";
+    public static final String SETTING_HIKING_ENABLED = "hikingEnabled";
+    public static final String SETTING_ISOLINES_ENABLED = "isolinesEnabled";
+    public static final String SETTING_LOCATION_SOURCE = "locationSource";
+    public static final String SETTING_SYNC_NOTIFICATIONS_ENABLED = "syncNotificationsEnabled";
+
+    // Bluetooth Message Types
+    public static final byte TYPE_NAV_STATUS = 1;
+    public static final byte TYPE_SEARCH_RESULTS = 2;
+    public static final byte TYPE_SEARCH_HISTORY = 3;
+    public static final byte TYPE_PREFERENCES = 4;
+    public static final byte TYPE_MAP_DOWNLOAD_REQUEST = 5;
+    public static final byte TYPE_MAP_TILE_RESPONSE = 6;
+    public static final byte TYPE_MAP_DOWNLOAD_PROGRESS = 7;
+    public static final byte TYPE_TRACK_RECORDING = 8;
+    public static final byte TYPE_BOOKMARKS = 9;
+    public static final byte TYPE_COMMAND = 10;
+    public static final byte TYPE_MAP_CHUNK = 11;
+    public static final byte TYPE_BOOKMARK_FILE = 12;
+    public static final byte TYPE_VIRTUAL_MWM_REQUEST = 13;
+    public static final byte TYPE_VIRTUAL_MWM_DATA = 14;
+    public static final byte TYPE_VIRTUAL_MWM_MOUNT = 15;
+    public static final byte TYPE_ROUTE_BUILD_PROGRESS = 16;
+    public static final byte TYPE_BOOKMARK_RENAME = 17;
+    public static final byte TYPE_BOOKMARK_DELETE = 18;
+    public static final byte TYPE_PREFERENCES_UPDATES = 19;
+    public static final byte TYPE_MAP_PHONE_DOWNLOADED = 20;
+    public static final byte TYPE_HANDSHAKE = 21;
+
+    // Priorities
+    public static final int PRIORITY_HIGH = 0;
+    public static final int PRIORITY_MEDIUM = 1;
+    public static final int PRIORITY_LOW = 2;
+
+    private static final Map<String, Byte> PATH_TO_TYPE = new HashMap<>();
+    private static final Map<Byte, String> TYPE_TO_PATH = new HashMap<>();
+
+    static {
+        register(PATH_NAVIGATION_STATUS, TYPE_NAV_STATUS);
+        register(PATH_SEARCH_RESULTS, TYPE_SEARCH_RESULTS);
+        register(PATH_SEARCH_HISTORY, TYPE_SEARCH_HISTORY);
+        register(PATH_SEARCH_HISTORY_SYNC, TYPE_SEARCH_HISTORY);
+        register(PATH_PREFERENCES_PHONE, TYPE_PREFERENCES);
+        register(PATH_PREFERENCES_WATCH, TYPE_PREFERENCES);
+        register(PATH_PREFERENCES_UPDATES, TYPE_PREFERENCES_UPDATES);
+        register(PATH_MAP_DOWNLOAD_REQUEST, TYPE_MAP_DOWNLOAD_REQUEST);
+        register(PATH_MAP_TILE_RESPONSE, TYPE_MAP_TILE_RESPONSE);
+        register(PATH_MAP_DOWNLOAD_PROGRESS, TYPE_MAP_DOWNLOAD_PROGRESS);
+        register(PATH_TRACK_RECORDING, TYPE_TRACK_RECORDING);
+        register(PATH_BOOKMARKS, TYPE_BOOKMARKS);
+        register(PATH_BOOKMARK_FILE, TYPE_BOOKMARK_FILE);
+        register(PATH_BOOKMARK_RENAME, TYPE_BOOKMARK_RENAME);
+        register(PATH_BOOKMARK_DELETE, TYPE_BOOKMARK_DELETE);
+        register(PATH_MAP_PHONE_DOWNLOADED, TYPE_MAP_PHONE_DOWNLOADED);
+        register(PATH_VIRTUAL_MWM_REQUEST, TYPE_VIRTUAL_MWM_REQUEST);
+        register(PATH_VIRTUAL_MWM_DATA, TYPE_VIRTUAL_MWM_DATA);
+        register(PATH_VIRTUAL_MWM_MOUNT, TYPE_VIRTUAL_MWM_MOUNT);
+        register(PATH_ROUTE_BUILD_PROGRESS, TYPE_ROUTE_BUILD_PROGRESS);
+        register(PATH_HANDSHAKE, TYPE_HANDSHAKE);
+    }
+
+    private static void register(String path, byte type) {
+        PATH_TO_TYPE.put(path, type);
+        TYPE_TO_PATH.put(type, path);
+    }
+
+    public static byte getMessageType(@NonNull String path) {
+        Byte type = PATH_TO_TYPE.get(path);
+        return type != null ? type : TYPE_COMMAND;
+    }
+
+    public static String getPath(byte type) {
+        return TYPE_TO_PATH.get(type);
+    }
+
+    public static int getPriority(byte type) {
+        switch (type) {
+            case TYPE_NAV_STATUS:
+            case TYPE_COMMAND:
+            case TYPE_HANDSHAKE:
+                return PRIORITY_HIGH;
+            case TYPE_SEARCH_RESULTS:
+            case TYPE_SEARCH_HISTORY:
+            case TYPE_PREFERENCES:
+            case TYPE_PREFERENCES_UPDATES:
+            case TYPE_TRACK_RECORDING:
+            case TYPE_BOOKMARKS:
+            case TYPE_BOOKMARK_RENAME:
+            case TYPE_BOOKMARK_DELETE:
+            case TYPE_MAP_DOWNLOAD_PROGRESS:
+            case TYPE_ROUTE_BUILD_PROGRESS:
+            case TYPE_MAP_PHONE_DOWNLOADED:
+                return PRIORITY_MEDIUM;
+            case TYPE_MAP_CHUNK:
+            case TYPE_BOOKMARK_FILE:
+            case TYPE_VIRTUAL_MWM_REQUEST:
+            case TYPE_VIRTUAL_MWM_DATA:
+            case TYPE_VIRTUAL_MWM_MOUNT:
+            case TYPE_MAP_TILE_RESPONSE:
+            case TYPE_MAP_DOWNLOAD_REQUEST:
+                return PRIORITY_LOW;
+            default:
+                return PRIORITY_MEDIUM;
+        }
+    }
+}

@@ -16,7 +16,11 @@ object ReloadWorldMapsDebouncer {
             delay(1000) // 1 second debounce
             try {
                 Log.d(TAG, "Executing debounced nativeReloadWorldMaps")
-                Framework.nativeReloadWorldMaps()
+                withContext(Dispatchers.Main) {
+                    app.organicmaps.sdk.Map.pauseSurfaceRendering()
+                    Framework.nativeReloadWorldMaps()
+                    app.organicmaps.sdk.Map.resumeSurfaceRendering()
+                }
             } catch (e: Throwable) {
                 Log.e(TAG, "Failed to reload world maps natively", e)
             }
@@ -26,11 +30,22 @@ object ReloadWorldMapsDebouncer {
     @Synchronized
     fun reloadImmediate() {
         job?.cancel()
-        try {
-            Log.d(TAG, "Executing immediate nativeReloadWorldMaps")
-            Framework.nativeReloadWorldMaps()
-        } catch (e: Throwable) {
-            Log.e(TAG, "Failed to reload world maps natively", e)
+        // Never block the main thread for map reloading
+        // BUT we must call it on Main thread because Organic Maps framework is NOT thread-safe
+        // Debounce immediate reloads too to prevent multiple overlapping heavy reloads
+        job = scope.launch {
+            try {
+                Log.d(TAG, "Executing immediate nativeReloadWorldMaps (main thread)")
+                withContext(Dispatchers.Main) {
+                    app.organicmaps.sdk.Map.pauseSurfaceRendering()
+                    Framework.nativeReloadWorldMaps()
+                    app.organicmaps.sdk.Map.resumeSurfaceRendering()
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to reload world maps natively", e)
+            } finally {
+                if (coroutineContext[Job] == job) job = null
+            }
         }
     }
 }

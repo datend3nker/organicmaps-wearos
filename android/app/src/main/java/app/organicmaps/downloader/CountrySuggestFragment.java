@@ -209,6 +209,6 @@ public class CountrySuggestFragment extends BaseMwmFragment implements View.OnCl
       ((BaseMwmFragmentActivity) fragmentActivity).replaceFragment(DownloaderFragment.class, null, null);
     }
     else if (id == R.id.wpv__download_progress)
-      MapManager.nativeCancel(mDownloadingCountry.id);
+      MapManager.cancel(mDownloadingCountry.id);
   }
 }

@@ -2,7 +2,9 @@ package app.organicmaps.wear
 
 import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import app.organicmaps.sdk.sync.WearProtocol
+import app.organicmaps.sdk.sync.SyncSettingsRegistry
 
 data class SearchResultItem(
     val name: String,
@@ -55,8 +59,6 @@ data class NavigationState(
     val distToTurnMeters: Double = -1.0,
     val routerType: Int = 0, // 0: Vehicle, 1: Pedestrian, 2: Bicycle, 3: Transit
     val routePoints: List<Pair<Double, Double>> = emptyList(),
-    val openMapManager: Boolean = false,
-    val openMap: Boolean = false,
     val isPhoneConnected: Boolean = false,
     val poiCategoriesMask: Int = 0x7FFFFFFF, // Default to all POIs
     val mapDownloadMode: String = "PHONE_SYNC", // PHONE_SYNC, DIRECT_DOWNLOAD
@@ -102,11 +104,52 @@ data class NavigationState(
     val isTrackRecording: Boolean = false,
     val trackRecordingStartTime: Long = 0L,
     val bookmarkCategories: List<BookmarkCategoryItem> = emptyList(),
-    val missingMapId: String? = null
+    val missingMapId: String? = null,
+    val phoneDownloadedMaps: Set<String> = emptySet()
 ) {
     val isEffectivelyStandalone: Boolean
         get() = standaloneMode || !isPhoneConnected
 }
+
+sealed class UiEvent {
+    object OpenMap : UiEvent()
+    object OpenMapManager : UiEvent()
+    data class ShowToast(val message: String, val duration: Int = android.widget.Toast.LENGTH_SHORT) : UiEvent()
+}
+
+data class NavigationInstructions(
+    val distToTurn: String,
+    val nextStreet: String,
+    val carDirection: Int,
+    val pedestrianDirection: Int,
+    val exitNum: Int
+)
+
+data class RoutingStatus(
+    val isActive: Boolean,
+    val isNavigating: Boolean,
+    val isRouteBuilding: Boolean,
+    val isRouteReady: Boolean,
+    val isRouteBuilt: Boolean,
+    val routePoints: List<Pair<Double, Double>>
+)
+
+data class MapStatus(
+    val isMapUnlocked: Boolean,
+    val mapStyle: String,
+    val isAmbient: Boolean
+)
+
+data class ConnectionStatus(
+    val isPhoneConnected: Boolean,
+    val standaloneMode: Boolean,
+    val watchLocalMode: Boolean
+)
+
+data class TrackRecordingStatus(
+    val isRecording: Boolean,
+    val startTime: Long
+)
 
 data class BookmarkCategoryItem(
     val id: Long,
@@ -123,23 +166,45 @@ object NavigationStateHolder {
     private val _state = MutableStateFlow(NavigationState())
     val state = _state.asStateFlow()
 
+    private val _events = MutableSharedFlow<UiEvent>(extraBufferCapacity = 64)
+    val events = _events.asSharedFlow()
+
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var pendingStopJob: Job? = null
 
     // Decomposed flows for better performance
-    val navInfo = state.map { 
-        Triple(it.distToTurn, it.nextStreet, it.carDirection to it.pedestrianDirection to it.exitNum)
-    }.distinctUntilChanged()
-    
-    val location = state.map { 
+    val locationFlow = state.map { 
         Triple(it.lat, it.lon, it.bearing)
     }.distinctUntilChanged()
     
-    val navigationActive = state.map { it.isActive }.distinctUntilChanged()
-    val phoneConnected = state.map { it.isPhoneConnected }.distinctUntilChanged()
+    val navigationInstructionsFlow = state.map { 
+        NavigationInstructions(it.distToTurn, it.nextStreet, it.carDirection, it.pedestrianDirection, it.exitNum)
+    }.distinctUntilChanged()
+
+    val routingStatusFlow = state.map {
+        RoutingStatus(it.isActive, it.isNavigating, it.isRouteBuilding, it.isRouteReady, it.isRouteBuilt, it.routePoints)
+    }.distinctUntilChanged()
+
+    val mapStatusFlow = state.map {
+        MapStatus(it.isMapUnlocked, it.mapStyle, it.isAmbient)
+    }.distinctUntilChanged()
+
+    val connectionStatusFlow = state.map {
+        ConnectionStatus(it.isPhoneConnected, it.standaloneMode, it.watchLocalMode)
+    }.distinctUntilChanged()
+
+    val trackRecordingFlow = state.map {
+        TrackRecordingStatus(it.isTrackRecording, it.trackRecordingStartTime)
+    }.distinctUntilChanged()
 
     var lastMessageTimestamp: Long = 0L
         private set
+
+    fun emitEvent(event: UiEvent) {
+        scope.launch {
+            _events.emit(event)
+        }
+    }
 
     fun update(newState: NavigationState, force: Boolean = false) {
         val oldState = _state.value
@@ -206,7 +271,7 @@ object NavigationStateHolder {
     }
 
     fun updateSetting(context: Context, key: String, value: Any, updater: (NavigationState) -> NavigationState) {
-        SettingsSyncManager.onSettingChanged(context, key, value, true)
+        SettingsSyncManager.getInstance(context).onSettingChanged(key, value, true)
         updateSettings(updater)
     }
 
@@ -216,32 +281,55 @@ object NavigationStateHolder {
 
     fun loadFromPrefs(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
+        val isWatch = true
+        
+        fun getSafeInt(key: String, default: Int): Int {
+            val value = prefs.all[key] ?: return default
+            return when (value) {
+                is Int -> value
+                is Long -> value.toInt()
+                is String -> value.toIntOrNull() ?: default
+                else -> default
+            }
+        }
+
+        fun getSafeBoolean(key: String, default: Boolean): Boolean {
+            val value = prefs.all[key] ?: return default
+            return when (value) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> default
+            }
+        }
+
+        fun getK(canonical: String) = SyncSettingsRegistry.getLocalKey(canonical, isWatch)
+
         update { current ->
             current.copy(
-                mapEnabled = prefs.getBoolean("mapEnabled", true),
-                watchLocalMode = prefs.getBoolean("watchLocalMode", false),
-                standaloneMode = prefs.getBoolean("disconnectFromPhone", false),
-                autoDownloadRouteMaps = prefs.getBoolean("pref_wear_os_auto_download_route_maps", true),
-                mapDownloadMode = prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC",
-                backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS",
-                locationSource = prefs.getString("locationSource", "AUTO") ?: "AUTO",
-                measurementUnits = prefs.getInt("pref_wear_os_munits", 0),
-                mapStyle = prefs.getString("pref_wear_os_map_style", "default") ?: "default",
-                is3dEnabled = prefs.getBoolean("pref_wear_os_3d", true),
-                is3dBuildingsEnabled = prefs.getBoolean("pref_wear_os_3d_buildings", true),
-                isAutoZoomEnabled = prefs.getBoolean("pref_wear_os_auto_zoom", true),
-                avoidTolls = prefs.getBoolean("pref_wear_os_avoid_tolls", false),
-                avoidMotorways = prefs.getBoolean("pref_wear_os_avoid_motorways", false),
-                avoidFerries = prefs.getBoolean("pref_wear_os_avoid_ferries", false),
-                avoidUnpaved = prefs.getBoolean("pref_wear_os_avoid_unpaved", false),
-                transitEnabled = prefs.getBoolean("pref_wear_os_transit", false),
-                isolinesEnabled = prefs.getBoolean("pref_wear_os_isolines", false),
-                bikingEnabled = prefs.getBoolean("pref_wear_os_biking", false),
-                hikingEnabled = prefs.getBoolean("pref_wear_os_hiking", false),
-                allowMobileData = prefs.getBoolean("pref_mobile_data", false),
-                forceGuiButtons = prefs.getBoolean("pref_force_gui_buttons", false),
-                showOnLockScreen = prefs.getBoolean("pref_show_on_lock_screen", true),
-                syncNotificationsEnabled = prefs.getBoolean("pref_sync_notifications", true)
+                mapEnabled = getSafeBoolean(getK(WearProtocol.SETTING_MAP_ENABLED), true),
+                watchLocalMode = getSafeBoolean(getK(WearProtocol.SETTING_WATCH_LOCAL_MODE), false),
+                standaloneMode = getSafeBoolean(getK(WearProtocol.SETTING_STANDALONE_MODE), false),
+                autoDownloadRouteMaps = getSafeBoolean(getK(WearProtocol.SETTING_AUTO_DOWNLOAD), true),
+                mapDownloadMode = prefs.getString(getK(WearProtocol.SETTING_MAP_DOWNLOAD_MODE), "PHONE_SYNC") ?: "PHONE_SYNC",
+                backend = prefs.getString(getK(WearProtocol.SETTING_BACKEND), "GMS") ?: "GMS",
+                locationSource = prefs.getString(getK(WearProtocol.SETTING_LOCATION_SOURCE), "AUTO") ?: "AUTO",
+                measurementUnits = getSafeInt(getK(WearProtocol.SETTING_MEASUREMENT_UNITS), 0),
+                mapStyle = prefs.getString(getK(WearProtocol.SETTING_MAP_STYLE), "default") ?: "default",
+                is3dEnabled = getSafeBoolean(getK(WearProtocol.SETTING_3D_ENABLED), true),
+                is3dBuildingsEnabled = getSafeBoolean(getK(WearProtocol.SETTING_3D_BUILDINGS_ENABLED), true),
+                isAutoZoomEnabled = getSafeBoolean(getK(WearProtocol.SETTING_AUTO_ZOOM_ENABLED), true),
+                avoidTolls = getSafeBoolean(getK(WearProtocol.SETTING_AVOID_TOLLS), false),
+                avoidMotorways = getSafeBoolean(getK(WearProtocol.SETTING_AVOID_MOTORWAYS), false),
+                avoidFerries = getSafeBoolean(getK(WearProtocol.SETTING_AVOID_FERRIES), false),
+                avoidUnpaved = getSafeBoolean(getK(WearProtocol.SETTING_AVOID_UNPAVED), false),
+                transitEnabled = getSafeBoolean(getK(WearProtocol.SETTING_TRANSIT_ENABLED), false),
+                isolinesEnabled = getSafeBoolean(getK(WearProtocol.SETTING_ISOLINES_ENABLED), false),
+                bikingEnabled = getSafeBoolean(getK(WearProtocol.SETTING_BIKING_ENABLED), false),
+                hikingEnabled = getSafeBoolean(getK(WearProtocol.SETTING_HIKING_ENABLED), false),
+                allowMobileData = getSafeBoolean("pref_mobile_data", false),
+                forceGuiButtons = getSafeBoolean("pref_force_gui_buttons", false),
+                showOnLockScreen = getSafeBoolean("pref_show_on_lock_screen", true),
+                syncNotificationsEnabled = getSafeBoolean(getK(WearProtocol.SETTING_SYNC_NOTIFICATIONS_ENABLED), true)
             )
         }
     }

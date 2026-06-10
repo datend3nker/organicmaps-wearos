@@ -11,6 +11,10 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.content.ContextCompat
+import app.organicmaps.sdk.sync.BluetoothSyncConnection
+import app.organicmaps.sdk.sync.SyncConnection
+import app.organicmaps.sdk.sync.TcpSyncConnection
+import app.organicmaps.sdk.sync.WearProtocol
 import app.organicmaps.wear.message.WearMessageDispatcher
 import java.io.InputStream
 import java.nio.ByteBuffer
@@ -27,7 +31,7 @@ class BluetoothWearDataListenerService : Service() {
         private val OM_WEAR_UUID = UUID.fromString("6d617073-7765-6172-6f73-73796e633130")
         
         @Volatile
-        var activeSocket: BluetoothSocket? = null
+        var activeConnection: SyncConnection? = null
             private set
     }
 
@@ -45,7 +49,7 @@ class BluetoothWearDataListenerService : Service() {
     override fun onDestroy() {
         isRunning = false
         serviceScope.cancel()
-        activeSocket?.let {
+        activeConnection?.let {
             try { it.close() } catch (ignored: Exception) {}
         }
         super.onDestroy()
@@ -86,7 +90,7 @@ class BluetoothWearDataListenerService : Service() {
     }
 
     private fun startListening() {
-        if (!hasBluetoothPermission()) {
+        if (!hasBluetoothPermission() && !(android.os.Build.PRODUCT.contains("sdk") || android.os.Build.PRODUCT.contains("vbox"))) {
             Log.e(TAG, "Bluetooth permission missing. Service will wait but cannot function.")
             // You might want to show a notification here
             return
@@ -94,19 +98,19 @@ class BluetoothWearDataListenerService : Service() {
 
         isRunning = true
         serviceScope.launch {
-            Log.d(TAG, "Bluetooth listener started")
+            Log.d(TAG, "REF_TCP_RFCOMM_SUCCESS: Listener started")
             var retryDelay = 5000L
             while (isRunning) {
-                if (activeSocket?.isConnected != true) {
-                    val socket = connectToPhone()
-                    if (socket != null) {
+                if (activeConnection?.isConnected() != true) {
+                    val connection = connectToPhone()
+                    if (connection != null) {
                         retryDelay = 5000L
                         try {
-                            handleClient(socket)
+                            handleClient(connection)
                         } catch (e: Exception) {
-                            Log.w(TAG, "Connection lost or error handling socket: ${e.message}")
-                            activeSocket?.close()
-                            activeSocket = null
+                            Log.w(TAG, "Connection lost or error handling connection: ${e.message}")
+                            activeConnection?.close()
+                            activeConnection = null
                         }
                     } else {
                         Log.d(TAG, "Phone not found, retrying in ${retryDelay/1000}s")
@@ -128,7 +132,18 @@ class BluetoothWearDataListenerService : Service() {
         }
     }
 
-    private fun connectToPhone(): BluetoothSocket? {
+    private fun connectToPhone(): SyncConnection? {
+        val isEmulator = android.os.Build.PRODUCT.contains("sdk") || android.os.Build.PRODUCT.contains("vbox")
+        if (isEmulator) {
+            try {
+                Log.d(TAG, "Connecting to phone via TCP (Emulator)...")
+                val socket = java.net.Socket("10.0.2.2", 5610)
+                return TcpSyncConnection(socket)
+            } catch (e: Exception) {
+                Log.d(TAG, "TCP connection failed: ${e.message}")
+            }
+        }
+
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter = bluetoothManager?.adapter ?: return null
         if (!adapter.isEnabled) return null
@@ -140,7 +155,7 @@ class BluetoothWearDataListenerService : Service() {
                 val socket = device.createRfcommSocketToServiceRecord(OM_WEAR_UUID)
                 try {
                     socket.connect()
-                    return socket
+                    return BluetoothSyncConnection(socket)
                 } catch (e: Exception) {
                     try { socket.close() } catch (ignored: Exception) {}
                 }
@@ -151,10 +166,10 @@ class BluetoothWearDataListenerService : Service() {
         return null
     }
 
-    private suspend fun handleClient(socket: BluetoothSocket) = coroutineScope {
-        activeSocket = socket
+    private suspend fun handleClient(connection: SyncConnection) = coroutineScope {
+        activeConnection = connection
         Log.d(TAG, "Connected to phone")
-        
+
         NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = true))
 
         WearCommandService.requestPreferences(this@BluetoothWearDataListenerService)
@@ -167,18 +182,19 @@ class BluetoothWearDataListenerService : Service() {
 
         launch(Dispatchers.IO) {
             try {
-                val input = socket.getInputStream()
+                val input = connection.getInputStream()
                 val headerBuffer = ByteArray(6)
                 
-                while (isRunning && socket.isConnected) {
+                while (isRunning && connection.isConnected()) {
                     input.readFully(headerBuffer)
                     val header = ByteBuffer.wrap(headerBuffer)
                     val version = header.get()
                     val type = header.get()
                     val length = header.int
 
-                    if (version != IWearSyncBackend.PROTOCOL_VERSION) {
-                        throw java.io.IOException("Protocol version mismatch: received=$version, expected=${IWearSyncBackend.PROTOCOL_VERSION}")
+                    if (version != WearProtocol.PROTOCOL_VERSION) {
+                        Log.e(TAG, "DEBUG_BT_PIPELINE: Protocol version mismatch: received=$version, expected=${WearProtocol.PROTOCOL_VERSION}")
+                        throw java.io.IOException("Protocol version mismatch: received=$version, expected=${WearProtocol.PROTOCOL_VERSION}")
                     }
 
                     if (length < 0 || length > 20 * 1024 * 1024 || type < 0 || type > 20) {
@@ -202,8 +218,8 @@ class BluetoothWearDataListenerService : Service() {
                     NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = false))
                 }
             } finally {
-                if (activeSocket == socket) activeSocket = null
-                try { socket.close() } catch (ignored: Exception) {}
+                if (activeConnection == connection) activeConnection = null
+                try { connection.close() } catch (ignored: Exception) {}
             }
         }
     }

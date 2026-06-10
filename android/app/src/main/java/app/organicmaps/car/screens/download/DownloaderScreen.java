@@ -182,6 +182,6 @@ class DownloaderScreen extends BaseScreen
   private void cancelMapsDownloading()
   {
     for (final String map : mMissingMaps.keySet())
-      MapManager.nativeCancel(map);
+      MapManager.cancel(map);
   }
 }

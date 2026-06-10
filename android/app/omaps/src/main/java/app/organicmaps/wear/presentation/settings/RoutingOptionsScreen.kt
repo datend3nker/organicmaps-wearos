@@ -12,6 +12,8 @@ import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.WearCommandService
 import app.organicmaps.sdk.routing.RoutingOptions
 import app.organicmaps.sdk.settings.RoadType
+import app.organicmaps.sdk.sync.WearProtocol
+import app.organicmaps.sdk.sync.SyncSettingsRegistry
 
 @Composable
 fun RoutingOptionsScreen(onBack: () -> Unit) {
@@ -19,15 +21,17 @@ fun RoutingOptionsScreen(onBack: () -> Unit) {
     val navState by NavigationStateHolder.state.collectAsState()
     val prefs = remember { context.getSharedPreferences("wear_prefs", android.content.Context.MODE_PRIVATE) }
 
+    fun getK(canonical: String) = SyncSettingsRegistry.getLocalKey(canonical, true)
+
     val toggleOption: (RoadType, Boolean) -> Unit = { roadType, checked ->
         NavigationStateHolder.update { current ->
             if (checked) RoutingOptions.addOption(roadType) else RoutingOptions.removeOption(roadType)
             
             val key = when(roadType) {
-                RoadType.Toll -> "avoid_tolls"
-                RoadType.Motorway -> "avoid_motorways"
-                RoadType.Ferry -> "avoid_ferries"
-                RoadType.Dirty -> "avoid_dirty_roads"
+                RoadType.Toll -> getK(WearProtocol.SETTING_AVOID_TOLLS)
+                RoadType.Motorway -> getK(WearProtocol.SETTING_AVOID_MOTORWAYS)
+                RoadType.Ferry -> getK(WearProtocol.SETTING_AVOID_FERRIES)
+                RoadType.Dirty -> getK(WearProtocol.SETTING_AVOID_UNPAVED)
                 else -> ""
             }
             if (key.isNotEmpty()) prefs.edit().putBoolean(key, checked).apply()

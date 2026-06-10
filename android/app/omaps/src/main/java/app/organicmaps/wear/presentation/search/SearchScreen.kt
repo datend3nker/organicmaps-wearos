@@ -93,46 +93,6 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
     val listState = rememberScalingLazyListState()
     val focusRequester = remember { FocusRequester() }
 
-    DisposableEffect(navState.watchLocalMode) {
-        val listener = object : SearchListener {
-            override fun onResultsUpdate(results: Array<out SearchResult>, timestamp: Long) {
-                Log.d("SearchScreen", "Received ${results.size} standalone results")
-                NavigationStateHolder.update { current ->
-                    val converted = results.map {
-                        SearchResultItem(
-                            name = it.getTitle(context) ?: "",
-                            description = it.description?.localizedFeatureType ?: "",
-                            lat = it.lat,
-                            lon = it.lon,
-                            type = it.type,
-                            openingHours = "", // Detailed search results don't have metadata yet
-                            website = "",
-                            phone = "",
-                            address = "",
-                            distance = it.description?.distance?.toString(context) ?: "",
-                            featureType = it.description?.localizedFeatureType ?: ""
-                        )
-                    }
-                    current.copy(
-                        searchResults = converted,
-                        isSearching = false
-                    )
-                }
-            }
-            override fun onResultsEnd(timestamp: Long) {}
-        }
-        
-        if (navState.watchLocalMode) {
-            SearchEngine.INSTANCE.addListener(listener)
-        }
-        
-        onDispose {
-            if (navState.watchLocalMode) {
-                SearchEngine.INSTANCE.removeListener(listener)
-            }
-        }
-    }
-
     LaunchedEffect(isVisible) {
         if (isVisible) {
             WearCommandService.requestSearchHistory(context)
@@ -140,21 +100,10 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
     }
 
     fun performSearch(query: String) {
+        Log.d("SearchScreen", "performSearch: $query")
         coroutineScope.launch {
-            NavigationStateHolder.update { it.copy(isSearching = true) }
-            if (navState.watchLocalMode) {
-                try {
-                    val wearApp = context.applicationContext as WearApplication
-                    wearApp.waitForInitializationSuspend()
-                    val state = NavigationStateHolder.state.value
-                    SearchEngine.INSTANCE.search(context, query, false, 0L, state.lat != 0.0, state.lat, state.lon)
-                } catch (e: Exception) {
-                    Log.e("SearchScreen", "Standalone search failed: ${e.message}")
-                    NavigationStateHolder.update { it.copy(isSearching = false) }
-                }
-            } else {
-                WearCommandService.search(context, query)
-            }
+            NavigationStateHolder.update { it.copy(isSearching = true, searchResults = emptyList()) }
+            WearCommandService.search(context, query)
         }
     }
 

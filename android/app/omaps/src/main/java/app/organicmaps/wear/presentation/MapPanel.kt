@@ -1,5 +1,6 @@
 package app.organicmaps.wear.presentation
 
+import android.util.Log
 import android.view.KeyEvent
 import android.content.Context
 import androidx.compose.foundation.background
@@ -12,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -26,7 +28,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.wear.compose.material.*
-import androidx.lifecycle.viewmodel.compose.viewModel
 
 import app.organicmaps.sdk.Framework
 import app.organicmaps.sdk.Map
@@ -48,16 +49,21 @@ import app.organicmaps.wear.WearApplication
 import app.organicmaps.wear.WearCommandService
 import app.organicmaps.wear.NavigationIcons
 import app.organicmaps.wear.WearMapDownloader
+import app.organicmaps.wear.VirtualMwmManager
 import app.organicmaps.wear.SearchResultItem
+import app.organicmaps.wear.UiEvent
 import app.organicmaps.wear.presentation.search.PlacePage
+
+// Granular state models
+import app.organicmaps.wear.NavigationInstructions
+import app.organicmaps.wear.RoutingStatus
+import app.organicmaps.wear.MapStatus
+import app.organicmaps.wear.ConnectionStatus
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
-
-
 
 @Composable
 fun MapPanel(
@@ -69,10 +75,14 @@ fun MapPanel(
     val context = LocalContext.current
     val isAmbient = LocalAmbientMode.current
     val hApp = context.applicationContext as WearApplication
-    val navState by NavigationStateHolder.state.collectAsState()
-    val isSystemDark = isSystemInDarkTheme()
     
     val focusRequester = remember { FocusRequester() }
+    
+    // Collecting granular flows
+    val routingStatus by NavigationStateHolder.routingStatusFlow.collectAsState(initial = RoutingStatus(false, false, false, false, false, emptyList()))
+    val mapStatus by NavigationStateHolder.mapStatusFlow.collectAsState(initial = MapStatus(false, "default", false))
+    val connectionStatus by NavigationStateHolder.connectionStatusFlow.collectAsState(initial = ConnectionStatus(false, false, false))
+    val location by NavigationStateHolder.locationFlow.collectAsState(initial = Triple(0.0, 0.0, 0f))
     
     LaunchedEffect(Unit) {
         if (isVisible) focusRequester.requestFocus()
@@ -81,41 +91,75 @@ fun MapPanel(
     var showQuickMenu by remember { mutableStateOf(false) }
     var tappedDestination by remember { mutableStateOf<SearchResultItem?>(null) }
 
-    val currentLat = navState.lat
-    val currentLon = navState.lon
-
     var isMapDownloaded by remember { mutableStateOf(false) }
     var isWorldMapPresent by remember { mutableStateOf(true) }
-    LaunchedEffect(currentLat, currentLon, navState.watchLocalMode, navState.standaloneMode, navState.isPhoneConnected, hApp.isFullyInitialized) {
+    
+    LaunchedEffect(location, connectionStatus, hApp.isFullyInitialized) {
         if (hApp.isFullyInitialized) {
-            delay(500) // Reduced delay
+            delay(500)
+            val (lat, lon, _) = location
             isMapDownloaded = withContext(Dispatchers.Default) {
-                if (currentLat != 0.0) {
-                    Framework.nativeIsDownloadedMapAtLocation(currentLat, currentLon)
+                if (lat != 0.0) {
+                    Framework.nativeIsDownloadedMapAtLocation(lat, lon)
                 } else {
-                    // If no GPS fix, check if any maps are downloaded at all
-                    app.organicmaps.sdk.downloader.MapManager.nativeGetDownloadedCount() > 0
+                    MapManager.nativeGetDownloadedCount() > 0
                 }
             }
             isWorldMapPresent = withContext(Dispatchers.Default) {
-                app.organicmaps.sdk.downloader.MapManager.nativeGetStatus("World") == CountryItem.STATUS_DONE
+                MapManager.nativeGetStatus("World") == CountryItem.STATUS_DONE
             }
         }
     }
 
+    // Side Effect: MWM Mounting
+    DisposableEffect(isVisible, hApp.isFullyInitialized, connectionStatus) {
+        if (!isVisible || !hApp.isFullyInitialized || !connectionStatus.isPhoneConnected || connectionStatus.watchLocalMode) {
+            return@DisposableEffect onDispose {}
+        }
 
-    val scope = rememberCoroutineScope()
+        val listener = MapManager.CurrentCountryChangedListener { countryId ->
+            if (!countryId.isNullOrEmpty() &&
+                MapManager.nativeGetStatus(countryId) != CountryItem.STATUS_DONE &&
+                !VirtualMwmManager.isMounted(countryId)
+            ) {
+                Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Reactive MWM mount request: $countryId")
+                WearCommandService.requestMwmMetadata(context, countryId)
+            }
+        }
 
-    LaunchedEffect(navState.routePoints, navState.isActive, navState.watchLocalMode) {
-        if (!navState.watchLocalMode && navState.isActive && navState.routePoints.isNotEmpty()) {
-            val lats = navState.routePoints.map { it.first }.toDoubleArray()
-            val lons = navState.routePoints.map { it.second }.toDoubleArray()
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Subscribing to country change events")
+        MapManager.nativeSubscribeOnCountryChanged(listener)
+
+        val center = Framework.nativeGetScreenRectCenter()
+        if (center != null && center.size == 2) {
+            val countryId = MapManager.nativeFindCountry(center[0], center[1])
+            if (!countryId.isNullOrEmpty() &&
+                MapManager.nativeGetStatus(countryId) != CountryItem.STATUS_DONE &&
+                !VirtualMwmManager.isMounted(countryId)
+            ) {
+                Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Initial MWM mount request: $countryId")
+                WearCommandService.requestMwmMetadata(context, countryId)
+            }
+        }
+
+        onDispose {
+            Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Unsubscribing from country change events")
+            MapManager.nativeUnsubscribeOnCountryChanged()
+        }
+    }
+
+    // Side Effect: Route Drawing
+    LaunchedEffect(routingStatus, connectionStatus.watchLocalMode) {
+        if (!connectionStatus.watchLocalMode && routingStatus.isActive && routingStatus.routePoints.isNotEmpty()) {
+            val lats = routingStatus.routePoints.map { it.first }.toDoubleArray()
+            val lons = routingStatus.routePoints.map { it.second }.toDoubleArray()
             Framework.nativeDrawRouteLine(lats, lons, 6.0f, 0xBB1E90FF.toInt())
-        } else if (!navState.isActive || navState.watchLocalMode) {
+        } else if (!routingStatus.isActive || connectionStatus.watchLocalMode) {
             Framework.nativeRemoveRouteLine()
         }
     }
 
+    // Side Effect: Place Page Activation
     DisposableEffect(hApp.isFullyInitialized) {
         if (!hApp.isFullyInitialized) return@DisposableEffect onDispose {}
         
@@ -154,14 +198,14 @@ fun MapPanel(
 
     Box(
         modifier = Modifier.then(modifier).fillMaxSize().clipToBounds()
-            .background(Color.Black) // Wear OS: default to Black to avoid grey flashes
+            .background(Color.Black)
             .focusRequester(focusRequester)
             .onKeyEvent {
                 if (!hApp.isFullyInitialized || isOverlayActive) return@onKeyEvent false
                 when (it.nativeKeyEvent.keyCode) {
                     KeyEvent.KEYCODE_STEM_1 -> { showQuickMenu = true; true }
                     KeyEvent.KEYCODE_STEM_2 -> {
-                        if (navState.isMapUnlocked) {
+                        if (mapStatus.isMapUnlocked) {
                             repeat(5) {
                                 val mode = LocationState.getMode()
                                 if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
@@ -173,7 +217,7 @@ fun MapPanel(
                         true
                     }
                     KeyEvent.KEYCODE_BACK -> {
-                        if (navState.isMapUnlocked) {
+                        if (mapStatus.isMapUnlocked) {
                             repeat(5) {
                                 val mode = LocationState.getMode()
                                 if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
@@ -195,51 +239,16 @@ fun MapPanel(
         if (!hApp.isFullyInitialized) {
             CircularProgressIndicator()
         } else {
-            AndroidView(
-                factory = { ctx ->
-                    MapView(ctx).apply {
-                        getMap().setLocationHelper(hApp.organicMaps.locationHelper)
-                        isLongClickable = true
-                        setOnLongClickListener {
-                            if (hApp.isFullyInitialized && !isOverlayActive) {
-                                if (!navState.isMapUnlocked) {
-                                    Framework.nativeStopLocationFollow()
-                                }
-                                showQuickMenu = true
-                            }
-                            true
-                        }
-                    }
-                },
-                update = { mapView ->
-                    mapView.setMapLocked(isOverlayActive || !navState.isMapUnlocked)
-                    mapView.isClickable = !isOverlayActive
-                    mapView.setOnTouchListener { _, _ -> isOverlayActive }
-                    
-                    val map = mapView.getMap()
-                    
-                    // Position Compass below the lock icon (which is at top=40dp)
-                    val density = context.resources.displayMetrics.density
-                    val offsetY = (75 * density).toInt()
-                    map.updateCompassOffset(context, -1, offsetY, false)
-
-                    if (!isVisible || isAmbient) map.onPause() else map.onResume()
-
-                    val targetStyle = when (navState.mapStyle) {
-                        "night" -> MapStyle.Dark
-                        "auto" -> if (isSystemDark) MapStyle.Dark else MapStyle.Clear
-                        else -> MapStyle.Clear
-                    }
-                    if (MapStyle.get() != targetStyle) {
-                        MapStyle.set(targetStyle)
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
+            MapViewContainer(
+                isVisible = isVisible,
+                isAmbient = isAmbient,
+                isOverlayActive = isOverlayActive,
+                isMapUnlocked = mapStatus.isMapUnlocked,
+                mapStyle = mapStatus.mapStyle,
+                onLongClick = { showQuickMenu = true }
             )
 
-
             if (isOverlayActive) {
-                // Full-screen blocker to prevent map interaction when any overlay/dialog is active
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -253,117 +262,349 @@ fun MapPanel(
                         .clickable(enabled = true, onClick = { /* Consume touch */ })
                 )
             }
+            
+            MapLockControl(
+                isOverlayActive = isOverlayActive,
+                isAmbient = isAmbient
+            )
+            
+            NavigationInstructionsOverlay(
+                isMapUnlocked = mapStatus.isMapUnlocked
+            )
+            
+            RecenterControl()
+            
+            GpsStatusControl(
+                isAmbient = isAmbient
+            )
+            
+            RouteStartControl(
+                isMapUnlocked = mapStatus.isMapUnlocked
+            )
+            
+            MapMissingControl(
+                isMapDownloaded = isMapDownloaded,
+                isWorldMapPresent = isWorldMapPresent,
+                isAmbient = isAmbient
+            )
+            
+            if (showQuickMenu) QuickMenu(onDismiss = { showQuickMenu = false })
+            
+            PlacePageOverlay(
+                tappedDestination = tappedDestination,
+                onDismiss = { tappedDestination = null }
+            )
         }
-        
-        // Point 4: LOCK/UNLOCK VISUAL FEEDBACK
-        if (!isAmbient) {
+    }
+}
+
+@Composable
+private fun MapViewContainer(
+    isVisible: Boolean,
+    isAmbient: Boolean,
+    isOverlayActive: Boolean,
+    isMapUnlocked: Boolean,
+    mapStyle: String,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val hApp = context.applicationContext as WearApplication
+    val isSystemDark = isSystemInDarkTheme()
+    val density = LocalDensity.current
+
+    AndroidView(
+        factory = { ctx ->
+            MapView(ctx).apply {
+                getMap().setLocationHelper(hApp.organicMaps.locationHelper)
+                isLongClickable = true
+                setOnLongClickListener {
+                    if (hApp.isFullyInitialized && !isOverlayActive) {
+                        onLongClick()
+                    }
+                    true
+                }
+            }
+        },
+        update = { mapView ->
+            mapView.setMapLocked(isOverlayActive || !isMapUnlocked)
+            mapView.isClickable = !isOverlayActive
+            mapView.setOnTouchListener { v, _ -> 
+                if (isOverlayActive) {
+                    v?.performClick()
+                    true
+                } else false
+            }
+            
+            val map = mapView.getMap()
+            val offsetY = with(density) { 60.dp.roundToPx() }
+            map.updateCompassOffset(context, -1, offsetY, false)
+
+            if (!isVisible || isAmbient) map.onPause() else map.onResume()
+
+            val targetStyle = when (mapStyle) {
+                "night" -> MapStyle.Dark
+                "auto" -> if (isSystemDark) MapStyle.Dark else MapStyle.Clear
+                else -> MapStyle.Clear
+            }
+            if (MapStyle.get() != targetStyle) {
+                MapStyle.set(targetStyle)
+            }
+        },
+        modifier = modifier.fillMaxSize()
+    )
+}
+
+@Composable
+private fun NavigationInstructionsOverlay(
+    isMapUnlocked: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val navInstructions by NavigationStateHolder.navigationInstructionsFlow.collectAsState(initial = null)
+    val routingStatus by NavigationStateHolder.routingStatusFlow.collectAsState(initial = null)
+
+    if (routingStatus?.isActive == true && navInstructions?.distToTurn?.isNotEmpty() == true && !isMapUnlocked) {
+        val instructions = navInstructions!!
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(top = 35.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 40.dp, end = 25.dp)
-                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                    .clickable(enabled = !isOverlayActive) {
-                        if (hApp.isFullyInitialized) {
-                            if (navState.isMapUnlocked) {
-                                repeat(5) {
-                                    val mode = LocationState.getMode()
-                                    if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
-                                    LocationState.nativeSwitchToNextMode()
-                                }
-                            } else {
-                                Framework.nativeStopLocationFollow()
-                            }
-                        }
-                    }
-                    .padding(6.dp)
+                    .background(Color.Black.copy(alpha = 0.85f), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
-                Icon(
-                    imageVector = if (navState.isMapUnlocked) Icons.Default.LockOpen else Icons.Default.Lock,
-                    contentDescription = if (navState.isMapUnlocked) "Unlock Map" else "Lock Map",
-                    tint = if (navState.isMapUnlocked) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-        }
-
-        if (navState.isActive && navState.distToTurn.isNotEmpty() && !navState.isMapUnlocked) {
-            Box(modifier = Modifier.align(Alignment.TopCenter).padding(top = 35.dp).background(Color.Black.copy(alpha = 0.85f), RoundedCornerShape(16.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(30.dp)) { Icon(painter = painterResource(id = NavigationIcons.getTurnIcon(navState.carDirection, navState.pedestrianDirection, navState.exitNum)), contentDescription = null, modifier = Modifier.fillMaxSize(), tint = Color.White) }
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(30.dp)) {
+                        Icon(
+                            painter = painterResource(id = NavigationIcons.getTurnIcon(instructions.carDirection, instructions.pedestrianDirection, instructions.exitNum)),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            tint = Color.White
+                        )
+                    }
                     Spacer(modifier = Modifier.width(6.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = navState.distToTurn, style = MaterialTheme.typography.title3.copy(fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = Color.White)
-                        if (navState.nextStreet.isNotEmpty()) Text(text = navState.nextStreet, style = MaterialTheme.typography.caption2.copy(fontSize = 10.sp), color = Color.White.copy(alpha = 0.9f), maxLines = 1)
+                        Text(
+                            text = instructions.distToTurn,
+                            style = MaterialTheme.typography.title3.copy(fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+                            color = Color.White
+                        )
+                        if (instructions.nextStreet.isNotEmpty()) {
+                            Text(
+                                text = instructions.nextStreet,
+                                style = MaterialTheme.typography.caption2.copy(fontSize = 10.sp),
+                                color = Color.White.copy(alpha = 0.9f),
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
 
-        if (navState.isMapUnlocked) {
-            Box(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = if (navState.isRouteBuilt && !navState.isNavigating) 60.dp else 24.dp)) {
-                CompactChip(
-                    onClick = { 
-                        if (hApp.isFullyInitialized) {
+@Composable
+private fun MapLockControl(
+    isOverlayActive: Boolean,
+    isAmbient: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val mapStatus by NavigationStateHolder.mapStatusFlow.collectAsState(initial = null)
+    val context = LocalContext.current
+    val hApp = context.applicationContext as WearApplication
+    
+    if (isAmbient || mapStatus == null) return
+
+    val isMapUnlocked = mapStatus!!.isMapUnlocked
+
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopEnd
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 40.dp, end = 25.dp)
+                .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                .clickable(enabled = !isOverlayActive) {
+                    if (hApp.isFullyInitialized) {
+                        if (isMapUnlocked) {
                             repeat(5) {
                                 val mode = LocationState.getMode()
                                 if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
                                 LocationState.nativeSwitchToNextMode()
                             }
+                        } else {
+                            Framework.nativeStopLocationFollow()
                         }
-                    }, 
-                    label = { Text("Recenter") }, 
-                    icon = { Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp)) }, 
-                    colors = ChipDefaults.secondaryChipColors()
-                )
-            }
+                    }
+                }
+                .padding(6.dp)
+        ) {
+            Icon(
+                imageVector = if (isMapUnlocked) Icons.Default.LockOpen else Icons.Default.Lock,
+                contentDescription = if (isMapUnlocked) "Unlock Map" else "Lock Map",
+                tint = if (isMapUnlocked) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.size(14.dp)
+            )
         }
+    }
+}
 
-        if (navState.isEffectivelyStandalone && navState.lat == 0.0 && !isAmbient) {
-            Box(modifier = Modifier.align(Alignment.TopCenter).padding(top = 40.dp).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp)).padding(horizontal = 8.dp, vertical = 4.dp), contentAlignment = Alignment.Center) {
-                Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp); Spacer(modifier = Modifier.width(6.dp)); Text("Searching for GPS...", style = MaterialTheme.typography.caption3, color = Color.White) }
-            }
+@Composable
+private fun RecenterControl(
+    modifier: Modifier = Modifier
+) {
+    val mapStatus by NavigationStateHolder.mapStatusFlow.collectAsState(initial = null)
+    val hApp = LocalContext.current.applicationContext as WearApplication
+
+    if (mapStatus?.isMapUnlocked == true) {
+        Box(
+            modifier = modifier.fillMaxSize().padding(bottom = 10.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            CompactChip(
+                onClick = { 
+                    if (hApp.isFullyInitialized) {
+                        repeat(5) {
+                            val mode = LocationState.getMode()
+                            if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
+                            LocationState.nativeSwitchToNextMode()
+                        }
+                    }
+                }, 
+                label = { Text("Recenter") }, 
+                icon = { Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp)) }, 
+                colors = ChipDefaults.secondaryChipColors()
+            )
         }
-        
-        if (navState.isRouteBuilt && !navState.isNavigating) {
-            Box(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = if (navState.isMapUnlocked) 60.dp else 24.dp)) {
-                Button(onClick = { if (hApp.isFullyInitialized) RoutingController.get().start() }, modifier = Modifier.height(40.dp).fillMaxWidth(0.5f), colors = ButtonDefaults.primaryButtonColors()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.PlayArrow, contentDescription = null); Spacer(modifier = Modifier.width(4.dp)); Text("Start") }
+    }
+}
+
+@Composable
+private fun GpsStatusControl(
+    isAmbient: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val connectionStatus by NavigationStateHolder.connectionStatusFlow.collectAsState(initial = null)
+    val location by NavigationStateHolder.locationFlow.collectAsState(initial = null)
+
+    if (isAmbient || connectionStatus == null || location == null) return
+
+    val isEffectivelyStandalone = connectionStatus!!.standaloneMode || !connectionStatus!!.isPhoneConnected
+    if (isEffectivelyStandalone && location!!.first == 0.0) {
+        Box(
+            modifier = modifier.fillMaxSize().padding(top = 40.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Searching for GPS...", style = MaterialTheme.typography.caption3, color = Color.White)
                 }
             }
         }
+    }
+}
 
-        // MAP MISSING NOTIFICATION
-        if ((!isMapDownloaded || !isWorldMapPresent) && hApp.isFullyInitialized && !isAmbient) {
+@Composable
+private fun RouteStartControl(
+    isMapUnlocked: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val routingStatus by NavigationStateHolder.routingStatusFlow.collectAsState(initial = null)
+    val hApp = LocalContext.current.applicationContext as WearApplication
+
+    if (routingStatus?.isRouteBuilt == true && !routingStatus!!.isNavigating) {
+        Box(
+            modifier = modifier.fillMaxSize().padding(bottom = if (isMapUnlocked) 95.dp else 12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Button(
+                onClick = { if (hApp.isFullyInitialized) RoutingController.get().start() },
+                modifier = Modifier.height(40.dp).fillMaxWidth(0.5f),
+                colors = ButtonDefaults.primaryButtonColors()
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Start")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MapMissingControl(
+    isMapDownloaded: Boolean,
+    isWorldMapPresent: Boolean,
+    isAmbient: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val hApp = context.applicationContext as WearApplication
+    val location by NavigationStateHolder.locationFlow.collectAsState(initial = null)
+    val scope = rememberCoroutineScope()
+
+    if ((!isMapDownloaded || !isWorldMapPresent) && hApp.isFullyInitialized && !isAmbient) {
+        Box(
+            modifier = modifier.fillMaxSize().padding(horizontal = 20.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = 20.dp)
                     .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
                     .clickable(enabled = true, onClick = {}) // Consume clicks
                     .padding(12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(imageVector = if (!isWorldMapPresent) Icons.Default.Warning else Icons.Default.Map, contentDescription = null, tint = if (!isWorldMapPresent) Color.Yellow else Color.White, modifier = Modifier.size(24.dp))
+                    Icon(
+                        imageVector = if (!isWorldMapPresent) Icons.Default.Warning else Icons.Default.Map,
+                        contentDescription = null,
+                        tint = if (!isWorldMapPresent) Color.Yellow else Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(if (!isWorldMapPresent) "Missing World Map" else "No Local Map Data", style = MaterialTheme.typography.caption2, color = Color.White, textAlign = TextAlign.Center)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(if (!isWorldMapPresent) "(Required for rendering)" else "(Pan to center or sync)", style = MaterialTheme.typography.caption3, color = Color.LightGray, textAlign = TextAlign.Center)
                     Spacer(modifier = Modifier.height(8.dp))
                     Row {
-                        CompactChip(onClick = { NavigationStateHolder.update { it.copy(openMapManager = true) } }, label = { Text("Manage", style = MaterialTheme.typography.caption3) }, colors = ChipDefaults.secondaryChipColors(), modifier = Modifier.height(28.dp).weight(1f))
+                        CompactChip(
+                            onClick = { NavigationStateHolder.emitEvent(UiEvent.OpenMapManager) },
+                            label = { Text("Manage", style = MaterialTheme.typography.caption3) },
+                            colors = ChipDefaults.secondaryChipColors(),
+                            modifier = Modifier.height(28.dp).weight(1f)
+                        )
                         Spacer(modifier = Modifier.width(4.dp))
                         CompactChip(
                             onClick = {
                                 scope.launch {
+                                    val (lat, lon, _) = location ?: Triple(0.0, 0.0, 0f)
                                     if (!isWorldMapPresent) {
+                                        Log.d("MapPanel", "DEBUG_WEAR: Sync Local - World map missing, downloading World")
                                         WearMapDownloader.downloadOrStreamMap(context, "World", "")
                                     } else {
-                                        val countryId = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(currentLat, currentLon) }
+                                        Log.d("MapPanel", "DEBUG_WEAR: Sync Local - Finding country for $lat, $lon")
+                                        val countryId = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(lat, lon) }
                                         if (!countryId.isNullOrEmpty()) {
+                                            Log.d("MapPanel", "DEBUG_WEAR: Sync Local - Country found: $countryId, requesting download")
                                             WearMapDownloader.downloadOrStreamMap(context, countryId!!, "")
                                         } else {
-                                            NavigationStateHolder.update { it.copy(openMapManager = true) }
+                                            Log.w("MapPanel", "DEBUG_WEAR: Sync Local - Could not find country for $lat, $lon. Opening Map Manager.")
+                                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Cannot find country for current location"))
+                                            NavigationStateHolder.emitEvent(UiEvent.OpenMapManager)
                                         }
                                     }
                                 }
@@ -376,95 +617,121 @@ fun MapPanel(
                 }
             }
         }
-        
-        if (showQuickMenu) QuickMenu(onDismiss = { showQuickMenu = false })
-        if (tappedDestination != null) {
-            androidx.wear.compose.material.dialog.Dialog(showDialog = true, onDismissRequest = { tappedDestination = null }) {
-                PlacePage(result = tappedDestination!!, onNavigate = { routerType, avoidTolls, avoidMotorways, avoidFerries, avoidUnpaved ->
-                    scope.launch {
-                        val state = NavigationStateHolder.state.value
-                        if (state.standaloneMode || (!state.isPhoneConnected && state.watchLocalMode)) {
-                            if (hApp.isFullyInitialized && !Framework.nativeIsDownloadedMapAtLocation(tappedDestination!!.lat, tappedDestination!!.lon)) { android.widget.Toast.makeText(context, "Map not downloaded for destination", android.widget.Toast.LENGTH_LONG).show(); return@launch }
-                            try {
-                                hApp.waitForInitializationSuspend()
-                                NavigationStateHolder.update { it.copy(
-                                    isActive = true, 
-                                    isNavigating = false, 
-                                    routeBuildProgress = 0, 
-                                    isRouteBuilding = true, 
-                                    isRouteReady = false, 
-                                    isRouteBuilt = false,
-                                    routePoints = emptyList(), 
-                                    lastRouteError = 0
-                                ) }
-                                val locationHelper = hApp.organicMaps.locationHelper
-                                val myPos = locationHelper.myPosition
-                                val savedPos = locationHelper.savedLocation
-                                
-                                val startPoint: MapObject? = if (myPos != null) {
-                                    myPos
-                                } else if (savedPos != null) {
-                                    MapObject.createMapObject(MapObject.MY_POSITION, "My Location", "", savedPos.getLatitude(), savedPos.getLongitude())
-                                } else {
-                                    val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-                                    val lastLat = prefs.getFloat("last_known_lat", 0f).toDouble()
-                                    val lastLon = prefs.getFloat("last_known_lon", 0f).toDouble()
-                                    if (lastLat != 0.0) {
-                                        MapObject.createMapObject(MapObject.MY_POSITION, "Previous Fix", "", lastLat, lastLon)
-                                    } else {
-                                        null
-                                    }
-                                }
+    }
+}
 
-                                if (startPoint == null) { 
-                                    android.util.Log.e("MapPanel", "No GPS position for routing")
-                                    android.widget.Toast.makeText(context, "No GPS position for routing", android.widget.Toast.LENGTH_LONG).show()
-                                    NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
-                                    return@launch 
-                                }
-                                val destination = MapObject.createMapObject(MapObject.POI, tappedDestination!!.name, tappedDestination!!.description, tappedDestination!!.lat, tappedDestination!!.lon)
-                                val router = when (routerType) { 0 -> Router.Vehicle; 1 -> Router.Pedestrian; 2 -> Router.Bicycle; else -> Router.Transit }
-                                val controller = RoutingController.get()
-                                controller.prepare(startPoint!!, destination, router)
-                                controller.checkAndBuildRoute()
-                                NavigationStateHolder.update { it.copy(distToTurn = "", nextStreet = "", distToTarget = "", eta = 0, completionPercent = 0.0, turnLat = 0.0, turnLon = 0.0, avoidTolls = avoidTolls, avoidMotorways = avoidMotorways, avoidFerries = avoidFerries, avoidUnpaved = avoidUnpaved) }
-                            } catch (e: Exception) { android.util.Log.e("MapPanel", "Route planning failed: ${e.message}"); android.widget.Toast.makeText(context, "Routing failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show(); NavigationStateHolder.update { it.copy(isRouteBuilding = false) } }
-                        } else { WearCommandService.selectSearchResult(context, tappedDestination!!, routerType); NavigationStateHolder.update { it.copy(isActive = true, isNavigating = false, destinationName = tappedDestination!!.name, isRouteBuilding = true) } }
-                        tappedDestination = null
-                    }
-                }, onDismiss = { 
+@Composable
+private fun PlacePageOverlay(
+    tappedDestination: SearchResultItem?,
+    onDismiss: () -> Unit
+) {
+    if (tappedDestination == null) return
+    
+    val context = LocalContext.current
+    val hApp = context.applicationContext as WearApplication
+    val scope = rememberCoroutineScope()
+
+    androidx.wear.compose.material.dialog.Dialog(showDialog = true, onDismissRequest = onDismiss) {
+        PlacePage(
+            result = tappedDestination,
+            onNavigate = { routerType, avoidTolls, avoidMotorways, avoidFerries, avoidUnpaved ->
+                scope.launch {
                     val state = NavigationStateHolder.state.value
-                    if (state.isRouteBuilding || (state.isActive && !state.isNavigating)) {
-                        RoutingController.get().cancel()
-                        NavigationStateHolder.update(state.copy(
-                            isRouteBuilding = false, 
-                            isRouteBuilt = false,
-                            isRouteReady = false,
-                            isActive = false, 
-                            isMapUnlocked = false
-                        ), force = true)
+                    if (state.standaloneMode || (!state.isPhoneConnected && state.watchLocalMode)) {
+                        if (hApp.isFullyInitialized && !Framework.nativeIsDownloadedMapAtLocation(tappedDestination.lat, tappedDestination.lon)) {
+                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map not downloaded for destination", android.widget.Toast.LENGTH_LONG))
+                            return@launch
+                        }
+                        try {
+                            hApp.waitForInitializationSuspend()
+                            NavigationStateHolder.update { it.copy(
+                                isActive = true, 
+                                isNavigating = false, 
+                                routeBuildProgress = 0, 
+                                isRouteBuilding = true, 
+                                isRouteReady = false, 
+                                isRouteBuilt = false,
+                                routePoints = emptyList(), 
+                                lastRouteError = 0
+                            ) }
+                            val locationHelper = hApp.organicMaps.locationHelper
+                            val myPos = locationHelper.myPosition
+                            val savedPos = locationHelper.savedLocation
+                            
+                            val startPoint: MapObject? = if (myPos != null) {
+                                myPos
+                            } else if (savedPos != null) {
+                                MapObject.createMapObject(MapObject.MY_POSITION, "My Location", "", savedPos.getLatitude(), savedPos.getLongitude())
+                            } else {
+                                val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
+                                val lastLat = prefs.getFloat("last_known_lat", 0f).toDouble()
+                                val lastLon = prefs.getFloat("last_known_lon", 0f).toDouble()
+                                if (lastLat != 0.0) {
+                                    MapObject.createMapObject(MapObject.MY_POSITION, "Previous Fix", "", lastLat, lastLon)
+                                } else {
+                                    null
+                                }
+                            }
+
+                            if (startPoint == null) { 
+                                Log.e("MapPanel", "No GPS position for routing")
+                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("No GPS position for routing", android.widget.Toast.LENGTH_LONG))
+                                NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
+                                return@launch 
+                            }
+                            val destination = MapObject.createMapObject(MapObject.POI, tappedDestination.name, tappedDestination.description, tappedDestination.lat, tappedDestination.lon)
+                            val router = when (routerType) { 0 -> Router.Vehicle; 1 -> Router.Pedestrian; 2 -> Router.Bicycle; else -> Router.Transit }
+                            val controller = RoutingController.get()
+                            controller.prepare(startPoint!!, destination, router)
+                            controller.checkAndBuildRoute()
+                            NavigationStateHolder.update { it.copy(distToTurn = "", nextStreet = "", distToTarget = "", eta = 0, completionPercent = 0.0, turnLat = 0.0, turnLon = 0.0, avoidTolls = avoidTolls, avoidMotorways = avoidMotorways, avoidFerries = avoidFerries, avoidUnpaved = avoidUnpaved) }
+                        } catch (e: Exception) {
+                            Log.e("MapPanel", "Route planning failed: ${e.message}")
+                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Routing failed: ${e.message}", android.widget.Toast.LENGTH_LONG))
+                            NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
+                        }
                     } else {
-                        NavigationStateHolder.update(state.copy(isRouteBuilding = false), force = true)
+                        WearCommandService.selectSearchResult(context, tappedDestination, routerType)
+                        NavigationStateHolder.update { it.copy(isActive = true, isNavigating = false, destinationName = tappedDestination.name, isRouteBuilding = true) }
                     }
-                    Framework.nativeDeactivatePopup()
-                    tappedDestination = null 
-                })
+                    onDismiss()
+                }
+            },
+            onDismiss = { 
+                val state = NavigationStateHolder.state.value
+                if (state.isRouteBuilding || (state.isActive && !state.isNavigating)) {
+                    RoutingController.get().cancel()
+                    NavigationStateHolder.update(state.copy(
+                        isRouteBuilding = false, 
+                        isRouteBuilt = false,
+                        isRouteReady = false,
+                        isActive = false, 
+                        isMapUnlocked = false
+                    ), force = true)
+                } else {
+                    NavigationStateHolder.update(state.copy(isRouteBuilding = false), force = true)
+                }
+                Framework.nativeDeactivatePopup()
+                onDismiss()
             }
-        }
+        )
     }
 }
 
 @Composable
 fun QuickMenu(onDismiss: () -> Unit) {
     androidx.wear.compose.material.dialog.Dialog(showDialog = true, onDismissRequest = onDismiss) {
-        val navState by NavigationStateHolder.state.collectAsState()
+        val routingStatus by NavigationStateHolder.routingStatusFlow.collectAsState(initial = null)
+        val connectionStatus by NavigationStateHolder.connectionStatusFlow.collectAsState(initial = null)
+        val trackRecording by NavigationStateHolder.trackRecordingFlow.collectAsState(initial = null)
         val context = LocalContext.current
         
         var elapsedTime by remember { mutableStateOf("") }
-        LaunchedEffect(navState.isTrackRecording, navState.trackRecordingStartTime) {
-            if (navState.isTrackRecording && navState.trackRecordingStartTime > 0) {
+        LaunchedEffect(trackRecording?.isRecording, trackRecording?.startTime) {
+            val recording = trackRecording
+            if (recording != null && recording.isRecording && recording.startTime > 0) {
                 while (true) {
-                    val ms = System.currentTimeMillis() - navState.trackRecordingStartTime
+                    val ms = System.currentTimeMillis() - recording.startTime
                     val sec = (ms / 1000) % 60
                     val min = (ms / 60000) % 60
                     val hr = ms / 3600000
@@ -479,11 +746,11 @@ fun QuickMenu(onDismiss: () -> Unit) {
         ScalingLazyColumn(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp, start = 8.dp, end = 8.dp)) {
             item { Text("Quick Menu", style = MaterialTheme.typography.caption1, color = Color(0xFF00E5FF)) }
             
-            if (navState.isActive) {
+            if (routingStatus?.isActive == true) {
                 item {
                     Chip(
                         onClick = {
-                            if (navState.standaloneMode || navState.watchLocalMode) {
+                            if (connectionStatus?.standaloneMode == true || connectionStatus?.watchLocalMode == true) {
                                 RoutingController.get().cancel()
                             } else {
                                 WearCommandService.stopNavigation(context)
@@ -493,7 +760,7 @@ fun QuickMenu(onDismiss: () -> Unit) {
                                 if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
                                 LocationState.nativeSwitchToNextMode()
                             }
-                            NavigationStateHolder.update(navState.copy(isActive = false, isNavigating = false, isRouteBuilt = false, isRouteBuilding = false, isMapUnlocked = false), force = true)
+                            NavigationStateHolder.update { it.copy(isActive = false, isNavigating = false, isRouteBuilt = false, isRouteBuilding = false, isMapUnlocked = false) }
                             onDismiss()
                         },
                         label = { Text("Stop Navigation") },
@@ -508,7 +775,7 @@ fun QuickMenu(onDismiss: () -> Unit) {
             item { Chip(onClick = { if (Map.isEngineCreated()) Map.zoomOut(); onDismiss() }, label = { Text("Zoom Out") }, icon = { Icon(Icons.Default.Remove, contentDescription = null) }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = ChipDefaults.secondaryChipColors()) }
             
             item {
-                val isRecording = navState.isTrackRecording
+                val isRecording = trackRecording?.isRecording == true
                 Chip(
                     onClick = { 
                         WearCommandService.toggleTrackRecording(context)

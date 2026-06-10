@@ -56,10 +56,12 @@ android {
     }
     web {
       java.srcDirs = ['src/google/java', 'src/gms/java']
+      res.srcDirs = ['src/gms/res']
       manifest.srcFile 'src/gms/AndroidManifest.xml'
     }
     huawei {
       java.srcDirs = ['src/google/java', 'src/gms/java']
+      res.srcDirs = ['src/gms/res']
       manifest.srcFile 'src/gms/AndroidManifest.xml'
     }
     oss { java.srcDirs = ['src/locationOss/java', 'src/oss/java'] }
@@ -68,6 +70,12 @@ android {
   flavorDimensions += 'default'
 
   productFlavors {
+    oss {
+      dimension 'default'
+      versionName = android.defaultConfig.versionName + '-OSS'
+      buildConfigField 'String', 'SUPPORT_MAIL', '"oss@organicmaps.app"'
+    }
+
     google {
       dimension 'default'
       buildConfigField 'String', 'SUPPORT_MAIL', '"google@organicmaps.app"'
@@ -86,17 +94,39 @@ android {
       buildConfigField 'String', 'SUPPORT_MAIL', '"web@organicmaps.app"'
     }
 
-    oss {
-      dimension 'default'
-      versionName = android.defaultConfig.versionName + '-OSS'
-      buildConfigField 'String', 'SUPPORT_MAIL', '"oss@organicmaps.app"'
-    }
-
     huawei {
       dimension 'default'
       applicationIdSuffix '.huawei'
       versionName = android.defaultConfig.versionName + '-Huawei'
       buildConfigField 'String', 'SUPPORT_MAIL', '"huawei@organicmaps.app"'
+    }
+  }
+
+  tasks.register('stopApps') {
+    doLast {
+      exec { commandLine "adb", "-s", "emulator-5554", "shell", "am", "force-stop", "app.organicmaps.debug" }
+      exec { commandLine "adb", "-s", "emulator-5556", "shell", "am", "force-stop", "app.organicmaps.debug" }
+    }
+  }
+
+  tasks.register('forwardSyncPort') {
+    doLast {
+      exec { commandLine "adb", "-s", "emulator-5554", "forward", "tcp:5610", "tcp:5610" }
+    }
+  }
+
+  tasks.register('deployPhoneOss') {
+    dependsOn 'assembleOssDebug'
+    doLast {
+      def serial = "emulator-5554"
+      def apk = "build/outputs/apk/oss/debug/app-oss-debug.apk"
+      exec { commandLine "adb", "-s", serial, "uninstall", "app.organicmaps.debug" }
+      exec { commandLine "adb", "-s", serial, "install", apk }
+      exec { commandLine "adb", "-s", serial, "shell", "pm", "grant", "app.organicmaps.debug", "android.permission.BLUETOOTH_CONNECT" }
+      exec { commandLine "adb", "-s", serial, "shell", "pm", "grant", "app.organicmaps.debug", "android.permission.BLUETOOTH_SCAN" }
+      exec { commandLine "adb", "-s", serial, "shell", "pm", "grant", "app.organicmaps.debug", "android.permission.BLUETOOTH_ADVERTISE" }
+      exec { commandLine "adb", "-s", serial, "shell", "pm", "grant", "app.organicmaps.debug", "android.permission.ACCESS_FINE_LOCATION" }
+      exec { commandLine "adb", "-s", serial, "shell", "am", "start", "-n", "app.organicmaps.debug/app.organicmaps.SplashActivity" }
     }
   }
 
@@ -153,6 +183,8 @@ tasks.register('copyAssets', Copy) {
   include "types.txt"
   include "packed_polygons.bin"
   include "drules_proto*.bin"
+  include "World.mwm"
+  include "WorldCoasts.mwm"
   into "src/main/assets"
 }
 

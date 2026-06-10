@@ -13,6 +13,7 @@ import java.net.URL
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import app.organicmaps.sdk.util.ChecksumUtils
 
 /**
  * F-Droid implementation of WearMapDownloader.
@@ -20,7 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 object WearMapDownloader {
     private const val TAG = "WearMapDownloaderFdroid"
 
-    enum class DownloadState { IDLE, DOWNLOADING, STREAMING_FROM_PHONE, COMPLETED, FAILED, CANCELLED }
+    enum class DownloadState { IDLE, VALIDATING, DOWNLOADING, STREAMING_FROM_PHONE, COMPLETED, FAILED, CANCELLED }
 
     private val _downloadState = MutableStateFlow(DownloadState.IDLE)
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
@@ -35,7 +36,7 @@ object WearMapDownloader {
 
     fun setStreamingProgress(progress: Float) {
         _downloadProgress.value = progress
-        if (_downloadState.value != DownloadState.DOWNLOADING) {
+        if (_downloadState.value != DownloadState.DOWNLOADING && _downloadState.value != DownloadState.VALIDATING) {
             _downloadState.value = DownloadState.STREAMING_FROM_PHONE
         }
         _currentMap.value?.let { 
@@ -68,7 +69,7 @@ object WearMapDownloader {
         val mapId = _currentMap.value
         currentDownloadJob?.cancel()
         currentDownloadJob = null
-        if (_downloadState.value == DownloadState.STREAMING_FROM_PHONE) {
+        if (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING) {
             if (mapId != null) {
                 WearCommandService.cancelMapSync(context, mapId)
                 // Notify listener service to cleanup
@@ -84,12 +85,10 @@ object WearMapDownloader {
     }
 
     fun onMapMissingOnPhone(context: Context, mapId: String) {
-        if (_currentMap.value == mapId && _downloadState.value == DownloadState.STREAMING_FROM_PHONE) {
+        if (_currentMap.value == mapId && (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING)) {
             _downloadState.value = DownloadState.FAILED
             NavigationStateHolder.update { it.copy(missingMapId = mapId) }
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(context, "Map '$mapId' not found on phone.", android.widget.Toast.LENGTH_LONG).show()
-            }
+            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$mapId' not found on phone."))
         }
     }
 
@@ -141,11 +140,35 @@ object WearMapDownloader {
                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
-    private suspend fun streamFromPhone(context: Context, mapId: String) {
+    private suspend fun streamFromPhone(context: Context, mapId: String) = withContext(Dispatchers.IO) {
         _downloadState.value = DownloadState.STREAMING_FROM_PHONE
         _downloadProgress.value = 0.0f
+        
+        val storagePath = app.organicmaps.sdk.settings.StoragePathManager.findMapsStorage(context)
+        val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
+        val versionedPath = File(storagePath, dataVersion.toString())
+        val tmpFile = File(versionedPath, "$mapId.mwm.tmp")
+        
+        var offset = 0L
+        var checksum = 0L
+        if (tmpFile.exists() && tmpFile.length() > 0) {
+            _downloadState.value = DownloadState.VALIDATING
+            offset = tmpFile.length()
+            Log.d(TAG, "Validating existing .tmp file for $mapId (size: $offset)")
+            try {
+                checksum = ChecksumUtils.calculateCRC32(tmpFile)
+                Log.d(TAG, "CRC32 for $mapId until $offset: $checksum")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to calculate checksum for $mapId", e)
+                offset = 0L
+            }
+        }
+
+        _downloadState.value = DownloadState.STREAMING_FROM_PHONE
+        Log.d(TAG, "Requesting map $mapId from phone, offset: $offset, checksum: $checksum")
+        
         // Raw Bluetooth request is handled in BluetoothWearSyncBackend
-        WearCommandService.sendMapDownloadRequest(context, mapId)
+        WearCommandService.sendMapDownloadRequest(context, mapId, offset, checksum)
     }
 
     private suspend fun downloadOverInternet(context: Context, mapId: String, downloadUrl: String) = withContext(Dispatchers.IO) {

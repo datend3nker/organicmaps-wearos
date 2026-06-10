@@ -24,7 +24,10 @@ JNIEXPORT jbyteArray Java_app_organicmaps_sdk_Framework_nativeGetMwmBytes(JNIEnv
     return env->NewByteArray(0);
   }
 
-  std::string const mwmName = jni::ToNativeString(env, name);
+  std::string mwmName = jni::ToNativeString(env, name);
+  if (mwmName.size() > 4 && mwmName.substr(mwmName.size() - 4) == ".mwm")
+    mwmName = mwmName.substr(0, mwmName.size() - 4);
+
   storage::Storage & storage = f->GetStorage();
   storage::LocalFilePtr localFile = storage.GetLatestLocalFile(mwmName);
 
@@ -68,7 +71,10 @@ JNIEXPORT jlong Java_app_organicmaps_sdk_Framework_nativeGetMwmSize(JNIEnv * env
   ::Framework * f = frm();
   if (!f) return 0;
 
-  std::string const mwmName = jni::ToNativeString(env, name);
+  std::string mwmName = jni::ToNativeString(env, name);
+  if (mwmName.size() > 4 && mwmName.substr(mwmName.size() - 4) == ".mwm")
+    mwmName = mwmName.substr(0, mwmName.size() - 4);
+
   storage::Storage & storage = f->GetStorage();
   storage::LocalFilePtr localFile = storage.GetLatestLocalFile(mwmName);
 
