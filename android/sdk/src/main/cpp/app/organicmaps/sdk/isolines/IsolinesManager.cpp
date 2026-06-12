@@ -11,6 +11,8 @@ static void IsolinesStateChanged(IsolinesManager::IsolinesState state, std::shar
 {
   LOG(LINFO, (static_cast<int>(state)));
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
   env->CallVoidMethod(*listener, jni::GetMethodID(env, *listener, "onStateChanged", "(I)V"), static_cast<jint>(state));
 }
 

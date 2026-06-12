@@ -10,6 +10,8 @@ extern "C"
 static void LocationStateModeChanged(location::EMyPositionMode mode, std::shared_ptr<jobject> const & listener)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
   env->CallVoidMethod(*listener, jni::GetMethodID(env, *listener.get(), "onMyPositionModeChanged", "(I)V"),
                       static_cast<jint>(mode));
 }

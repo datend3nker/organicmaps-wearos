@@ -46,6 +46,8 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeSetTrackRec
       [listener = jni::make_global_ref(updateListener)](TrackStatistics const & trackStats)
   {
     JNIEnv * env = jni::GetEnvSafe();
+    if (env == nullptr)
+      return;
     jobject stats =
         env->NewObject(g_trackStatisticsClazz, cId, trackStats.m_length, trackStats.m_duration, trackStats.m_ascent,
                        trackStats.m_descent, trackStats.m_minElevation, static_cast<jint>(trackStats.m_maxElevation));

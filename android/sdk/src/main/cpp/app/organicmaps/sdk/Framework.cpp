@@ -33,6 +33,7 @@
 #include "coding/files_container.hpp"
 
 #include "geometry/angles.hpp"
+#include "geometry/distance_on_sphere.hpp"
 #include "geometry/mercator.hpp"
 #include "geometry/point_with_altitude.hpp"
 
@@ -793,6 +794,8 @@ extern "C"
 void CallRoutingListener(shared_ptr<jobject> listener, int errorCode, storage::CountriesSet const & absentMaps)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
   jmethodID const method = jni::GetMethodID(env, *listener, "onRoutingEvent", "(I[Ljava/lang/String;)V");
   ASSERT(method, ());
 
@@ -803,6 +806,8 @@ void CallRoutingListener(shared_ptr<jobject> listener, int errorCode, storage::C
 void CallRouteProgressListener(shared_ptr<jobject> listener, float progress)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
   jmethodID const methodId = jni::GetMethodID(env, *listener, "onRouteBuildingProgress", "(F)V");
   env->CallVoidMethod(*listener, methodId, progress);
 }
@@ -810,6 +815,8 @@ void CallRouteProgressListener(shared_ptr<jobject> listener, float progress)
 void CallRouteRecommendationListener(shared_ptr<jobject> listener, RoutingManager::Recommendation recommendation)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
   jmethodID const methodId =
       jni::GetMethodID(env, *listener, "onRecommend", "(Lapp/organicmaps/sdk/routing/RouteRecommendationType;)V");
   env->CallVoidMethod(*listener, methodId, GetRouteRecommendationType(env, recommendation));
@@ -818,6 +825,8 @@ void CallRouteRecommendationListener(shared_ptr<jobject> listener, RoutingManage
 void CallSetRoutingLoadPointsListener(shared_ptr<jobject> listener, bool success)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
   jmethodID const methodId = jni::GetMethodID(env, *listener, "onRoutePointsLoaded", "(Z)V");
   env->CallVoidMethod(*listener, methodId, static_cast<jboolean>(success));
 }
@@ -931,6 +940,8 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativePlacePageActivationListe
   auto const fillPlacePage = [activatedId]()
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr)
+      return;
     if (!g_framework)
       return;
     auto const & info = frm()->GetCurrentPlacePageInfo();
@@ -941,11 +952,15 @@ JNIEXPORT void Java_app_organicmaps_sdk_Framework_nativePlacePageActivationListe
   auto const closePlacePage = [deactivateId]()
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr)
+      return;
     env->CallVoidMethod(g_placePageActivationListener, deactivateId);
   };
   auto const switchFullscreen = [switchFullscreenId]()
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr)
+      return;
     env->CallVoidMethod(g_placePageActivationListener, switchFullscreenId);
   };
 

@@ -10,7 +10,8 @@ jmethodID g_onDataRequiredMethod = nullptr;
 void RequestDataFromJava(std::string const & mwmName, uint64_t offset, size_t size)
 {
   JNIEnv * env = jni::GetEnv();
-  if (!env || !g_managerClass || !g_onDataRequiredMethod) return;
+  if (env == nullptr || g_managerClass == nullptr || g_onDataRequiredMethod == nullptr)
+    return;
 
   jni::TScopedLocalRef const name(env, jni::ToJavaString(env, mwmName));
   env->CallStaticVoidMethod(g_managerClass, g_onDataRequiredMethod, name.get(), (jlong)offset, (jint)size);

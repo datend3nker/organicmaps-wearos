@@ -15,7 +15,7 @@ std::string GetAndroidSystemLanguage()
   static char const * DEFAULT_LANG = "en";
 
   JNIEnv * env = jni::GetEnv();
-  if (!env)
+  if (env == nullptr)
   {
     LOG(LWARNING, ("Can't get JNIEnv"));
     return DEFAULT_LANG;
@@ -39,6 +39,8 @@ namespace platform
 Locale GetCurrentLocale()
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return {};
   static jmethodID const getLanguageCodeId =
       jni::GetStaticMethodID(env, g_utilsClazz, "getLanguageCode", "()Ljava/lang/String;");
   jni::ScopedLocalRef languageCode(env, env->CallStaticObjectMethod(g_utilsClazz, getLanguageCodeId));

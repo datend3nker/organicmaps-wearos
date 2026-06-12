@@ -65,6 +65,9 @@ JNIEXPORT jint JNI_OnLoad(JavaVM * jvm, void *)
   jni::InitAssertLog();
 
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return JNI_ERR;
+
   g_mapObjectClazz = jni::GetGlobalClassRef(env, "app/organicmaps/sdk/bookmarks/data/MapObject");
   g_trackClazz = jni::GetGlobalClassRef(env, "app/organicmaps/sdk/bookmarks/data/Track");
   g_trackStatisticsClazz = jni::GetGlobalClassRef(env, "app/organicmaps/sdk/bookmarks/data/TrackStatistics");
@@ -95,6 +98,9 @@ JNIEXPORT void JNI_OnUnload(JavaVM *, void *)
 {
   g_jvm = 0;
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
+
   env->DeleteGlobalRef(g_mapObjectClazz);
   env->DeleteGlobalRef(g_bookmarkClazz);
   env->DeleteGlobalRef(g_trackClazz);
@@ -126,10 +132,7 @@ JNIEnv * GetEnvSafe()
 
 JNIEnv * GetEnv()
 {
-  JNIEnv * env = GetEnvSafe();
-  if (env == nullptr)
-    MYTHROW(RootException, ("Can't get JNIEnv. Is the thread attached to JVM?"));
-  return env;
+  return GetEnvSafe();
 }
 
 JavaVM * GetJVM()
@@ -243,10 +246,16 @@ char const * GetStringClassName()
 
 std::shared_ptr<jobject> make_global_ref(jobject obj)
 {
-  jobject * ref = new jobject(GetEnv()->NewGlobalRef(obj));
+  JNIEnv * env = GetEnv();
+  if (env == nullptr)
+    return nullptr;
+
+  jobject * ref = new jobject(env->NewGlobalRef(obj));
   return std::shared_ptr<jobject>(ref, [](jobject * ref)
   {
-    GetEnv()->DeleteGlobalRef(*ref);
+    JNIEnv * env = GetEnv();
+    if (env)
+      env->DeleteGlobalRef(*ref);
     delete ref;
   });
 }
@@ -255,7 +264,11 @@ std::shared_ptr<jobject> make_global_ref(jobject obj)
 /// @todo There are no other ideas, let's try a safe version with a forever global ref ..
 std::shared_ptr<jobject> make_global_ref_safe(jobject obj)
 {
-  jobject * ref = new jobject(GetEnv()->NewGlobalRef(obj));
+  JNIEnv * env = GetEnv();
+  if (env == nullptr)
+    return nullptr;
+
+  jobject * ref = new jobject(env->NewGlobalRef(obj));
   return std::shared_ptr<jobject>(ref, [](jobject * ref)
   {
     JNIEnv * env = GetEnvSafe();
@@ -308,6 +321,8 @@ base::LogLevel GetLogLevelForException(JNIEnv * env, jthrowable const & e)
 std::string DescribeException()
 {
   JNIEnv * env = GetEnv();
+  if (env == nullptr)
+    return {};
 
   if (env->ExceptionCheck())
   {
@@ -348,6 +363,8 @@ jobject GetNewPoint(JNIEnv * env, m2::PointI const & point)
 void DumpDalvikReferenceTables()
 {
   JNIEnv * env = GetEnv();
+  if (env == nullptr)
+    return;
   jclass vm_class = env->FindClass("dalvik/system/VMDebug");
   jmethodID dump_mid = env->GetStaticMethodID(vm_class, "dumpReferenceTables", "()V");
   env->CallStaticVoidMethod(vm_class, dump_mid);

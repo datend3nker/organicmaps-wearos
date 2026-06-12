@@ -7,14 +7,16 @@
 class HttpThread
 {
 private:
-  jobject m_self;
-  jclass m_klass;
+  jobject m_self = nullptr;
+  jclass m_klass = nullptr;
 
 public:
   HttpThread(std::string const & url, downloader::IHttpThreadCallback & cb, int64_t beg, int64_t end,
              int64_t expectedFileSize, std::string const & pb)
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr)
+      return;
     static jclass const klass = jni::GetGlobalClassRef(env, "app/organicmaps/sdk/downloader/ChunkTask");
     m_klass = klass;
     // public ChunkTask(long httpCallbackID, String url, long beg, long end,
@@ -43,9 +45,12 @@ public:
   ~HttpThread()
   {
     JNIEnv * env = jni::GetEnv();
-    static jmethodID const cancelMethodId = env->GetMethodID(m_klass, "cancel", "(Z)Z");
-    env->CallBooleanMethod(m_self, cancelMethodId, false);
-    env->DeleteGlobalRef(m_self);
+    if (env != nullptr && m_klass != nullptr && m_self != nullptr)
+    {
+      static jmethodID const cancelMethodId = env->GetMethodID(m_klass, "cancel", "(Z)Z");
+      env->CallBooleanMethod(m_self, cancelMethodId, false);
+      env->DeleteGlobalRef(m_self);
+    }
   }
 };
 

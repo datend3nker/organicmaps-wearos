@@ -574,7 +574,9 @@ static void StatusChangedCallback(std::shared_ptr<jobject> const & listenerRef, 
   {
     GetPlatform().RunTask(Platform::Thread::Gui, []()
     {
-      EndBatchingCallbacks(jni::GetEnv());
+      JNIEnv * env = jni::GetEnv();
+      if (env)
+        EndBatchingCallbacks(env);
     });
   }
 }
@@ -583,6 +585,8 @@ static void ProgressChangedCallback(std::shared_ptr<jobject> const & listenerRef
                                     downloader::Progress const & progress)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
 
   jmethodID const methodID = jni::GetMethodID(env, *listenerRef, "onProgress", "(Ljava/lang/String;JJ)V");
   env->CallVoidMethod(*listenerRef, methodID, jni::TScopedLocalRef(env, jni::ToJavaString(env, countryId)).get(),
@@ -621,6 +625,8 @@ JNIEXPORT void Java_app_organicmaps_sdk_downloader_MapManager_nativeSubscribeOnC
   frm()->SetCurrentCountryChangedListener([listener = make_global_ref(listener)](storage::CountryId const & countryId)
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr)
+      return;
     jmethodID methodID = jni::GetMethodID(env, *listener, "onCurrentCountryChanged", "(Ljava/lang/String;)V");
     env->CallVoidMethod(*listener, methodID, jni::TScopedLocalRef(env, jni::ToJavaString(env, countryId)).get());
   });

@@ -132,6 +132,8 @@ static void DownloadFileFinished(std::shared_ptr<jobject> obj, HttpRequest const
   }
 
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
 
   jmethodID methodID = jni::GetMethodID(env, *obj, "onFinish", "(I)V");
   env->CallVoidMethod(*obj, methodID, errorCode);
@@ -140,6 +142,9 @@ static void DownloadFileFinished(std::shared_ptr<jobject> obj, HttpRequest const
 static void DownloadFileProgress(std::shared_ptr<jobject> listener, HttpRequest const & req)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
+
   static jmethodID methodID = jni::GetMethodID(env, *listener, "onProgress", "(I)V");
   env->CallVoidMethod(*listener, methodID,
                       static_cast<jint>(g_totalDownloadedBytes + req.GetProgress().m_bytesDownloaded));

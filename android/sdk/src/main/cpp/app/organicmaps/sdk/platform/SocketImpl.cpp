@@ -14,6 +14,8 @@ public:
   SocketImpl()
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr)
+      return;
     static jmethodID const socketConstructor = jni::GetConstructorID(env, g_platformSocketClazz, "()V");
     jni::TScopedLocalRef localSelf(env, env->NewObject(g_platformSocketClazz, socketConstructor));
     m_self = env->NewGlobalRef(localSelf.get());
@@ -24,12 +26,15 @@ public:
   {
     Close();
     JNIEnv * env = jni::GetEnv();
-    env->DeleteGlobalRef(m_self);
+    if (env != nullptr && m_self != nullptr)
+      env->DeleteGlobalRef(m_self);
   }
 
   bool Open(std::string const & host, uint16_t port)
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr || m_self == nullptr)
+      return false;
     static jmethodID const openMethod = jni::GetMethodID(env, m_self, "open", "(Ljava/lang/String;I)Z");
     jni::TScopedLocalRef hostRef(env, jni::ToJavaString(env, host));
     jboolean result = env->CallBooleanMethod(m_self, openMethod, hostRef.get(), static_cast<jint>(port));
@@ -41,6 +46,8 @@ public:
   void Close()
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr || m_self == nullptr)
+      return;
     static jmethodID const closeMethod = jni::GetMethodID(env, m_self, "close", "()V");
     env->CallVoidMethod(m_self, closeMethod);
     jni::HandleJavaException(env);
@@ -49,6 +56,8 @@ public:
   bool Read(uint8_t * data, uint32_t count)
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr || m_self == nullptr)
+      return false;
     jbyteArray array = env->NewByteArray(count);
     static jmethodID const readMethod = jni::GetMethodID(env, m_self, "read", "([BI)Z");
     jboolean result = env->CallBooleanMethod(m_self, readMethod, array, static_cast<jint>(count));
@@ -64,6 +73,8 @@ public:
   bool Write(uint8_t const * data, uint32_t count)
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr || m_self == nullptr)
+      return false;
     jni::TScopedLocalByteArrayRef arrayRef(env, env->NewByteArray(count));
     // this call copies native buffer to java byte array
     env->SetByteArrayRegion(arrayRef.get(), 0, count, reinterpret_cast<jbyte const *>(data));
@@ -77,13 +88,15 @@ public:
   void SetTimeout(uint32_t milliseconds)
   {
     JNIEnv * env = jni::GetEnv();
+    if (env == nullptr || m_self == nullptr)
+      return;
     static jmethodID const setTimeoutMethod = jni::GetMethodID(env, m_self, "setTimeout", "(I)V");
     env->CallVoidMethod(m_self, setTimeoutMethod, static_cast<jint>(milliseconds));
     jni::HandleJavaException(env);
   }
 
 private:
-  jobject m_self;
+  jobject m_self = nullptr;
 };
 
 std::unique_ptr<Socket> CreateSocket()

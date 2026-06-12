@@ -13,6 +13,8 @@ namespace
 jmethodID GetMethodId(std::string const & methodName)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return nullptr;
   return jni::GetStaticMethodID(env, g_utilsClazz, methodName.c_str(),
                                 "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;");
 }
@@ -20,6 +22,8 @@ jmethodID GetMethodId(std::string const & methodName)
 std::string GetLocalizedStringByUtil(jmethodID const & methodId, std::string const & str)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr || methodId == nullptr)
+    return std::string();
 
   jni::TScopedLocalRef strRef(env, jni::ToJavaString(env, str));
   jobject context = android::Platform::Instance().GetContext();
@@ -51,6 +55,8 @@ std::string GetLocalizedString(std::string const & key)
 std::string GetCurrencySymbol(std::string const & currencyCode)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return std::string();
   static auto const methodId =
       jni::GetStaticMethodID(env, g_utilsClazz, "getCurrencySymbol", "(Ljava/lang/String;)Ljava/lang/String;");
 
@@ -62,6 +68,8 @@ std::string GetCurrencySymbol(std::string const & currencyCode)
 std::string GetLocalizedMyPositionBookmarkName()
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return std::string();
   static auto const methodId = jni::GetStaticMethodID(env, g_utilsClazz, "getMyPositionBookmarkName",
                                                       "(Landroid/content/Context;)Ljava/lang/String;");
 

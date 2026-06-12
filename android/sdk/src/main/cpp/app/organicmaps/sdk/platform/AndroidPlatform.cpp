@@ -39,6 +39,8 @@ std::string Platform::GetMemoryInfo() const
 std::string Platform::DeviceName() const
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return std::string();
   static jmethodID const getDeviceNameId =
       jni::GetStaticMethodID(env, g_utilsClazz, "getDeviceName", "()Ljava/lang/String;");
   auto const deviceName = static_cast<jstring>(env->CallStaticObjectMethod(g_utilsClazz, getDeviceNameId));
@@ -48,6 +50,8 @@ std::string Platform::DeviceName() const
 std::string Platform::DeviceModel() const
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return std::string();
   static jmethodID const getDeviceModelId =
       jni::GetStaticMethodID(env, g_utilsClazz, "getDeviceModel", "()Ljava/lang/String;");
   auto const deviceModel = static_cast<jstring>(env->CallStaticObjectMethod(g_utilsClazz, getDeviceModelId));
@@ -57,6 +61,8 @@ std::string Platform::DeviceModel() const
 std::string Platform::Version() const
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return std::string();
   static jmethodID const getVersionId = jni::GetStaticMethodID(env, g_utilsClazz, "getVersion", "()Ljava/lang/String;");
   auto const version = static_cast<jstring>(env->CallStaticObjectMethod(g_utilsClazz, getVersionId));
   return jni::ToNativeString(env, version);
@@ -65,6 +71,8 @@ std::string Platform::Version() const
 int32_t Platform::IntVersion() const
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return 0;
   static jmethodID const getIntVersionId = jni::GetStaticMethodID(env, g_utilsClazz, "getIntVersion", "()I");
   return env->CallStaticIntMethod(g_utilsClazz, getIntVersionId);
 }
@@ -121,6 +129,9 @@ namespace platform
 platform::NetworkPolicy GetCurrentNetworkPolicy()
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return platform::NetworkPolicy(false);
+
   return platform::NetworkPolicy(network_policy::GetCurrentNetworkUsageStatus(env));
 }
 }  // namespace platform
@@ -130,7 +141,8 @@ namespace android
 Platform::~Platform()
 {
   JNIEnv * env = jni::GetEnv();
-  env->DeleteGlobalRef(m_context);
+  if (env != nullptr)
+    env->DeleteGlobalRef(m_context);
 }
 
 void Platform::Initialize(JNIEnv * env, jobject context, jstring apkPath, jstring writablePath, jstring privatePath,

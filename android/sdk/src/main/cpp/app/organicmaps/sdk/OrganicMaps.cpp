@@ -42,6 +42,8 @@ JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv *
       GetPlatform().RunTask(Platform::Thread::Gui, [onComplete]()
       {
         JNIEnv * env = jni::GetEnv();
+        if (env == nullptr)
+          return;
         jmethodID const methodId = jni::GetMethodID(env, *onComplete, "run", "()V");
         env->CallVoidMethod(*onComplete, methodId);
       });

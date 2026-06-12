@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import app.organicmaps.sdk.util.ChecksumUtils
+import app.organicmaps.sdk.util.MapIdUtils
 
 /**
  * F-Droid implementation of WearMapDownloader.
@@ -47,12 +48,13 @@ object WearMapDownloader {
     }
 
     fun setStreamingMap(mapId: String) {
-        _currentMap.value = mapId
+        val normalizedMapId = MapIdUtils.normalize(mapId)!!
+        _currentMap.value = normalizedMapId
         _downloadState.value = DownloadState.STREAMING_FROM_PHONE
         _downloadProgress.value = 0f
         lastProgressTime = System.currentTimeMillis()
         startWatchdog()
-        WearNotificationManager.updateSyncNotification(WearApplication.instance, mapId, 0f, true)
+        WearNotificationManager.updateSyncNotification(WearApplication.instance, normalizedMapId, 0f, true)
     }
 
     private fun startWatchdog() {
@@ -106,10 +108,11 @@ object WearMapDownloader {
     }
 
     fun onMapMissingOnPhone(context: Context, mapId: String) {
-        NavigationStateHolder.update { it.copy(missingMapId = mapId) }
-        NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$mapId' not on phone — download it in Organic Maps on the phone"))
+        val normalizedMapId = MapIdUtils.normalize(mapId)!!
+        NavigationStateHolder.update { it.copy(missingMapId = normalizedMapId) }
+        NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$normalizedMapId' not on phone — download it in Organic Maps on the phone"))
         
-        if (_currentMap.value == mapId && (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING)) {
+        if (_currentMap.value == normalizedMapId && (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING)) {
             _downloadState.value = DownloadState.FAILED
             watchdogJob?.cancel()
         }
@@ -120,12 +123,16 @@ object WearMapDownloader {
         currentDownloadJob?.cancel()
         currentDownloadJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
 
-        _currentMap.value = mapId
+        val normalizedMapId = MapIdUtils.normalize(mapId)!!
+        _currentMap.value = normalizedMapId
         NavigationStateHolder.update { it.copy(missingMapId = null) }
         
         val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
+        // The download CDN uses underscores in URLs; everywhere else the map id
+        // must keep its original spaces.
+        val urlMapId = normalizedMapId.replace(" ", "_")
         val finalUrl = if (downloadUrl.isEmpty()) {
-            "https://direct.organicmaps.app/$dataVersion/$mapId.mwm"
+            "https://direct.organicmaps.app/$dataVersion/$urlMapId.mwm"
         } else {
             downloadUrl
         }
@@ -141,18 +148,18 @@ object WearMapDownloader {
             "INTERNET" -> {
                 if (hasInternet) {
                     _downloadState.value = DownloadState.DOWNLOADING
-                    downloadOverInternet(context, mapId, finalUrl)
+                    downloadOverInternet(context, normalizedMapId, finalUrl)
                 } else {
                     Log.e(TAG, "INTERNET mode set but no internet access. Falling back to phone sync.")
                     _downloadState.value = DownloadState.STREAMING_FROM_PHONE
-                    streamFromPhone(context, mapId)
+                    streamFromPhone(context, normalizedMapId)
                 }
             }
             else -> { // Default is PHONE_SYNC
                 _downloadState.value = DownloadState.STREAMING_FROM_PHONE
                 lastProgressTime = System.currentTimeMillis()
                 startWatchdog()
-                streamFromPhone(context, mapId)
+                streamFromPhone(context, normalizedMapId)
             }
         }
     }

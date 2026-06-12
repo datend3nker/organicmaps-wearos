@@ -214,8 +214,16 @@ fun MapPanel(
         }
     }
 
+    val (clat, clon, _) = location
+    val currentCountry = remember(clat, clon) {
+        if (clat != 0.0) MapManager.nativeFindCountry(clat, clon) else null
+    }
+    val isMapNotOnPhone = currentCountry != null &&
+            currentCountry == state.missingMapId &&
+            !VirtualMwmManager.isMounted(currentCountry)
+
     val downloadState by WearMapDownloader.downloadState.collectAsState()
-    val isOverlayActive = (!isMapDownloaded || !isWorldMapPresent) || showQuickMenu || (tappedDestination != null) || (downloadState != WearMapDownloader.DownloadState.IDLE && downloadState != WearMapDownloader.DownloadState.COMPLETED && downloadState != WearMapDownloader.DownloadState.CANCELLED)
+    val isOverlayActive = (!isMapDownloaded || !isWorldMapPresent || isMapNotOnPhone) || showQuickMenu || (tappedDestination != null) || (downloadState != WearMapDownloader.DownloadState.IDLE && downloadState != WearMapDownloader.DownloadState.COMPLETED && downloadState != WearMapDownloader.DownloadState.CANCELLED)
 
     Box(
         modifier = Modifier.then(modifier).fillMaxSize().clipToBounds()
@@ -306,10 +314,8 @@ fun MapPanel(
             MapMissingControl(
                 isMapDownloaded = isMapDownloaded,
                 isWorldMapPresent = isWorldMapPresent,
-                isAmbient = isAmbient
-            )
-            
-            MapMissingOnPhoneControl(
+                isMapNotOnPhone = isMapNotOnPhone,
+                currentCountry = currentCountry,
                 isAmbient = isAmbient
             )
             
@@ -570,61 +576,24 @@ private fun RouteStartControl(
 }
 
 @Composable
-private fun MapMissingOnPhoneControl(
-    isAmbient: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val state by NavigationStateHolder.state.collectAsState()
-    val location by NavigationStateHolder.locationFlow.collectAsState(initial = null)
-    
-    if (isAmbient || state.missingMapId == null || location == null) return
-
-    val (lat, lon, _) = location!!
-    val currentCountry = remember(lat, lon) { 
-        if (lat != 0.0) MapManager.nativeFindCountry(lat, lon) else null
-    }
-
-    if (currentCountry != null && currentCountry == state.missingMapId && !VirtualMwmManager.isMounted(currentCountry)) {
-        Box(
-            modifier = modifier.fillMaxSize().padding(horizontal = 20.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
-                    .padding(12.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.PhoneAndroid,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("Map not on phone", style = MaterialTheme.typography.caption2, color = Color.White, textAlign = TextAlign.Center)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    val displayName = currentCountry.replace("_", " ")
-                    Text(displayName, style = MaterialTheme.typography.caption3, color = Color.LightGray, textAlign = TextAlign.Center)
-                }
-            }
-        }
-    }
-}
-@Composable
 private fun MapMissingControl(
     isMapDownloaded: Boolean,
     isWorldMapPresent: Boolean,
+    isMapNotOnPhone: Boolean,
+    currentCountry: String?,
     isAmbient: Boolean,
     modifier: Modifier = Modifier
 ) {
+    if (isAmbient) return
+
     val context = LocalContext.current
     val hApp = context.applicationContext as WearApplication
+    if (!hApp.isFullyInitialized) return
+
     val location by NavigationStateHolder.locationFlow.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
 
-    if ((!isMapDownloaded || !isWorldMapPresent) && hApp.isFullyInitialized && !isAmbient) {
+    if (!isMapDownloaded || !isWorldMapPresent || isMapNotOnPhone) {
         Box(
             modifier = modifier.fillMaxSize().padding(horizontal = 20.dp),
             contentAlignment = Alignment.Center
@@ -637,16 +606,37 @@ private fun MapMissingControl(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val icon = when {
+                        !isWorldMapPresent -> Icons.Default.Warning
+                        isMapNotOnPhone -> Icons.Default.PhoneAndroid
+                        else -> Icons.Default.Map
+                    }
+                    val iconTint = if (!isWorldMapPresent) Color.Yellow else Color.White
+                    
                     Icon(
-                        imageVector = if (!isWorldMapPresent) Icons.Default.Warning else Icons.Default.Map,
+                        imageVector = icon,
                         contentDescription = null,
-                        tint = if (!isWorldMapPresent) Color.Yellow else Color.White,
+                        tint = iconTint,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(if (!isWorldMapPresent) "Missing World Map" else "No Local Map Data", style = MaterialTheme.typography.caption2, color = Color.White, textAlign = TextAlign.Center)
+                    
+                    val title = when {
+                        !isWorldMapPresent -> "Missing World Map"
+                        isMapNotOnPhone -> "Map not on phone"
+                        else -> "No Local Map Data"
+                    }
+                    Text(title, style = MaterialTheme.typography.caption2, color = Color.White, textAlign = TextAlign.Center)
+                    
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(if (!isWorldMapPresent) "(Required for rendering)" else "(Pan to center or sync)", style = MaterialTheme.typography.caption3, color = Color.LightGray, textAlign = TextAlign.Center)
+                    
+                    val subtitle = when {
+                        !isWorldMapPresent -> "(Required for rendering)"
+                        isMapNotOnPhone -> currentCountry!!.replace("_", " ")
+                        else -> "(Pan to center or sync)"
+                    }
+                    Text(subtitle, style = MaterialTheme.typography.caption3, color = Color.LightGray, textAlign = TextAlign.Center)
+                    
                     Spacer(modifier = Modifier.height(8.dp))
                     Row {
                         CompactChip(
@@ -659,18 +649,18 @@ private fun MapMissingControl(
                         CompactChip(
                             onClick = {
                                 scope.launch {
-                                    val (lat, lon, _) = location ?: Triple(0.0, 0.0, 0f)
+                                    val (clat, clon, _) = location ?: Triple(0.0, 0.0, 0f)
                                     if (!isWorldMapPresent) {
                                         Log.d("MapPanel", "DEBUG_WEAR: Sync Local - World map missing, downloading World")
                                         WearMapDownloader.downloadOrStreamMap(context, "World", "")
                                     } else {
-                                        Log.d("MapPanel", "DEBUG_WEAR: Sync Local - Finding country for $lat, $lon")
-                                        val countryId = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(lat, lon) }
+                                        Log.d("MapPanel", "DEBUG_WEAR: Sync Local - Finding country for $clat, $clon")
+                                        val countryId = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(clat, clon) }
                                         if (!countryId.isNullOrEmpty()) {
                                             Log.d("MapPanel", "DEBUG_WEAR: Sync Local - Country found: $countryId, requesting download")
                                             WearMapDownloader.downloadOrStreamMap(context, countryId!!, "")
                                         } else {
-                                            Log.w("MapPanel", "DEBUG_WEAR: Sync Local - Could not find country for $lat, $lon. Opening Map Manager.")
+                                            Log.w("MapPanel", "DEBUG_WEAR: Sync Local - Could not find country for $clat, $clon. Opening Map Manager.")
                                             NavigationStateHolder.emitEvent(UiEvent.ShowToast("Cannot find country for current location"))
                                             NavigationStateHolder.emitEvent(UiEvent.OpenMapManager)
                                         }

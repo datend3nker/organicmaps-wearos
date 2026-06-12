@@ -8,6 +8,7 @@ import java.util.BitSet
 import java.util.concurrent.ConcurrentHashMap
 import app.organicmaps.sdk.settings.StoragePathManager
 import app.organicmaps.sdk.Framework
+import app.organicmaps.sdk.util.MapIdUtils
 import kotlinx.coroutines.*
 
 /**
@@ -39,19 +40,16 @@ object VirtualMwmManager {
         nativeLibraryLoaded.complete(Unit)
     }
 
-    private fun normalizeMwmName(mwmNameWithExt: String): String {
-        return if (mwmNameWithExt.endsWith(".mwm")) mwmNameWithExt.substringBeforeLast(".") else mwmNameWithExt
-    }
-
     fun isMounted(mwmNameWithExt: String): Boolean {
-        return mountedMwms.contains(normalizeMwmName(mwmNameWithExt))
+        val normalized = MapIdUtils.normalize(mwmNameWithExt)
+        return normalized != null && mountedMwms.contains(normalized)
     }
 
     @JvmStatic
     fun onDataRequired(mwmNameWithExt: String, offset: Long, size: Int) {
         mScope.launch {
             try {
-                val mwmName = normalizeMwmName(mwmNameWithExt)
+                val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
                 val totalSize = mwmTotalSizes[mwmName]
                 if (totalSize == null) {
                     Log.w(TAG, "DEBUG_WEAR_PIPELINE: Requested data for map with unknown size: $mwmName. Ensure it is mounted in Kotlin.")
@@ -123,7 +121,7 @@ object VirtualMwmManager {
     @JvmStatic
     @Synchronized
     fun onBytesReceived(mwmNameWithExt: String, offset: Long, data: ByteArray) {
-        val mwmName = normalizeMwmName(mwmNameWithExt)
+        val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         clearPending(mwmName, offset, data.size)
 
         Log.d(TAG, "DEBUG_WEAR_PIPELINE: Received data for $mwmName, offset: $offset, size: ${data.size}")
@@ -282,7 +280,7 @@ object VirtualMwmManager {
     }
 
     fun unmount(mwmNameWithExt: String) {
-        val mwmName = normalizeMwmName(mwmNameWithExt)
+        val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         Log.d(TAG, "Unmounting virtual MWM: $mwmName")
         try {
             mwmFiles.remove(mwmName)?.let { raf ->
@@ -314,17 +312,17 @@ object VirtualMwmManager {
     }
 
     fun markMetadataFailure(mwmNameWithExt: String) {
-        val mwmName = normalizeMwmName(mwmNameWithExt)
+        val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         metadataFailures[mwmName] = System.currentTimeMillis()
     }
 
     fun clearMetadataFailure(mwmNameWithExt: String) {
-        val mwmName = normalizeMwmName(mwmNameWithExt)
+        val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         metadataFailures.remove(mwmName)
     }
 
     fun shouldRequestMetadata(mwmNameWithExt: String): Boolean {
-        val mwmName = normalizeMwmName(mwmNameWithExt)
+        val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         val lastFailure = metadataFailures[mwmName] ?: return true
         return System.currentTimeMillis() - lastFailure > 60000 
     }
@@ -341,18 +339,18 @@ object VirtualMwmManager {
                 val storagePath = StoragePathManager.findMapsStorage(context)
                 if (storagePath.isNullOrEmpty()) return@runBlocking
                 val storageDir = File(storagePath)
-                
+
                 val versionDirs = storageDir.listFiles { f -> f.isDirectory && f.name.all { it.isDigit() } } ?: emptyArray()
 
                 val now = System.currentTimeMillis()
                 val maxAgeMs = 7 * 24 * 60 * 60 * 1000L
-                
+
                 versionDirs.forEach { versionDir ->
                     versionDir.listFiles()?.forEach { file ->
                         if (file.name.endsWith(".mwm")) {
                             val mwmName = file.name.substringBeforeLast(".")
                             val bitsFile = File(file.absolutePath + ".bits")
-                            
+
                             if (bitsFile.exists()) {
                                 // Prune if older than 7 days
                                 if (now - file.lastModified() > maxAgeMs) {
@@ -481,7 +479,7 @@ object VirtualMwmManager {
     }
 
     suspend fun mount(context: Context, mwmNameWithExt: String, totalSize: Long, headerData: ByteArray? = null, footerData: ByteArray? = null): String? {
-        val mwmName = normalizeMwmName(mwmNameWithExt)
+        val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         Log.d(TAG, "DEBUG_WEAR_PIPELINE: Mounting virtual MWM: $mwmName, size: $totalSize")
         
         if (mountedMwms.contains(mwmName)) {

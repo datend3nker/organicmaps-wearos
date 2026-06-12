@@ -14,6 +14,7 @@ import app.organicmaps.R;
 import app.organicmaps.adapter.OnItemClickListener;
 import app.organicmaps.sdk.bookmarks.data.BookmarkCategory;
 import app.organicmaps.sdk.bookmarks.data.BookmarkManager;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -34,12 +35,12 @@ public class BookmarkCategoriesAdapter extends BaseBookmarkCategoryAdapter<Recyc
   private final static long ID_ACTION_EXPORT_ALL_AS_KMZ = -4;
   private final static long ID_ACTION_SYNC_WATCH = -5;
 
-  private final List<Integer> mFooterTypes = Arrays.asList(
+  private final List<Integer> mFooterTypes = new ArrayList<>(Arrays.asList(
       TYPE_ACTION_ADD,
       TYPE_ACTION_IMPORT,
       TYPE_ACTION_EXPORT_ALL_AS_KMZ,
       TYPE_ACTION_SYNC_WATCH
-  );
+  ));
 
   @Nullable
   private OnItemLongClickListener<BookmarkCategory> mLongClickListener;

@@ -15,6 +15,8 @@ namespace
 void OnRenderingInitializationFinished(std::shared_ptr<jobject> const & listener)
 {
   JNIEnv * env = jni::GetEnv();
+  if (env == nullptr)
+    return;
   env->CallVoidMethod(*listener, jni::GetMethodID(env, *listener.get(), "onRenderingInitializationFinished", "()V"));
 }
 }  // namespace
