@@ -111,7 +111,9 @@ std::unique_ptr<ModelReader> Platform::GetReader(std::string const & file, std::
       std::string name = file;
       base::GetNameFromFullPath(name);
       std::string virtualPath = wear::GetVirtualMwmPath(name);
-      if (!virtualPath.empty() && virtualPath == file)
+      if (!virtualPath.empty())
+        LOG(LDEBUG, ("GetReader 'f': name =", name, "file =", file, "virtualPath =", virtualPath, "equal =", (virtualPath == file)));
+      if (!virtualPath.empty())
         return std::make_unique<VirtualModelReader>(name, virtualPath);
 
       if (IsFileExistsByFullPath(file))

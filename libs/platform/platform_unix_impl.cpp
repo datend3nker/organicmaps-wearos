@@ -36,6 +36,7 @@ struct CloseDir
 // static
 Platform::EError Platform::RmDir(std::string const & dirName)
 {
+  LOG(LWARNING, ("RmDir:", dirName));
   if (rmdir(dirName.c_str()) != 0)
     return ErrnoToError();
   return ERR_OK;

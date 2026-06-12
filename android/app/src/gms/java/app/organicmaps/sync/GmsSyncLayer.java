@@ -469,17 +469,18 @@ public class GmsSyncLayer implements ISyncLayer {
 
     @Override
     public void sendBookmarkCategories(@NonNull Context context, @NonNull List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories) {
-        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE);
+        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
         byte[] payload = WearProtocolDataConverter.encodeBookmarkCategories(categories, syncPrefs, 50);
         sendMessage(context, WearProtocol.PATH_BOOKMARKS, payload);
     }
 
 
     @Override
-    public void sendBookmarkFile(@NonNull Context context, @NonNull String categoryName, @NonNull byte[] data, boolean isLast) {
+    public void sendBookmarkFile(@NonNull Context context, @NonNull String categoryName, @NonNull byte[] data, boolean isLast, boolean merge) {
         byte[] nameBytes = categoryName.getBytes(StandardCharsets.UTF_8);
         ByteBuffer payload = ByteBuffer.allocate(1 + 4 + nameBytes.length + data.length);
-        payload.put((byte) (isLast ? 1 : 0));
+        byte flags = (byte) ((isLast ? 1 : 0) | (merge ? 2 : 0));
+        payload.put(flags);
         payload.putInt(nameBytes.length);
         payload.put(nameBytes);
         payload.put(data);
@@ -487,8 +488,8 @@ public class GmsSyncLayer implements ISyncLayer {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_FILE, payload.array());
         
         if (isLast) {
-            context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
-                   .edit().putLong(categoryName, System.currentTimeMillis()).apply();
+            context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
+                   .edit().putLong("last_synced_" + categoryName, System.currentTimeMillis()).apply();
         }
     }
 
@@ -504,7 +505,7 @@ public class GmsSyncLayer implements ISyncLayer {
 
         sendMessage(context, WearProtocol.PATH_BOOKMARK_RENAME, payload.array());
         
-        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE);
+        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
         long ts = syncPrefs.getLong(oldName, 0);
         syncPrefs.edit().remove(oldName).putLong(newName, ts > 0 ? ts : System.currentTimeMillis()).apply();
     }
@@ -512,7 +513,7 @@ public class GmsSyncLayer implements ISyncLayer {
     @Override
     public void deleteBookmarkCategory(@NonNull Context context, @NonNull String name) {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_DELETE, name.getBytes(StandardCharsets.UTF_8));
-        context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
+        context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
                .edit().remove(name).apply();
     }
 

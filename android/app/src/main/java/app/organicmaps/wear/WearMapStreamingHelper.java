@@ -66,6 +66,13 @@ public class WearMapStreamingHelper {
                 if (candidate.exists()) {
                     return candidate;
                 }
+                // Try normalizing spaces to underscores
+                if (mapId.contains(" ")) {
+                    candidate = new File(versionDir, mapId.replace(" ", "_") + ".mwm");
+                    if (candidate.exists()) {
+                        return candidate;
+                    }
+                }
             }
         }
 
@@ -76,11 +83,21 @@ public class WearMapStreamingHelper {
                 if (candidate.exists()) {
                     return candidate;
                 }
+                if (mapId.contains(" ")) {
+                    candidate = new File(dir, mapId.replace(" ", "_") + ".mwm");
+                    if (candidate.exists()) {
+                        return candidate;
+                    }
+                }
             }
         }
         
         File directFile = new File(rootDir, mapId + ".mwm");
         if (directFile.exists()) return directFile;
+        if (mapId.contains(" ")) {
+            directFile = new File(rootDir, mapId.replace(" ", "_") + ".mwm");
+            if (directFile.exists()) return directFile;
+        }
 
         return null;
     }

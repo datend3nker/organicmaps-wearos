@@ -14,10 +14,12 @@ import app.organicmaps.R;
 import app.organicmaps.adapter.OnItemClickListener;
 import app.organicmaps.sdk.bookmarks.data.BookmarkCategory;
 import app.organicmaps.sdk.bookmarks.data.BookmarkManager;
+import java.util.Arrays;
 import java.util.List;
 
 public class BookmarkCategoriesAdapter extends BaseBookmarkCategoryAdapter<RecyclerView.ViewHolder>
 {
+  private final static int HEADER_COUNT = 1;
   private final static int HEADER_POSITION = 0;
   private final static int TYPE_ACTION_HEADER = 0;
   private final static int TYPE_CATEGORY_ITEM = 1;
@@ -25,6 +27,19 @@ public class BookmarkCategoriesAdapter extends BaseBookmarkCategoryAdapter<Recyc
   private final static int TYPE_ACTION_IMPORT = 3;
   private final static int TYPE_ACTION_EXPORT_ALL_AS_KMZ = 4;
   private final static int TYPE_ACTION_SYNC_WATCH = 5;
+
+  private final static long ID_HEADER = -1;
+  private final static long ID_ACTION_ADD = -2;
+  private final static long ID_ACTION_IMPORT = -3;
+  private final static long ID_ACTION_EXPORT_ALL_AS_KMZ = -4;
+  private final static long ID_ACTION_SYNC_WATCH = -5;
+
+  private final List<Integer> mFooterTypes = Arrays.asList(
+      TYPE_ACTION_ADD,
+      TYPE_ACTION_IMPORT,
+      TYPE_ACTION_EXPORT_ALL_AS_KMZ,
+      TYPE_ACTION_SYNC_WATCH
+  );
 
   @Nullable
   private OnItemLongClickListener<BookmarkCategory> mLongClickListener;
@@ -40,6 +55,7 @@ public class BookmarkCategoriesAdapter extends BaseBookmarkCategoryAdapter<Recyc
   BookmarkCategoriesAdapter(@NonNull Context context, @NonNull List<BookmarkCategory> categories)
   {
     super(context.getApplicationContext(), categories);
+    setHasStableIds(true);
   }
 
   public void setOnClickListener(@Nullable OnItemClickListener<BookmarkCategory> listener)
@@ -66,14 +82,12 @@ public class BookmarkCategoriesAdapter extends BaseBookmarkCategoryAdapter<Recyc
   public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType)
   {
     LayoutInflater inflater = LayoutInflater.from(parent.getContext());
-    switch (viewType)
-    {
-    case TYPE_ACTION_HEADER ->
+    if (viewType == TYPE_ACTION_HEADER)
     {
       View header = inflater.inflate(R.layout.item_bookmark_group_list_header, parent, false);
       return new HeaderViewHolder(header);
     }
-    case TYPE_CATEGORY_ITEM ->
+    if (viewType == TYPE_CATEGORY_ITEM)
     {
       View view = inflater.inflate(R.layout.item_bookmark_category, parent, false);
       final CategoryViewHolder holder = new CategoryViewHolder(view);
@@ -81,41 +95,30 @@ public class BookmarkCategoriesAdapter extends BaseBookmarkCategoryAdapter<Recyc
       view.setOnLongClickListener(new LongClickListener(holder));
       return holder;
     }
-    case TYPE_ACTION_ADD ->
+    if (mFooterTypes.contains(viewType))
     {
       View item = inflater.inflate(R.layout.item_bookmark_button, parent, false);
-      item.setOnClickListener(v -> {
-        if (mCategoryListCallback != null)
-          mCategoryListCallback.onAddButtonClick();
-      });
+      if (viewType == TYPE_ACTION_ADD)
+        item.setOnClickListener(v -> {
+          if (mCategoryListCallback != null)
+            mCategoryListCallback.onAddButtonClick();
+        });
+      else if (viewType == TYPE_ACTION_IMPORT)
+        item.setOnClickListener(v -> {
+          if (mCategoryListCallback != null)
+            mCategoryListCallback.onImportButtonClick();
+        });
+      else if (viewType == TYPE_ACTION_EXPORT_ALL_AS_KMZ)
+        item.setOnClickListener(v -> {
+          if (mCategoryListCallback != null)
+            mCategoryListCallback.onExportButtonClick();
+        });
+      else if (viewType == TYPE_ACTION_SYNC_WATCH)
+        item.setOnClickListener(v -> app.organicmaps.wear.WearSyncService.syncBookmarksNow());
+
       return new Holders.GeneralViewHolder(item);
     }
-    case TYPE_ACTION_IMPORT ->
-    {
-      View item = inflater.inflate(R.layout.item_bookmark_button, parent, false);
-      item.setOnClickListener(v -> {
-        if (mCategoryListCallback != null)
-          mCategoryListCallback.onImportButtonClick();
-      });
-      return new Holders.GeneralViewHolder(item);
-    }
-    case TYPE_ACTION_EXPORT_ALL_AS_KMZ ->
-    {
-      View item = inflater.inflate(R.layout.item_bookmark_button, parent, false);
-      item.setOnClickListener(v -> {
-        if (mCategoryListCallback != null)
-          mCategoryListCallback.onExportButtonClick();
-      });
-      return new Holders.GeneralViewHolder(item);
-    }
-    case TYPE_ACTION_SYNC_WATCH ->
-    {
-      View item = inflater.inflate(R.layout.item_bookmark_button, parent, false);
-      item.setOnClickListener(v -> app.organicmaps.wear.WearSyncService.syncBookmarksNow());
-      return new Holders.GeneralViewHolder(item);
-    }
-    default -> throw new AssertionError("Invalid item type: " + viewType);
-    }
+    throw new AssertionError("Invalid item type: " + viewType);
   }
 
   @Override
@@ -174,33 +177,48 @@ public class BookmarkCategoriesAdapter extends BaseBookmarkCategoryAdapter<Recyc
   @Override
   public int getItemViewType(int position)
   {
-    if (position == 0)
+    if (position < HEADER_COUNT)
       return TYPE_ACTION_HEADER;
 
-    int total = getItemCount();
-    if (position == total - 4) return TYPE_ACTION_ADD;
-    if (position == total - 3) return TYPE_ACTION_IMPORT;
-    if (position == total - 2) return TYPE_ACTION_EXPORT_ALL_AS_KMZ;
-    if (position == total - 1) return TYPE_ACTION_SYNC_WATCH;
+    int categoryCount = getBookmarkCategories().size();
+    if (position < HEADER_COUNT + categoryCount)
+      return TYPE_CATEGORY_ITEM;
 
-    return TYPE_CATEGORY_ITEM;
+    int footerPosition = position - (HEADER_COUNT + categoryCount);
+    if (footerPosition < mFooterTypes.size())
+      return mFooterTypes.get(footerPosition);
+
+    throw new AssertionError("Invalid position: " + position);
+  }
+
+  @Override
+  public long getItemId(int position)
+  {
+    int type = getItemViewType(position);
+    return switch (type)
+    {
+      case TYPE_ACTION_HEADER -> ID_HEADER;
+      case TYPE_CATEGORY_ITEM -> getCategoryByPosition(toCategoryPosition(position)).getId();
+      case TYPE_ACTION_ADD -> ID_ACTION_ADD;
+      case TYPE_ACTION_IMPORT -> ID_ACTION_IMPORT;
+      case TYPE_ACTION_EXPORT_ALL_AS_KMZ -> ID_ACTION_EXPORT_ALL_AS_KMZ;
+      case TYPE_ACTION_SYNC_WATCH -> ID_ACTION_SYNC_WATCH;
+      default -> throw new AssertionError("Invalid item type: " + type);
+    };
   }
 
   private int toCategoryPosition(int adapterPosition)
   {
-    int type = getItemViewType(adapterPosition);
-    if (type != TYPE_CATEGORY_ITEM)
-      throw new AssertionError("An element at specified position is not category!");
-    return adapterPosition - 1;
+    return adapterPosition - HEADER_COUNT;
   }
 
   @Override
   public int getItemCount()
   {
-    int count = super.getItemCount();
-    if (count == 0)
+    int categoryCount = getBookmarkCategories().size();
+    if (categoryCount == 0)
       return 0;
-    return 1 /* header */ + count + 4 /* actions */;
+    return HEADER_COUNT + categoryCount + mFooterTypes.size();
   }
 
   private class LongClickListener implements View.OnLongClickListener

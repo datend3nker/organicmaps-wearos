@@ -21,6 +21,9 @@ void RegisterVirtualMwm(std::string const & mwmName, std::string const & path, u
 // Returns the local sparse path for a registered virtual MWM, or empty string if not virtual.
 std::string GetVirtualMwmPath(std::string const & mwmName);
 
+// Returns true if the given MWM was ever registered as virtual in this session.
+bool IsVirtualMwm(std::string const & mwmName);
+
 // Callback mechanism to decouple platform logic from JNI.
 using TRequestDataFn = std::function<void(std::string const & mwmName, uint64_t offset, size_t size)>;
 void SetRequestDataHandler(TRequestDataFn fn);

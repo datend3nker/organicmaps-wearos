@@ -1,5 +1,6 @@
 #include "platform/virtual_mwm_core.hpp"
 #include "base/logging.hpp"
+#include "base/file_name_utils.hpp"
 
 #include <mutex>
 #include <condition_variable>
@@ -21,9 +22,14 @@ struct MwmWaitInfo
 
   void MarkAvailable(uint64_t offset, size_t size)
   {
-    uint64_t startChunk = offset / kChunkSize;
-    uint64_t endChunk = (offset + size - 1) / kChunkSize;
-    for (uint64_t i = startChunk; i <= endChunk; ++i)
+    uint64_t const end = offset + size;
+    uint64_t startChunk = (offset + kChunkSize - 1) / kChunkSize;
+    uint64_t endChunk = end / kChunkSize;
+
+    if (end >= m_totalSize && m_totalSize > 0)
+      endChunk = (m_totalSize + kChunkSize - 1) / kChunkSize;
+
+    for (uint64_t i = startChunk; i < endChunk; ++i)
     {
       uint64_t wordIdx = i / 64;
       uint64_t bitIdx = i % 64;
@@ -49,12 +55,14 @@ struct MwmWaitInfo
 };
 
 std::map<std::string, std::unique_ptr<MwmWaitInfo>> g_waitInfos;
+std::vector<std::string> g_allVirtualMwms;
 std::mutex g_waitInfosMutex;
 wear::TRequestDataFn g_requestDataHandler;
 
 MwmWaitInfo & GetWaitInfo(std::string const & mwmNameWithExt)
 {
   std::string mwmName = mwmNameWithExt;
+  base::GetNameFromFullPath(mwmName);
   if (mwmName.size() > 4 && mwmName.substr(mwmName.size() - 4) == ".mwm")
     mwmName = mwmName.substr(0, mwmName.size() - 4);
 
@@ -76,20 +84,31 @@ namespace wear
 void WaitForData(std::string const & mwmName, uint64_t offset, size_t size)
 {
   LOG(LDEBUG, ("WaitForData:", mwmName, "offset:", offset, "size:", size));
-  if (g_requestDataHandler)
-      g_requestDataHandler(mwmName, offset, size);
 
   MwmWaitInfo & info = GetWaitInfo(mwmName);
-  std::unique_lock<std::mutex> lock(info.m_mutex);
 
-  if (info.m_cv.wait_for(lock, std::chrono::seconds(5), [&]{ return info.IsAvailable(offset, size); }))
+  for (int attempt = 1; attempt <= 4; ++attempt)
   {
-     LOG(LDEBUG, ("Data arrived for Virtual MWM:", mwmName, "offset:", offset));
+    {
+      std::lock_guard<std::mutex> lock(info.m_mutex);
+      if (info.IsAvailable(offset, size))
+        return;
+    }
+
+    if (g_requestDataHandler)
+      g_requestDataHandler(mwmName, offset, size);
+
+    std::unique_lock<std::mutex> lock(info.m_mutex);
+    if (info.m_cv.wait_for(lock, std::chrono::seconds(5), [&]{ return info.IsAvailable(offset, size); }))
+    {
+      LOG(LDEBUG, ("Data arrived for Virtual MWM:", mwmName, "offset:", offset, "attempt:", attempt));
+      return;
+    }
+
+    LOG(LWARNING, ("Timeout waiting for Virtual MWM data:", mwmName, "offset:", offset, "attempt:", attempt));
   }
-  else
-  {
-    LOG(LWARNING, ("Timeout waiting for Virtual MWM data:", mwmName, "offset:", offset));
-  }
+
+  LOG(LERROR, ("Final timeout waiting for Virtual MWM data:", mwmName, "offset:", offset));
 }
 
 bool IsDataAvailable(std::string const & mwmName, uint64_t offset, size_t size)
@@ -113,28 +132,51 @@ void SignalData(std::string const & mwmName, uint64_t offset, size_t size)
 void RegisterVirtualMwm(std::string const & mwmName, std::string const & path, uint64_t totalSize)
 {
   MwmWaitInfo & info = GetWaitInfo(mwmName);
-  std::lock_guard<std::mutex> lock(info.m_mutex);
-  info.m_path = path;
-  info.m_totalSize = totalSize;
-  uint64_t numChunks = (totalSize + kChunkSize - 1) / kChunkSize;
-  info.m_availableChunks.assign((numChunks + 63) / 64, 0);
+  {
+    std::lock_guard<std::mutex> lock(info.m_mutex);
+    info.m_path = path;
+    info.m_totalSize = totalSize;
+    uint64_t numChunks = (totalSize + kChunkSize - 1) / kChunkSize;
+    info.m_availableChunks.assign((numChunks + 63) / 64, 0);
+  }
+
+  {
+    std::string name = mwmName;
+    base::GetNameFromFullPath(name);
+    if (name.size() > 4 && name.substr(name.size() - 4) == ".mwm")
+      name = name.substr(0, name.size() - 4);
+
+    std::lock_guard<std::mutex> lock(g_waitInfosMutex);
+    if (std::find(g_allVirtualMwms.begin(), g_allVirtualMwms.end(), name) == g_allVirtualMwms.end())
+      g_allVirtualMwms.push_back(name);
+  }
+
   LOG(LINFO, ("Registered virtual MWM:", mwmName, "path:", path, "size:", totalSize));
 }
 
 std::string GetVirtualMwmPath(std::string const & mwmName)
 {
+  std::string name = mwmName;
+  base::GetNameFromFullPath(name);
+  if (name.size() > 4 && name.substr(name.size() - 4) == ".mwm")
+    name = name.substr(0, name.size() - 4);
+
   std::lock_guard<std::mutex> lock(g_waitInfosMutex);
-  auto it = g_waitInfos.find(mwmName);
+  auto it = g_waitInfos.find(name);
   if (it != g_waitInfos.end()) return it->second->m_path;
 
-  // Try with .mwm extension if not found
-  if (mwmName.size() > 4 && mwmName.substr(mwmName.size() - 4) == ".mwm")
-  {
-      auto it2 = g_waitInfos.find(mwmName.substr(0, mwmName.size() - 4));
-      if (it2 != g_waitInfos.end()) return it2->second->m_path;
-  }
-
   return "";
+}
+
+bool IsVirtualMwm(std::string const & mwmName)
+{
+  std::string name = mwmName;
+  base::GetNameFromFullPath(name);
+  if (name.size() > 4 && name.substr(name.size() - 4) == ".mwm")
+    name = name.substr(0, name.size() - 4);
+
+  std::lock_guard<std::mutex> lock(g_waitInfosMutex);
+  return std::find(g_allVirtualMwms.begin(), g_allVirtualMwms.end(), name) != g_allVirtualMwms.end();
 }
 
 void SetRequestDataHandler(TRequestDataFn fn)

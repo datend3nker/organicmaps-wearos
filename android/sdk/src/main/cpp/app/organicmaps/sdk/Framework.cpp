@@ -589,6 +589,10 @@ void Framework::ReloadWorldMaps()
   /// @todo Can invent more optimal routine to remove/add World files only.
   RemoveLocalMaps();
   AddLocalMaps();
+  // Registering maps outside the Storage download flow does not invalidate
+  // drape's tile cache, so already-rendered (empty) tiles would never be
+  // re-read from the newly registered map.
+  m_work.Invalidate();
 }
 
 void Framework::ReplaceBookmark(kml::MarkId markId, kml::BookmarkData & bm)

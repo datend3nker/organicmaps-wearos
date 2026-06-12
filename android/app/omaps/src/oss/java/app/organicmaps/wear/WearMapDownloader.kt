@@ -5,8 +5,7 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
@@ -33,9 +32,12 @@ object WearMapDownloader {
     val currentMap: StateFlow<String?> = _currentMap.asStateFlow()
 
     private var currentDownloadJob: kotlinx.coroutines.Job? = null
+    private var watchdogJob: Job? = null
+    private var lastProgressTime: Long = 0
 
     fun setStreamingProgress(progress: Float) {
         _downloadProgress.value = progress
+        lastProgressTime = System.currentTimeMillis()
         if (_downloadState.value != DownloadState.DOWNLOADING && _downloadState.value != DownloadState.VALIDATING) {
             _downloadState.value = DownloadState.STREAMING_FROM_PHONE
         }
@@ -48,13 +50,30 @@ object WearMapDownloader {
         _currentMap.value = mapId
         _downloadState.value = DownloadState.STREAMING_FROM_PHONE
         _downloadProgress.value = 0f
+        lastProgressTime = System.currentTimeMillis()
+        startWatchdog()
         WearNotificationManager.updateSyncNotification(WearApplication.instance, mapId, 0f, true)
+    }
+
+    private fun startWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = CoroutineScope(Dispatchers.Main).launch {
+            while (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING) {
+                delay(10000)
+                if (System.currentTimeMillis() - lastProgressTime > 60000) {
+                    Log.e(TAG, "DEBUG_WEAR_PIPELINE: Map streaming STALLED for 60s, marking as FAILED")
+                    _downloadState.value = DownloadState.FAILED
+                    break
+                }
+            }
+        }
     }
 
     fun onDownloadCompleted() {
         _downloadState.value = DownloadState.COMPLETED
         _downloadProgress.value = 1.0f
         currentDownloadJob = null
+        watchdogJob?.cancel()
         WearNotificationManager.hideSyncNotification(WearApplication.instance)
     }
 
@@ -62,6 +81,7 @@ object WearMapDownloader {
         _downloadState.value = DownloadState.CANCELLED
         _downloadProgress.value = 0f
         currentDownloadJob = null
+        watchdogJob?.cancel()
         WearNotificationManager.hideSyncNotification(WearApplication.instance)
     }
 
@@ -69,6 +89,7 @@ object WearMapDownloader {
         val mapId = _currentMap.value
         currentDownloadJob?.cancel()
         currentDownloadJob = null
+        watchdogJob?.cancel()
         if (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING) {
             if (mapId != null) {
                 WearCommandService.cancelMapSync(context, mapId)
@@ -85,10 +106,12 @@ object WearMapDownloader {
     }
 
     fun onMapMissingOnPhone(context: Context, mapId: String) {
+        NavigationStateHolder.update { it.copy(missingMapId = mapId) }
+        NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$mapId' not on phone — download it in Organic Maps on the phone"))
+        
         if (_currentMap.value == mapId && (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING)) {
             _downloadState.value = DownloadState.FAILED
-            NavigationStateHolder.update { it.copy(missingMapId = mapId) }
-            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$mapId' not found on phone."))
+            watchdogJob?.cancel()
         }
     }
 
@@ -127,6 +150,8 @@ object WearMapDownloader {
             }
             else -> { // Default is PHONE_SYNC
                 _downloadState.value = DownloadState.STREAMING_FROM_PHONE
+                lastProgressTime = System.currentTimeMillis()
+                startWatchdog()
                 streamFromPhone(context, mapId)
             }
         }
@@ -216,6 +241,8 @@ object WearMapDownloader {
             }
             Log.e(TAG, "Failed downloading via internet: ${e.message}")
             _downloadState.value = DownloadState.STREAMING_FROM_PHONE
+            lastProgressTime = System.currentTimeMillis()
+            startWatchdog()
             streamFromPhone(context, mapId)
         }
     }

@@ -504,7 +504,7 @@ public class LocationHelper implements BaseLocationProvider.Listener
   {
     Logger.i(TAG);
     if (!mInFirstRun)
-      throw new AssertionError("Must be called only after 'onEnteredIntoFirstRun' method!");
+      return;
 
     mInFirstRun = false;
 

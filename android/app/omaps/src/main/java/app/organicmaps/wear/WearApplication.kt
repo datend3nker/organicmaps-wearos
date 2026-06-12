@@ -61,6 +61,8 @@ class WearApplication : Application() {
         isInitializing = true
         
         System.loadLibrary("organicmaps")
+        VirtualMwmManager.setNativeLibraryLoaded()
+        
         ConnectionState.INSTANCE.initialize(this)
         
         val nativeLocationFactory = LocationProviderFactoryImpl.create()
@@ -74,6 +76,9 @@ class WearApplication : Application() {
             BuildConfig.APPLICATION_ID + ".fileprovider.wear",
             nativeLocationFactory
         )
+
+        // Restore mounts only AFTER OrganicMaps (and thus native SetSettingsDir) is initialized.
+        VirtualMwmManager.restoreMountsEarly(this)
 
         organicMaps.locationHelper.onEnteredIntoFirstRun()
 
@@ -347,14 +352,14 @@ class WearApplication : Application() {
             WearCommandService.initBackend(this@WearApplication)
             WearCommandService.syncPreferences(this@WearApplication)
 
-            VirtualMwmManager.prune(this@WearApplication)
-
             val state = NavigationStateHolder.state.value
             if (state.allowMobileData) {
                 app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
             }
             app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
-            organicMaps.locationHelper.onExitFromFirstRun()
+            if (organicMaps.locationHelper.isInFirstRun) {
+                organicMaps.locationHelper.onExitFromFirstRun()
+            }
             ReloadWorldMapsDebouncer.reloadImmediate() 
 
             Framework.nativeSet3dMode(state.is3dEnabled, state.is3dBuildingsEnabled)
@@ -373,12 +378,16 @@ class WearApplication : Application() {
         }
     }
 
-    private fun copyCountriesFileToWritableStorage() {
+    private suspend fun copyCountriesFileToWritableStorage() {
         try {
             val storagePath = StoragePathManager.findMapsStorage(this)
-            val dataVersion = Framework.nativeGetDataVersion()
+            val dataVersion = withContext(Dispatchers.Main) { Framework.nativeGetDataVersion() }
             val versionedPath = File(storagePath, dataVersion.toString())
-            if (!versionedPath.exists()) versionedPath.mkdirs()
+            if (!versionedPath.exists()) {
+                withContext(Dispatchers.IO) {
+                    versionedPath.mkdirs()
+                }
+            }
             
             if (isFullyInitialized) {
                 ReloadWorldMapsDebouncer.reloadImmediate()

@@ -405,6 +405,7 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
                 WearSyncService.buildCommandPayload(app.organicmaps.sdk.sync.WearProtocol.PATH_BOOKMARK_SYNC_REQUEST, catName.getBytes(StandardCharsets.UTF_8)));
         })
         .setNeutralButton(R.string.bookmark_conflict_merge, (dialog, which) -> {
+            WearSyncService.addPendingMerge(catName);
             WearSyncService.getSyncLayer().sendRawMessage(requireContext(), app.organicmaps.sdk.sync.WearProtocol.TYPE_COMMAND, 
                 WearSyncService.buildCommandPayload(app.organicmaps.sdk.sync.WearProtocol.PATH_BOOKMARK_SYNC_REQUEST, catName.getBytes(StandardCharsets.UTF_8)));
         })

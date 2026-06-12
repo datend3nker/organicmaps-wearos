@@ -59,6 +59,7 @@ void DeleteCountryIndexes(LocalCountryFile const & localFile)
 
 void DeleteFromDiskWithIndexes(LocalCountryFile const & localFile, MapFileType type)
 {
+  LOG(LWARNING, ("DeleteFromDiskWithIndexes:", localFile.GetCountryName(), "type:", type));
   DeleteCountryIndexes(localFile);
   localFile.DeleteFromDisk(type);
 }

@@ -50,6 +50,7 @@
 #include "platform/platform.hpp"
 #include "platform/preferred_languages.hpp"
 #include "platform/settings.hpp"
+#include "platform/virtual_mwm_core.hpp"
 
 #include "coding/point_coding.hpp"
 #include "coding/string_utf8_multilang.hpp"
@@ -471,7 +472,13 @@ void Framework::OnMapDeregistered(platform::LocalCountryFile const & localFile)
     m_trafficManager.OnMwmDeregistered(localFile);
     m_descriptionsLoader->OnMwmDeregistered(localFile);
 
-    m_storage.DeleteCustomCountryVersion(localFile);
+    // Streamed (virtual) MWMs are backed by a sparse cache owned by the Wear
+    // companion layer and get deregistered on every ReloadWorldMaps / transient
+    // read failure. DeleteCustomCountryVersion would delete that cache file and
+    // break streaming, so skip it for virtual maps. Persistent virtual MWMs
+    // should survive across sessions.
+    if (!wear::IsVirtualMwm(localFile.GetCountryName()))
+      m_storage.DeleteCustomCountryVersion(localFile);
   };
 
   // Call action on thread in which the framework was created

@@ -244,10 +244,11 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_UPDATE, buffer.array())
     }
 
-    override fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean) {
+    override fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean, merge: Boolean) {
         val nameBytes = categoryName.toByteArray(StandardCharsets.UTF_8)
         val buffer = ByteBuffer.allocate(1 + 4 + nameBytes.size + data.size)
-        buffer.put(if (isLast) 1.toByte() else 0.toByte())
+        val flags = (if (isLast) 1 else 0) or (if (merge) 2 else 0)
+        buffer.put(flags.toByte())
         buffer.putInt(nameBytes.size)
         buffer.put(nameBytes)
         buffer.put(data)

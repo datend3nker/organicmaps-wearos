@@ -17,7 +17,9 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @MainThread
 public enum BookmarkManager {
@@ -46,6 +48,8 @@ public enum BookmarkManager {
 
   @NonNull
   private final List<BookmarksSharingListener> mSharingListeners = new ArrayList<>();
+
+  private final Map<String, Long> mPendingFileMerges = new HashMap<>();
 
   @Nullable
   private OnElevationCurrentPositionChangedListener mOnElevationCurrentPositionChangedListener;
@@ -157,6 +161,18 @@ public enum BookmarkManager {
   @MainThread
   private void onBookmarksFileLoaded(boolean success, @NonNull String fileName, boolean isTemporaryFile)
   {
+    Long targetCategoryId = mPendingFileMerges.remove(fileName);
+    if (success && targetCategoryId != null)
+    {
+      long newCategoryId = nativeGetCategoryByFileName(fileName);
+      if (newCategoryId != -1)
+      {
+        Logger.d(TAG, "Merging category " + newCategoryId + " into " + targetCategoryId);
+        nativeMergeCategories(newCategoryId, targetCategoryId);
+        nativeDeleteCategory(newCategoryId);
+      }
+    }
+
     // Android could create temporary file with bookmarks in some cases (KML/KMZ file is a blob
     // in the intent, so we have to create a temporary file on the disk). Here we can delete it.
     if (isTemporaryFile)
@@ -288,6 +304,14 @@ public enum BookmarkManager {
     nativeLoadBookmarksFile(path, isTemporaryFile);
   }
 
+  @MainThread
+  public void loadBookmarksFile(@NonNull String path, boolean isTemporaryFile, long targetCategoryId)
+  {
+    Logger.d(TAG, "Loading bookmarks file from: " + path + " for merge into " + targetCategoryId);
+    mPendingFileMerges.put(path, targetCategoryId);
+    nativeLoadBookmarksFile(path, isTemporaryFile);
+  }
+
   static @Nullable String getBookmarksFilenameFromUri(@NonNull ContentResolver resolver, @NonNull Uri uri)
   {
     String filename = null;
@@ -388,6 +412,37 @@ public enum BookmarkManager {
           listener.onBookmarksFileDownloadFailed(uri, e.toString());
       });
       return false;
+    }
+  }
+
+  @WorkerThread
+  public void importBookmarksFile(@NonNull ContentResolver resolver, @NonNull Uri uri, @NonNull File tempDir, long targetCategoryId)
+  {
+    Logger.i(TAG, "Importing bookmarks from " + uri + " for merge into " + targetCategoryId);
+    try
+    {
+      String filename = getBookmarksFilenameFromUri(resolver, uri);
+      if (filename == null)
+      {
+        Logger.w(TAG, "Could not find a supported file type in " + uri);
+        UiThread.run(() -> {
+          for (BookmarksLoadingListener listener : mListeners)
+            listener.onBookmarksFileUnsupported(uri);
+        });
+        return;
+      }
+
+      final File tempFile = new File(tempDir, filename);
+      StorageUtils.copyFile(resolver, uri, tempFile);
+      UiThread.run(() -> loadBookmarksFile(tempFile.getAbsolutePath(), true, targetCategoryId));
+    }
+    catch (IOException | SecurityException e)
+    {
+      Logger.e(TAG, "Could not download bookmarks file from " + uri, e);
+      UiThread.run(() -> {
+        for (BookmarksLoadingListener listener : mListeners)
+          listener.onBookmarksFileDownloadFailed(uri, e.toString());
+      });
     }
   }
 
@@ -572,6 +627,10 @@ public enum BookmarkManager {
   private static native void nativeSetElevationActiveChangedListener();
 
   public static native void nativeRemoveElevationActiveChangedListener();
+
+  private native long nativeGetCategoryByFileName(@NonNull String fileName);
+
+  private native void nativeMergeCategories(long srcCatId, long dstCatId);
 
   public interface BookmarksLoadingListener
   {

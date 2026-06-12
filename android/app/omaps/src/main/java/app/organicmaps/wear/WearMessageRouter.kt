@@ -113,6 +113,7 @@ object WearMessageRouter {
             WearProtocol.PATH_MAP_DOWNLOAD_NOT_FOUND -> {
                 val mapId = String(payload)
                 Log.w(TAG, "Phone reported map NOT FOUND: $mapId")
+                VirtualMwmManager.markMetadataFailure(mapId)
                 WearMapDownloader.onMapMissingOnPhone(context, mapId)
                 return
             }

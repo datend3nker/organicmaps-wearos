@@ -22,7 +22,9 @@ class BookmarkFileHandler(
 
     override fun handle(buffer: ByteBuffer, data: ByteArray, context: Context) {
         if (buffer.remaining() < 5) return
-        val isLast = buffer.get().toInt() == 1
+        val flags = buffer.get().toInt()
+        val isLast = (flags and 1) != 0
+        val remoteMerge = (flags and 2) != 0
         val nameLen = buffer.int
         if (buffer.remaining() < nameLen) return
         val nameBytes = ByteArray(nameLen)
@@ -31,11 +33,11 @@ class BookmarkFileHandler(
         
         val chunk = ByteArray(buffer.remaining())
         buffer.get(chunk)
-        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Received bookmark chunk for $categoryName. Size: ${chunk.size}, isLast: $isLast")
-        saveBookmarkChunk(context, categoryName, chunk, isLast)
+        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Received bookmark chunk for $categoryName. Size: ${chunk.size}, isLast: $isLast, merge: $remoteMerge")
+        saveBookmarkChunk(context, categoryName, chunk, isLast, remoteMerge)
     }
 
-    private fun saveBookmarkChunk(context: Context, categoryName: String, data: ByteArray, isLast: Boolean) {
+    private fun saveBookmarkChunk(context: Context, categoryName: String, data: ByteArray, isLast: Boolean, shouldMerge: Boolean) {
         try {
             if (data.isNotEmpty()) {
                 val hexStr = data.take(minOf(data.size, 16)).joinToString(" ") { "%02X".format(it) }
@@ -90,14 +92,19 @@ class BookmarkFileHandler(
                         
                         app.organicmaps.wear.WatchBookmarkSyncManager.isApplyingRemoteUpdate = true
                         try {
-                            if (existingByName != null) {
+                            if (existingByName != null && !shouldMerge) {
                                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Deleting existing category '$categoryName' (ID: ${existingByName.id}) before importing update")
                                 manager.deleteCategory(existingByName.id)
-                            }
-
-                            if (finalFile.exists()) {
+                                manager.loadBookmarksFile(finalFile.absolutePath, true)
+                            } else if (existingByName != null) {
+                                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Merging update into existing category '$categoryName' (ID: ${existingByName.id})")
+                                manager.loadBookmarksFile(finalFile.absolutePath, true, existingByName.id)
+                            } else if (finalFile.exists()) {
                                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Loading bookmarks from file: ${finalFile.absolutePath} (Size: ${finalFile.length()})")
                                 manager.loadBookmarksFile(finalFile.absolutePath, true)
+                            }
+                            
+                            if (finalFile.exists()) {
                                 NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmarks synchronized"))
                                 
                                 context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)

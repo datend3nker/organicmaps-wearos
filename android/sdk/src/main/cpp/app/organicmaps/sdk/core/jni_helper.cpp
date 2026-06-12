@@ -4,11 +4,21 @@
 
 #include "base/assert.hpp"
 #include "base/exception.hpp"
+#include "base/string_utils.hpp"
 
 #include "app/organicmaps/sdk/bookmarks/data/Icon.hpp"
 #include "app/organicmaps/sdk/bookmarks/data/PredefinedColors.hpp"
 
 #include <vector>
+
+// Forward declaration of framework's registerNativeMethods
+namespace android
+{
+namespace framework
+{
+jint registerNativeMethods(JNIEnv * env);
+}
+}
 
 static JavaVM * g_jvm = 0;
 extern JavaVM * GetJVM()
@@ -169,12 +179,18 @@ jclass GetGlobalClassRef(JNIEnv * env, char const * sig)
 
 std::string ToNativeString(JNIEnv * env, jstring str)
 {
+  if (str == nullptr)
+    return {};
   std::string result;
   char const * utfBuffer = env->GetStringUTFChars(str, 0);
   if (utfBuffer)
   {
     result = utfBuffer;
     env->ReleaseStringUTFChars(str, utfBuffer);
+  }
+  else
+  {
+    env->ExceptionClear();
   }
   return result;
 }
@@ -189,7 +205,12 @@ std::string ToNativeString(JNIEnv * env, jbyteArray const & bytes)
 
 jstring ToJavaString(JNIEnv * env, char const * s)
 {
-  return env->NewStringUTF(s);
+  if (s == nullptr)
+    return nullptr;
+  jstring res = env->NewStringUTF(s);
+  if (res == nullptr)
+    env->ExceptionClear();
+  return res;
 }
 
 jstring ToJavaStringWithSupplementalCharsFix(JNIEnv * env, std::string const & s)
@@ -207,7 +228,7 @@ jstring ToJavaStringWithSupplementalCharsFix(JNIEnv * env, std::string const & s
       }
     }
   }
-  return env->NewStringUTF(s.c_str());
+  return ToJavaString(env, s.c_str());
 }
 
 jclass GetStringClass(JNIEnv * env)

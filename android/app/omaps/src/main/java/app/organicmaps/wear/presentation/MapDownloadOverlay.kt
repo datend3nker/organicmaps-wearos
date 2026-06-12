@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.wear.compose.material.*
 import app.organicmaps.wear.WearMapDownloader
 import app.organicmaps.wear.NavigationStateHolder
@@ -47,14 +49,17 @@ fun MapDownloadOverlay() {
             val title = when (downloadState) {
                 WearMapDownloader.DownloadState.DOWNLOADING -> "Downloading (Internet)"
                 WearMapDownloader.DownloadState.STREAMING_FROM_PHONE -> "Serving from Phone"
+                WearMapDownloader.DownloadState.FAILED -> "Sync Failed"
                 else -> "Synchronizing..."
             }
+            
+            val titleColor = if (downloadState == WearMapDownloader.DownloadState.FAILED) Color.Red else Color(0xFF00E5FF)
             
             Text(
                 text = title,
                 style = MaterialTheme.typography.caption2,
                 textAlign = TextAlign.Center,
-                color = Color(0xFF00E5FF)
+                color = titleColor
             )
             
             Spacer(modifier = Modifier.height(4.dp))
@@ -72,42 +77,59 @@ fun MapDownloadOverlay() {
             
             Spacer(modifier = Modifier.height(12.dp))
             
-            val isIndeterminate = progress <= 0f
-            if (isIndeterminate) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(40.dp),
-                    indicatorColor = MaterialTheme.colors.primary,
-                    trackColor = Color.White.copy(alpha = 0.1f),
-                    strokeWidth = 3.dp
+            if (downloadState == WearMapDownloader.DownloadState.FAILED) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = Color.Red,
+                    modifier = Modifier.size(40.dp)
                 )
             } else {
-                CircularProgressIndicator(
-                    progress = progress,
-                    modifier = Modifier.size(40.dp),
-                    indicatorColor = MaterialTheme.colors.primary,
-                    trackColor = Color.White.copy(alpha = 0.1f),
-                    strokeWidth = 3.dp
-                )
+                val isIndeterminate = progress <= 0f
+                if (isIndeterminate) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(40.dp),
+                        indicatorColor = MaterialTheme.colors.primary,
+                        trackColor = Color.White.copy(alpha = 0.1f),
+                        strokeWidth = 3.dp
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        progress = progress,
+                        modifier = Modifier.size(40.dp),
+                        indicatorColor = MaterialTheme.colors.primary,
+                        trackColor = Color.White.copy(alpha = 0.1f),
+                        strokeWidth = 3.dp
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
             
             val backendName = if (navState.backend == "GMS") "Google Play" else "Bluetooth"
-            val progressText = if (progress > 0) "${(progress * 100).toInt()}%" else "Starting..."
+            val progressText = if (downloadState == WearMapDownloader.DownloadState.FAILED) "Map not found on phone" 
+                              else if (progress > 0) "${(progress * 100).toInt()}%" 
+                              else "Starting..."
             
             Text(
-                text = "via $backendName ($progressText)",
+                text = if (downloadState == WearMapDownloader.DownloadState.FAILED) progressText else "via $backendName ($progressText)",
                 style = MaterialTheme.typography.caption3,
                 textAlign = TextAlign.Center,
-                color = Color.LightGray
+                color = if (downloadState == WearMapDownloader.DownloadState.FAILED) Color.Red.copy(alpha = 0.8f) else Color.LightGray
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
             CompactChip(
-                onClick = { WearMapDownloader.cancel(context) },
+                onClick = { 
+                    if (downloadState == WearMapDownloader.DownloadState.FAILED) {
+                        WearMapDownloader.onDownloadCancelled() // Reset state to IDLE
+                    } else {
+                        WearMapDownloader.cancel(context)
+                    }
+                },
                 colors = ChipDefaults.secondaryChipColors(),
-                label = { Text("Cancel", style = MaterialTheme.typography.caption2) },
+                label = { Text(if (downloadState == WearMapDownloader.DownloadState.FAILED) "Close" else "Cancel", style = MaterialTheme.typography.caption2) },
                 modifier = Modifier.height(32.dp)
             )
         }

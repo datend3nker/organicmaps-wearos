@@ -262,8 +262,8 @@ object WearCommandService {
         getBackend(context).deleteBookmarkCategory(context, name)
     }
 
-    fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean) {
-        getBackend(context).sendBookmarkFile(context, categoryName, data, isLast)
+    fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean, merge: Boolean = false) {
+        getBackend(context).sendBookmarkFile(context, categoryName, data, isLast, merge)
     }
 
     fun sendBookmarksMetadata(context: Context, payload: ByteArray) {

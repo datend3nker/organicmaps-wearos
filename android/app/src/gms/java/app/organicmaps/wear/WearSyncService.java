@@ -14,8 +14,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
@@ -31,6 +33,7 @@ public class WearSyncService {
     private static boolean sIsSilentSyncInProgress = false;
     private static boolean sIsApplyingRemoteUpdate = false;
     private static final Map<String, FileOutputStream> sBookmarkOutputStreams = new HashMap<>();
+    private static final Set<String> sPendingMerges = new HashSet<>();
 
     private static final Runnable sSyncPrefsRunnable = () -> {
         Log.d("WearSync", "Debounced syncPreferences executing");
@@ -137,7 +140,9 @@ public class WearSyncService {
     public static void handleIncomingBookmarkFile(Context context, byte[] payload) {
         ByteBuffer buffer = ByteBuffer.wrap(payload);
         if (buffer.remaining() < 5) return;
-        boolean isLast = buffer.get() == 1;
+        byte flags = buffer.get();
+        boolean isLast = (flags & 1) != 0;
+        boolean remoteMerge = (flags & 2) != 0;
         int nameLen = buffer.getInt();
         if (buffer.remaining() < nameLen) return;
         byte[] nameBytes = new byte[nameLen];
@@ -164,7 +169,7 @@ public class WearSyncService {
                 if (finalFile.exists()) finalFile.delete();
                 tmpFile.renameTo(finalFile);
                 
-                Log.d("WearSync", "Successfully received bookmark file from watch: " + categoryName);
+                Log.d("WearSync", "Successfully received bookmark file from watch: " + categoryName + " (merge=" + remoteMerge + ")");
                 
                 sHandler.post(() -> {
                     if (isFrameworkReady()) {
@@ -178,10 +183,17 @@ public class WearSyncService {
                                     break;
                                 }
                             }
-                            if (existing != null) {
+                            
+                            boolean shouldMerge = remoteMerge || sPendingMerges.remove(categoryName);
+                            
+                            if (existing != null && !shouldMerge) {
                                 manager.deleteCategory(existing.getId());
+                                manager.loadBookmarksFile(finalFile.getAbsolutePath(), true);
+                            } else if (existing != null) {
+                                manager.loadBookmarksFile(finalFile.getAbsolutePath(), true, existing.getId());
+                            } else {
+                                manager.loadBookmarksFile(finalFile.getAbsolutePath(), true);
                             }
-                            manager.loadBookmarksFile(finalFile.getAbsolutePath(), true);
                             
                             context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
                                 .edit().putLong("last_synced_" + categoryName, System.currentTimeMillis()).apply();
@@ -218,6 +230,10 @@ public class WearSyncService {
         sIsApplyingRemoteUpdate = applying;
     }
 
+    public static void addPendingMerge(String categoryName) {
+        sPendingMerges.add(categoryName);
+    }
+
     private static final app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksSharingListener sSharingListener = (result) -> {
         Log.d("WearSync", "onPreparedFileForSharing: " + result.getCode() + " silent=" + sIsSilentSyncInProgress);
         if (result.getCode() == app.organicmaps.sdk.bookmarks.data.BookmarkSharingResult.SUCCESS) {
@@ -241,7 +257,7 @@ public class WearSyncService {
                         sent += read;
                         boolean isLast = sent >= length;
                         byte[] chunk = read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read);
-                        getSyncLayer().sendBookmarkFile(app.organicmaps.MwmApplication.sInstance, catName, chunk, isLast);
+                        getSyncLayer().sendBookmarkFile(app.organicmaps.MwmApplication.sInstance, catName, chunk, isLast, false);
                         if (isLast) {
                             app.organicmaps.MwmApplication.sInstance.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
                                 .edit().putLong("last_synced_" + catName, System.currentTimeMillis()).apply();

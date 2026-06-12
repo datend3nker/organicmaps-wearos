@@ -10,6 +10,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 
 object WatchBookmarkSyncManager {
     private const val TAG = "WatchBookmarkSync"
@@ -19,6 +20,8 @@ object WatchBookmarkSyncManager {
     
     @Volatile
     var isApplyingRemoteUpdate = false
+
+    private val pendingMerges = ConcurrentHashMap.newKeySet<String>()
 
     private fun getPrefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -58,6 +61,10 @@ object WatchBookmarkSyncManager {
 
     fun requestSync(context: Context) {
         sendMetadata(context)
+    }
+
+    fun addPendingMerge(categoryName: String) {
+        pendingMerges.add(categoryName)
     }
 
     private fun sendMetadata(context: Context) {
@@ -109,7 +116,7 @@ object WatchBookmarkSyncManager {
             val localLastSynced = prefs.getLong("last_synced_$name", 0)
             
             val localChanged = localLastEdit > localLastSynced
-            val remoteChanged = remoteLastEdit > remoteLastSynced
+            val remoteChanged = remoteLastEdit > localLastSynced
             
             if (localChanged && remoteChanged) {
                 Log.i(TAG, "Conflict detected for $name. Waiting for phone to resolve.")
@@ -136,11 +143,13 @@ object WatchBookmarkSyncManager {
             val cat = manager.getCategoryById(catIds[0]) ?: return@BookmarksSharingListener
             val catName = cat.name
             
+            val shouldMerge = pendingMerges.remove(catName)
+
             scope.launch(Dispatchers.IO) {
                 val file = File(path)
                 val length = file.length()
                 var sent = 0L
-                Log.i(TAG, "Sending watch bookmark file: $catName ($length bytes)")
+                Log.i(TAG, "Sending watch bookmark file: $catName ($length bytes, merge=$shouldMerge)")
                 
                 val context = WearApplication.instance
                 try {
@@ -151,7 +160,7 @@ object WatchBookmarkSyncManager {
                             sent += read
                             val isLast = sent >= length
                             val chunk = if (read == buffer.size) buffer else buffer.copyOf(read)
-                            WearCommandService.sendBookmarkFile(context, catName, chunk, isLast)
+                            WearCommandService.sendBookmarkFile(context, catName, chunk, isLast, shouldMerge)
                             
                             if (isLast) {
                                 withContext(Dispatchers.Main) {

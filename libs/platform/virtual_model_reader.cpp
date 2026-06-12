@@ -1,15 +1,18 @@
 #include "platform/virtual_model_reader.hpp"
 #include "platform/virtual_mwm_core.hpp"
-#include "platform/platform.hpp"
+#include "platform/constants.hpp"
+
+#include "coding/file_reader.hpp"
+
 #include "base/logging.hpp"
 
 VirtualModelReader::VirtualModelReader(std::string const & mwmName, std::string const & sparsePath)
-  : ModelReader(mwmName), m_mwmName(mwmName), m_sparsePath(sparsePath), m_offset(0), m_size(0)
+  : ModelReader(sparsePath), m_mwmName(mwmName), m_sparsePath(sparsePath), m_offset(0), m_size(0)
 {
 }
 
 VirtualModelReader::VirtualModelReader(std::string const & mwmName, std::string const & sparsePath, uint64_t offset, uint64_t size)
-  : ModelReader(mwmName), m_mwmName(mwmName), m_sparsePath(sparsePath), m_offset(offset), m_size(size)
+  : ModelReader(sparsePath), m_mwmName(mwmName), m_sparsePath(sparsePath), m_offset(offset), m_size(size)
 {
 }
 
@@ -41,7 +44,8 @@ void VirtualModelReader::EnsureReader() const
 {
   if (!m_proxyReader)
   {
-    m_proxyReader = GetPlatform().GetReader(m_sparsePath, "f");
+    // Construct the backing reader directly to avoid recursion through Platform::GetReader.
+    m_proxyReader = std::make_unique<FileReader>(m_sparsePath, READER_CHUNK_LOG_SIZE, READER_CHUNK_LOG_COUNT);
     if (m_offset > 0 || m_size > 0)
     {
        uint64_t s = m_size;

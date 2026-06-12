@@ -358,26 +358,27 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     @Override
     public void sendBookmarkCategories(@NonNull Context context, @NonNull List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories) {
-        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE);
+        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
         Log.d(TAG, "DEBUG_BT_PIPELINE: sendBookmarkCategories - Count: " + categories.size());
         byte[] payload = WearProtocolDataConverter.encodeBookmarkCategories(categories, syncPrefs, 20);
         sendRawMessage(context, WearProtocol.TYPE_BOOKMARKS, payload);
     }
 
     @Override
-    public void sendBookmarkFile(@NonNull Context context, @NonNull String categoryName, @NonNull byte[] data, boolean isLast) {
-        Log.d(TAG, "DEBUG_BT_PIPELINE: sendBookmarkFile for " + categoryName + " size=" + data.length + " isLast=" + isLast);
+    public void sendBookmarkFile(@NonNull Context context, @NonNull String categoryName, @NonNull byte[] data, boolean isLast, boolean merge) {
+        Log.d(TAG, "DEBUG_BT_PIPELINE: sendBookmarkFile for " + categoryName + " size=" + data.length + " isLast=" + isLast + " merge=" + merge);
         byte[] nameBytes = categoryName.getBytes(StandardCharsets.UTF_8);
         ByteBuffer buffer = ByteBuffer.allocate(1 + 4 + nameBytes.length + data.length);
-        buffer.put((byte) (isLast ? 1 : 0));
+        byte flags = (byte) ((isLast ? 1 : 0) | (merge ? 2 : 0));
+        buffer.put(flags);
         buffer.putInt(nameBytes.length);
         buffer.put(nameBytes);
         buffer.put(data);
         sendRawMessage(context, WearProtocol.TYPE_BOOKMARK_FILE, buffer.array());
         
         if (isLast) {
-            context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
-                   .edit().putLong(categoryName, System.currentTimeMillis()).apply();
+            context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
+                   .edit().putLong("last_synced_" + categoryName, System.currentTimeMillis()).apply();
         }
     }
 
@@ -393,7 +394,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
         buffer.put(newBytes);
         sendRawMessage(context, WearProtocol.TYPE_BOOKMARK_RENAME, buffer.array());
         
-        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE);
+        android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
         long ts = syncPrefs.getLong(oldName, 0);
         syncPrefs.edit().remove(oldName).putLong(newName, ts > 0 ? ts : System.currentTimeMillis()).apply();
     }
@@ -402,7 +403,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
     public void deleteBookmarkCategory(@NonNull Context context, @NonNull String name) {
         Log.d(TAG, "DEBUG_BT_PIPELINE: deleteBookmarkCategory: " + name);
         sendRawMessage(context, WearProtocol.TYPE_BOOKMARK_DELETE, name.getBytes(StandardCharsets.UTF_8));
-        context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
+        context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE)
                .edit().remove(name).apply();
     }
 

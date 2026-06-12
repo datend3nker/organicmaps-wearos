@@ -111,40 +111,61 @@ fun MapPanel(
         }
     }
 
-    // Side Effect: MWM Mounting
+    // Side Effect: MWM Mounting — instant reaction while panning
     DisposableEffect(isVisible, hApp.isFullyInitialized, connectionStatus) {
         if (!isVisible || !hApp.isFullyInitialized || !connectionStatus.isPhoneConnected || connectionStatus.watchLocalMode) {
             return@DisposableEffect onDispose {}
         }
 
         val listener = MapManager.CurrentCountryChangedListener { countryId ->
-            if (!countryId.isNullOrEmpty() &&
-                MapManager.nativeGetStatus(countryId) != CountryItem.STATUS_DONE &&
-                !VirtualMwmManager.isMounted(countryId)
-            ) {
-                Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Reactive MWM mount request: $countryId")
-                WearCommandService.requestMwmMetadata(context, countryId)
-            }
+            maybeRequestMount(context, countryId, "Reactive")
         }
 
         Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Subscribing to country change events")
         MapManager.nativeSubscribeOnCountryChanged(listener)
 
-        val center = Framework.nativeGetScreenRectCenter()
-        if (center != null && center.size == 2) {
-            val countryId = MapManager.nativeFindCountry(center[0], center[1])
-            if (!countryId.isNullOrEmpty() &&
-                MapManager.nativeGetStatus(countryId) != CountryItem.STATUS_DONE &&
-                !VirtualMwmManager.isMounted(countryId)
-            ) {
-                Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Initial MWM mount request: $countryId")
-                WearCommandService.requestMwmMetadata(context, countryId)
-            }
-        }
-
         onDispose {
             Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Unsubscribing from country change events")
             MapManager.nativeUnsubscribeOnCountryChanged()
+        }
+    }
+
+    // Side Effect: MWM Mounting — periodic safety net. The country-changed listener
+    // only fires on viewport changes, so a stationary watch (or a lost mount/metadata
+    // message) would otherwise never mount the map under the viewport.
+    LaunchedEffect(isVisible, hApp.isFullyInitialized, connectionStatus) {
+        if (!isVisible || !hApp.isFullyInitialized || !connectionStatus.isPhoneConnected || connectionStatus.watchLocalMode) {
+            return@LaunchedEffect
+        }
+        while (true) {
+            val center = Framework.nativeGetScreenRectCenter()
+            if (center != null && center.size == 2) {
+                val countryId = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(center[0], center[1]) }
+                maybeRequestMount(context, countryId, "Periodic")
+            }
+            // Re-evaluate map availability: a virtual mount can register a map at any
+            // time, and the one-shot check above would leave the overlay stale.
+            val (lat, lon, _) = location
+            isMapDownloaded = withContext(Dispatchers.Default) {
+                if (lat != 0.0) {
+                    Framework.nativeIsDownloadedMapAtLocation(lat, lon)
+                } else {
+                    MapManager.nativeGetDownloadedCount() > 0
+                }
+            }
+            delay(5000)
+        }
+    }
+
+    // Side Effect: Clear missingMapId on country change or mount
+    val state by NavigationStateHolder.state.collectAsState()
+    LaunchedEffect(location, state.missingMapId) {
+        val (lat, lon, _) = location
+        if (lat != 0.0 && state.missingMapId != null) {
+            val currentCountry = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(lat, lon) }
+            if (currentCountry != null && (currentCountry != state.missingMapId || VirtualMwmManager.isMounted(currentCountry))) {
+                NavigationStateHolder.update { it.copy(missingMapId = null) }
+            }
         }
     }
 
@@ -285,6 +306,10 @@ fun MapPanel(
             MapMissingControl(
                 isMapDownloaded = isMapDownloaded,
                 isWorldMapPresent = isWorldMapPresent,
+                isAmbient = isAmbient
+            )
+            
+            MapMissingOnPhoneControl(
                 isAmbient = isAmbient
             )
             
@@ -544,6 +569,49 @@ private fun RouteStartControl(
     }
 }
 
+@Composable
+private fun MapMissingOnPhoneControl(
+    isAmbient: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val state by NavigationStateHolder.state.collectAsState()
+    val location by NavigationStateHolder.locationFlow.collectAsState(initial = null)
+    
+    if (isAmbient || state.missingMapId == null || location == null) return
+
+    val (lat, lon, _) = location!!
+    val currentCountry = remember(lat, lon) { 
+        if (lat != 0.0) MapManager.nativeFindCountry(lat, lon) else null
+    }
+
+    if (currentCountry != null && currentCountry == state.missingMapId && !VirtualMwmManager.isMounted(currentCountry)) {
+        Box(
+            modifier = modifier.fillMaxSize().padding(horizontal = 20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Default.PhoneAndroid,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Map not on phone", style = MaterialTheme.typography.caption2, color = Color.White, textAlign = TextAlign.Center)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val displayName = currentCountry.replace("_", " ")
+                    Text(displayName, style = MaterialTheme.typography.caption3, color = Color.LightGray, textAlign = TextAlign.Center)
+                }
+            }
+        }
+    }
+}
 @Composable
 private fun MapMissingControl(
     isMapDownloaded: Boolean,
@@ -806,5 +874,16 @@ fun QuickMenu(onDismiss: () -> Unit) {
 
             item { Chip(onClick = onDismiss, label = { Text("Close") }, colors = ChipDefaults.primaryChipColors(), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) }
         }
+    }
+}
+
+private fun maybeRequestMount(context: android.content.Context, countryId: String?, trigger: String) {
+    if (!countryId.isNullOrEmpty() &&
+        MapManager.nativeGetStatus(countryId) != CountryItem.STATUS_DONE &&
+        !VirtualMwmManager.isMounted(countryId) &&
+        VirtualMwmManager.shouldRequestMetadata(countryId)
+    ) {
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger MWM mount request: $countryId")
+        WearCommandService.requestMwmMetadata(context, countryId)
     }
 }

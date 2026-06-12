@@ -35,7 +35,7 @@ public interface ISyncLayer {
     void sendBackendSwitch(@NonNull Context context, @NonNull String newBackend);
     void sendTrackRecordingStatus(@NonNull Context context, boolean isRecording);
     void sendBookmarkCategories(@NonNull Context context, @NonNull List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories);
-    void sendBookmarkFile(@NonNull Context context, @NonNull String categoryName, @NonNull byte[] data, boolean isLast);
+    void sendBookmarkFile(@NonNull Context context, @NonNull String categoryName, @NonNull byte[] data, boolean isLast, boolean merge);
     void renameBookmarkCategory(@NonNull Context context, @NonNull String oldName, @NonNull String newName);
     void deleteBookmarkCategory(@NonNull Context context, @NonNull String name);
     void sendMapTileResponse(@NonNull Context context, @NonNull String nodeId, long requestId, @NonNull byte[] features);
