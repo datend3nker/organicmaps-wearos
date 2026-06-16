@@ -658,7 +658,20 @@ private fun MapMissingControl(
                                         val countryId = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(clat, clon) }
                                         if (!countryId.isNullOrEmpty()) {
                                             Log.d("MapPanel", "DEBUG_WEAR: Sync Local - Country found: $countryId, requesting download")
-                                            WearMapDownloader.downloadOrStreamMap(context, countryId!!, "")
+                                            // Storage guard: only copy the whole region if it fits comfortably;
+                                            // otherwise leave it to bounded on-demand streaming.
+                                            val regionBytes = withContext(Dispatchers.Default) {
+                                                runCatching { app.organicmaps.sdk.downloader.CountryItem.fill(countryId).totalSize }.getOrDefault(0L)
+                                            }
+                                            if (regionBytes > 0 && !app.organicmaps.wear.WatchStorage.fitsComfortably(context, regionBytes)) {
+                                                val free = app.organicmaps.wear.WatchStorage.formatBytes(app.organicmaps.wear.WatchStorage.freeBytes(context))
+                                                val size = app.organicmaps.wear.WatchStorage.formatBytes(regionBytes)
+                                                NavigationStateHolder.emitEvent(UiEvent.ShowToast(
+                                                    "$size won't fit ($free free). Streaming on demand instead.",
+                                                    android.widget.Toast.LENGTH_LONG))
+                                            } else {
+                                                WearMapDownloader.downloadOrStreamMap(context, countryId!!, "")
+                                            }
                                         } else {
                                             Log.w("MapPanel", "DEBUG_WEAR: Sync Local - Could not find country for $clat, $clon. Opening Map Manager.")
                                             NavigationStateHolder.emitEvent(UiEvent.ShowToast("Cannot find country for current location"))
@@ -667,7 +680,7 @@ private fun MapMissingControl(
                                     }
                                 }
                             },
-                            label = { Text(if (!isWorldMapPresent) "Get World" else "Sync Local", style = MaterialTheme.typography.caption3) },
+                            label = { Text(if (!isWorldMapPresent) "Get World" else "Copy to Watch", style = MaterialTheme.typography.caption3) },
                             colors = ChipDefaults.primaryChipColors(),
                             modifier = Modifier.height(28.dp).weight(1f)
                         )

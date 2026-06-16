@@ -3,6 +3,7 @@
 #include "indexer/features_vector.hpp"
 
 #include "platform/platform.hpp"
+#include "platform/virtual_mwm_core.hpp"
 
 #include "coding/files_container.hpp"
 #include "coding/internal/file_data.hpp"
@@ -67,6 +68,21 @@ unique_ptr<FeaturesOffsetsTable> FeaturesOffsetsTable::Load(FilesContainerR cons
   table->m_file.Open(cont.GetFileName());
   auto p = cont.GetAbsoluteOffsetAndSize(tag);
   ASSERT(p.first % 4 == 0, (p.first));  // will get troubles in succinct otherwise
+
+  if (wear::IsVirtualMwm(cont.GetFileName()))
+  {
+    // Pin BEFORE fetching: this region is mmap'd below (succinct::mapper::map) and read directly
+    // thereafter, bypassing WaitForData. Pinning first also stops the bounded-cache eviction from
+    // punching blocks of this region out *as they arrive*, which would otherwise prevent the
+    // whole-region fetch from ever completing when the cache budget is smaller than the table.
+    wear::PinData(cont.GetFileName(), p.first, static_cast<size_t>(p.second));
+    if (!wear::WaitForData(cont.GetFileName(), p.first, static_cast<size_t>(p.second)))
+    {
+      LOG(LERROR, ("Failed to fetch FeaturesOffsetsTable data for virtual MWM:", cont.GetFileName()));
+      return nullptr;
+    }
+  }
+
   table->m_handle.Assign(table->m_file.Map(p.first, p.second, tag));
 
   succinct::mapper::map(table->m_table, table->m_handle.GetData<char>());

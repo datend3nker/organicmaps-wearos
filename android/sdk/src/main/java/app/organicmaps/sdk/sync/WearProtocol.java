@@ -103,6 +103,11 @@ public class WearProtocol {
     public static final byte TYPE_HANDSHAKE = 21;
     public static final byte TYPE_BOOKMARKS_METADATA = 22;
 
+    // Highest valid message type id. The Bluetooth framing layer uses this as a desync sanity
+    // bound when parsing headers; keep it >= the largest TYPE_* above (with a little headroom).
+    // MUST be updated when new TYPE_* values are added, or BT will reject them as "invalid header".
+    public static final byte MAX_MESSAGE_TYPE = 25;
+
     // Priorities
     public static final int PRIORITY_HIGH = 0;
     public static final int PRIORITY_MEDIUM = 1;

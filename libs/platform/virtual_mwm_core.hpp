@@ -7,13 +7,24 @@
 namespace wear
 {
 // Requests data from phone and blocks current thread until it arrives or timeout.
-void WaitForData(std::string const & mwmName, uint64_t offset, size_t size);
+// Returns true if data is available (already existed or arrived).
+bool WaitForData(std::string const & mwmName, uint64_t offset, size_t size);
 
 // Returns true if data for the given range is already available in the local cache.
 bool IsDataAvailable(std::string const & mwmName, uint64_t offset, size_t size);
 
 // Signals that data has arrived for the given range.
 void SignalData(std::string const & mwmName, uint64_t offset, size_t size);
+
+// Marks a byte range as pinned: it will never be invalidated/evicted. Used for ranges that are
+// read via a direct mmap (e.g. succinct sections like the features-offsets table), which bypass
+// WaitForData on subsequent reads and would read zeros if their backing blocks were punched out.
+void PinData(std::string const & mwmName, uint64_t offset, size_t size);
+
+// Clears the "available" mark for the given range so the next read re-faults and re-fetches it.
+// Pinned chunks are left untouched. Returns true iff the whole requested range was cleared
+// (i.e. no pinned chunk overlapped it). Used by the bounded-cache eviction path.
+bool InvalidateData(std::string const & mwmName, uint64_t offset, size_t size);
 
 // Registers a virtual MWM with its local sparse path and total size.
 void RegisterVirtualMwm(std::string const & mwmName, std::string const & path, uint64_t totalSize);

@@ -10,23 +10,76 @@
 
 namespace
 {
-constexpr uint64_t kChunkSize = 64 * 1024;
+constexpr uint64_t kChunkSize = 1024;
 
 struct MwmWaitInfo
 {
   std::mutex m_mutex;
   std::condition_variable m_cv;
   std::vector<uint64_t> m_availableChunks;
+  std::vector<uint64_t> m_pinnedChunks;
   uint64_t m_totalSize = 0;
   std::string m_path;
+
+  void MarkPinned(uint64_t offset, size_t size)
+  {
+    uint64_t const end = offset + size;
+    uint64_t startChunk = offset / kChunkSize;
+    uint64_t endChunk = (end + kChunkSize - 1) / kChunkSize;
+
+    if (m_totalSize > 0 && end > m_totalSize)
+      endChunk = (m_totalSize + kChunkSize - 1) / kChunkSize;
+
+    for (uint64_t i = startChunk; i < endChunk; ++i)
+    {
+      uint64_t wordIdx = i / 64;
+      uint64_t bitIdx = i % 64;
+      if (wordIdx < m_pinnedChunks.size())
+        m_pinnedChunks[wordIdx] |= (1ULL << bitIdx);
+    }
+  }
+
+  bool IsPinnedChunk(uint64_t chunk) const
+  {
+    uint64_t wordIdx = chunk / 64;
+    uint64_t bitIdx = chunk % 64;
+    return wordIdx < m_pinnedChunks.size() && (m_pinnedChunks[wordIdx] & (1ULL << bitIdx));
+  }
+
+  // Clears available bits for [offset, offset+size) except for pinned chunks.
+  // Returns true iff every chunk in the range was cleared (none pinned).
+  bool ClearAvailableUnpinned(uint64_t offset, size_t size)
+  {
+    uint64_t const end = offset + size;
+    uint64_t startChunk = offset / kChunkSize;
+    uint64_t endChunk = (end + kChunkSize - 1) / kChunkSize;
+
+    if (m_totalSize > 0 && end > m_totalSize)
+      endChunk = (m_totalSize + kChunkSize - 1) / kChunkSize;
+
+    bool clearedAll = true;
+    for (uint64_t i = startChunk; i < endChunk; ++i)
+    {
+      if (IsPinnedChunk(i))
+      {
+        clearedAll = false;
+        continue;
+      }
+      uint64_t wordIdx = i / 64;
+      uint64_t bitIdx = i % 64;
+      if (wordIdx < m_availableChunks.size())
+        m_availableChunks[wordIdx] &= ~(1ULL << bitIdx);
+    }
+    return clearedAll;
+  }
 
   void MarkAvailable(uint64_t offset, size_t size)
   {
     uint64_t const end = offset + size;
-    uint64_t startChunk = (offset + kChunkSize - 1) / kChunkSize;
-    uint64_t endChunk = end / kChunkSize;
+    uint64_t startChunk = offset / kChunkSize;
+    uint64_t endChunk = (end + kChunkSize - 1) / kChunkSize;
 
-    if (end >= m_totalSize && m_totalSize > 0)
+    if (m_totalSize > 0 && end > m_totalSize)
       endChunk = (m_totalSize + kChunkSize - 1) / kChunkSize;
 
     for (uint64_t i = startChunk; i < endChunk; ++i)
@@ -81,8 +134,13 @@ MwmWaitInfo & GetWaitInfo(std::string const & mwmNameWithExt)
 
 namespace wear
 {
-void WaitForData(std::string const & mwmName, uint64_t offset, size_t size)
+bool WaitForData(std::string const & mwmNameWithExt, uint64_t offset, size_t size)
 {
+  std::string mwmName = mwmNameWithExt;
+  base::GetNameFromFullPath(mwmName);
+  if (mwmName.size() > 4 && mwmName.substr(mwmName.size() - 4) == ".mwm")
+    mwmName = mwmName.substr(0, mwmName.size() - 4);
+
   LOG(LDEBUG, ("WaitForData:", mwmName, "offset:", offset, "size:", size));
 
   MwmWaitInfo & info = GetWaitInfo(mwmName);
@@ -92,7 +150,7 @@ void WaitForData(std::string const & mwmName, uint64_t offset, size_t size)
     {
       std::lock_guard<std::mutex> lock(info.m_mutex);
       if (info.IsAvailable(offset, size))
-        return;
+        return true;
     }
 
     if (g_requestDataHandler)
@@ -102,13 +160,14 @@ void WaitForData(std::string const & mwmName, uint64_t offset, size_t size)
     if (info.m_cv.wait_for(lock, std::chrono::seconds(5), [&]{ return info.IsAvailable(offset, size); }))
     {
       LOG(LDEBUG, ("Data arrived for Virtual MWM:", mwmName, "offset:", offset, "attempt:", attempt));
-      return;
+      return true;
     }
 
     LOG(LWARNING, ("Timeout waiting for Virtual MWM data:", mwmName, "offset:", offset, "attempt:", attempt));
   }
 
   LOG(LERROR, ("Final timeout waiting for Virtual MWM data:", mwmName, "offset:", offset));
+  return false;
 }
 
 bool IsDataAvailable(std::string const & mwmName, uint64_t offset, size_t size)
@@ -129,6 +188,21 @@ void SignalData(std::string const & mwmName, uint64_t offset, size_t size)
   info.m_cv.notify_all();
 }
 
+void PinData(std::string const & mwmName, uint64_t offset, size_t size)
+{
+  LOG(LDEBUG, ("PinData:", mwmName, "offset:", offset, "size:", size));
+  MwmWaitInfo & info = GetWaitInfo(mwmName);
+  std::lock_guard<std::mutex> lock(info.m_mutex);
+  info.MarkPinned(offset, size);
+}
+
+bool InvalidateData(std::string const & mwmName, uint64_t offset, size_t size)
+{
+  MwmWaitInfo & info = GetWaitInfo(mwmName);
+  std::lock_guard<std::mutex> lock(info.m_mutex);
+  return info.ClearAvailableUnpinned(offset, size);
+}
+
 void RegisterVirtualMwm(std::string const & mwmName, std::string const & path, uint64_t totalSize)
 {
   MwmWaitInfo & info = GetWaitInfo(mwmName);
@@ -138,6 +212,7 @@ void RegisterVirtualMwm(std::string const & mwmName, std::string const & path, u
     info.m_totalSize = totalSize;
     uint64_t numChunks = (totalSize + kChunkSize - 1) / kChunkSize;
     info.m_availableChunks.assign((numChunks + 63) / 64, 0);
+    info.m_pinnedChunks.assign((numChunks + 63) / 64, 0);
   }
 
   {

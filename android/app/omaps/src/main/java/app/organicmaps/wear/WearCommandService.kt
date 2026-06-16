@@ -32,15 +32,32 @@ object WearCommandService {
         backend?.stop()
         backend = null 
         
-        NavigationStateHolder.update { it.copy(isPhoneConnected = false) }
-        
         val isStandalone = selectedBackend == "STANDALONE"
+        // Keep the UI state's backend authoritative for the active transport, so the
+        // connection indicator stays correct across every caller of initBackend
+        // (settings UI, phone-driven handleBackendSwitch, fallbacks), not just the
+        // settings screen.
+        NavigationStateHolder.update {
+            it.copy(
+                backend = selectedBackend ?: defaultBackend,
+                standaloneMode = isStandalone,
+                isPhoneConnected = false,
+                isConnecting = !isStandalone
+            )
+        }
+        
         val useBluetooth = selectedBackend == "BLUETOOTH" && !isStandalone
         
         backend = if (useBluetooth || isStandalone) {
             BluetoothWearSyncBackend()
         } else {
             BackendProvider.getGmsBackend()
+        }
+
+        if (!isStandalone) {
+            // Immediate handshake attempt on switch
+            getBackend(context).sendPing(context)
+            getBackend(context).sendHandshake(context)
         }
 
         val serviceIntent = Intent(context, BluetoothWearDataListenerService::class.java)
@@ -52,14 +69,16 @@ object WearCommandService {
     }
 
     fun stopNavigation(context: Context) = getBackend(context).stopNavigation(context)
-    
+
     fun search(context: Context, query: String) {
         val navState = NavigationStateHolder.state.value
         app.organicmaps.sdk.sync.WearLog.logState("WATCH", "UI Search Request: '$query'. Standalone=${navState.standaloneMode}, Connected=${navState.isPhoneConnected}")
         
         ensureSearchInitialized(context)
-        
-        if (navState.standaloneMode || !navState.isPhoneConnected) {
+
+        // Context-aware: search on-watch data whenever the watch is the data source
+        // (standalone, Local Maps enabled, or phone unreachable); otherwise ask the phone.
+        if (navState.standaloneMode || navState.watchLocalMode || !navState.isPhoneConnected) {
             val hasLocation = navState.lat != 0.0
             val lat = navState.lat
             val lon = navState.lon
@@ -112,8 +131,10 @@ object WearCommandService {
     fun requestDownloadedMaps(context: Context) = getBackend(context).requestDownloadedMaps(context)
     fun selectSearchResult(context: Context, result: SearchResultItem, routerType: Int) {
         val navState = NavigationStateHolder.state.value
-        val isStandalone = navState.standaloneMode || !navState.isPhoneConnected
-        
+        // Treat Local Maps mode as a local (watch-resident) routing source too, so we
+        // don't launch the phone app while also routing locally.
+        val isStandalone = navState.standaloneMode || navState.watchLocalMode || !navState.isPhoneConnected
+
         if (!isStandalone) {
             launchPhoneApp(context)
             
@@ -129,7 +150,7 @@ object WearCommandService {
             }
         }
 
-        if (navState.standaloneMode || !navState.isPhoneConnected || navState.watchLocalMode) {
+        if (isStandalone) {
             NavigationStateHolder.update(navState.copy(
                 destinationName = result.name,
                 routerType = routerType,

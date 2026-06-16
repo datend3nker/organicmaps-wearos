@@ -289,9 +289,14 @@ fun WearApp() {
     }
 
     androidx.compose.runtime.LaunchedEffect(isNavigating) {
-        if (isNavigating && isMapEnabled) {
-            pagerState.scrollToPage(0)
-        } else if (!isNavigating) {
+        if (isNavigating) {
+            // Power saving: In companion mode, default to Turn-by-Turn screen
+            if (!navState.standaloneMode && !navState.watchLocalMode) {
+                pagerState.scrollToPage(if (isMapEnabled) 1 else 0)
+            } else if (isMapEnabled) {
+                pagerState.scrollToPage(0)
+            }
+        } else {
             pagerState.scrollToPage(0)
         }
     }
@@ -523,6 +528,7 @@ fun StatusIndicators(navState: app.organicmaps.wear.NavigationState) {
             
             val (connIcon, connColor) = when {
                 navState.isPhoneConnected -> (if (navState.backend == "BLUETOOTH") Icons.Default.Bluetooth else Icons.Default.Cloud) to Color(0xFF4CAF50)
+                navState.isConnecting -> (if (navState.backend == "BLUETOOTH") Icons.Default.Bluetooth else Icons.Default.Cloud) to Color.Yellow
                 else -> (if (navState.backend == "BLUETOOTH") Icons.Default.BluetoothDisabled else Icons.Default.CloudOff) to Color.Red
             }
             

@@ -53,6 +53,7 @@ public class WearMessageRouter {
     private static final String PATH_BOOKMARKS = WearProtocol.PATH_BOOKMARKS;
     private static final String PATH_BOOKMARKS_METADATA = WearProtocol.PATH_BOOKMARKS_METADATA;
     private static final String PATH_BOOKMARK_FILE = WearProtocol.PATH_BOOKMARK_FILE;
+    private static final String PATH_BACKEND_SWITCH = WearProtocol.PATH_BACKEND_SWITCH;
 
     private static final Handler sMainHandler = new Handler(Looper.getMainLooper());
 
@@ -95,12 +96,6 @@ public class WearMessageRouter {
         switch (path) {
             case PATH_HANDSHAKE:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handshake received");
-                int remoteVersion = WearProtocolDataConverter.decodeHandshakeVersion(finalPayload);
-                Log.i(TAG, "DEBUG_WEAR_PIPELINE: Remote app version: " + remoteVersion);
-                
-                WearSyncService.getSyncLayer().sendHandshake(context);
-                WearSyncService.getSyncLayer().syncPreferences(context.getApplicationContext());
-                break;
             case PATH_STOP_NAVIGATION:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_STOP_NAVIGATION");
                 sMainHandler.post(() -> {
@@ -175,6 +170,12 @@ public class WearMessageRouter {
                     ensureFrameworkInitialized(context, () -> {
                         app.organicmaps.sdk.search.SearchRecents.add(name, context);
                         HeadlessRouteInteractor.getInstance(context).planRoute(lat, lon, routerType, name);
+                        
+                        // Wake up UI to ensure user sees the planning
+                        Intent intent = new Intent(context, app.organicmaps.MwmActivity.class);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                        intent.putExtra(app.organicmaps.MwmActivity.EXTRA_SHOW_MAP, true);
+                        context.startActivity(intent);
                     });
                 });
                 break;
@@ -224,6 +225,12 @@ public class WearMessageRouter {
                 sMainHandler.post(() -> {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to start navigation");
                     RoutingController.get().start();
+                    
+                    // Wake up UI to ensure user sees the navigation
+                    Intent intent = new Intent(context, app.organicmaps.MwmActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    intent.putExtra(app.organicmaps.MwmActivity.EXTRA_SHOW_MAP, true);
+                    context.startActivity(intent);
                 });
                 break;
             case PATH_TRACK_RECORDING_TOGGLE:
@@ -531,6 +538,18 @@ public class WearMessageRouter {
             case PATH_BOOKMARK_FILE:
                 sMainHandler.post(() -> WearSyncService.handleIncomingBookmarkFile(context, finalPayload));
                 break;
+            case PATH_BACKEND_SWITCH: {
+                String newBackend = new String(finalPayload, StandardCharsets.UTF_8);
+                Log.i(TAG, "DEBUG_WEAR_PIPELINE: Watch requested backend switch to: " + newBackend);
+                sMainHandler.post(() -> {
+                    androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+                            .edit()
+                            .putString("pref_wear_os_backend", newBackend)
+                            .apply();
+                    WearSyncService.initSyncLayer(context);
+                });
+                break;
+            }
         }
     }
 

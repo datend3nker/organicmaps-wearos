@@ -112,10 +112,32 @@ object WearMapDownloader {
 
     fun onMapMissingOnPhone(context: Context, mapId: String) {
         val normalizedMapId = MapIdUtils.normalize(mapId)!!
+
+        val wasStreamingThis = _currentMap.value == normalizedMapId &&
+            _downloadState.value == DownloadState.STREAMING_FROM_PHONE
+
+        // Phone-first, then internet: if the phone doesn't have the map but the watch is online,
+        // transparently fall back to a direct download instead of just failing.
+        if (wasStreamingThis && hasInternetAccess(context)) {
+            Log.i(TAG, "Map '$normalizedMapId' missing on phone — falling back to internet download")
+            NavigationStateHolder.update { it.copy(missingMapId = null) }
+            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map not on phone — downloading from internet"))
+            watchdogJob?.cancel()
+            currentDownloadJob?.cancel()
+            currentDownloadJob = CoroutineScope(Dispatchers.IO).launch {
+                _downloadState.value = DownloadState.DOWNLOADING
+                val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
+                val urlMapId = normalizedMapId.replace(" ", "_")
+                val finalUrl = "https://direct.organicmaps.app/$dataVersion/$urlMapId.mwm"
+                downloadOverInternet(context, normalizedMapId, finalUrl)
+            }
+            return
+        }
+
         NavigationStateHolder.update { it.copy(missingMapId = normalizedMapId) }
         NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$normalizedMapId' not on phone — download it in Organic Maps on the phone", android.widget.Toast.LENGTH_LONG))
-        
-        if (_currentMap.value == normalizedMapId && _downloadState.value == DownloadState.STREAMING_FROM_PHONE) {
+
+        if (wasStreamingThis) {
             _downloadState.value = DownloadState.FAILED
             watchdogJob?.cancel()
         }
@@ -246,18 +268,20 @@ object WearMapDownloader {
             }
 
             if (nodes.isNullOrEmpty()) {
-                NavigationStateHolder.emitEvent(UiEvent.ShowToast("GMS not available, falling back to Bluetooth"))
-                Log.w(TAG, "GMS nodes not found or timeout. Switching to BLUETOOTH backend.")
-                prefs.edit().putString("pref_wear_os_backend", "BLUETOOTH").apply()
-                withContext(Dispatchers.Main) {
-                    WearCommandService.initBackend(context)
-                }
+                // Respect the user's selected backend: do NOT silently flip to Bluetooth.
+                // Surface the problem and abort so the indicator/pref stay consistent.
+                NavigationStateHolder.emitEvent(UiEvent.ShowToast("Phone not reachable over GMS. Check the connection or switch backend in Settings."))
+                Log.w(TAG, "GMS nodes not found or timeout. Aborting map sync (backend left as GMS).")
+                _downloadState.value = DownloadState.FAILED
+                watchdogJob?.cancel()
+                WearNotificationManager.hideSyncNotification(context)
+                return@withContext
             }
         }
 
         try {
             WearCommandService.sendMapDownloadRequest(context, mapId)
-            Log.d(TAG, "Requested phone to stream $mapId over Bluetooth channel")
+            Log.d(TAG, "Requested phone to stream $mapId over $currentBackend")
             // Completion will be handled when the channel stream finishes in DataListenerService
         } catch (e: Exception) {
             Log.e(TAG, "Failed to request map streaming from phone", e)

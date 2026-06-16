@@ -109,10 +109,32 @@ object WearMapDownloader {
 
     fun onMapMissingOnPhone(context: Context, mapId: String) {
         val normalizedMapId = MapIdUtils.normalize(mapId)!!
+
+        val wasStreamingThis = _currentMap.value == normalizedMapId &&
+            (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING)
+
+        // Phone-first, then internet: if the phone doesn't have the map but the watch is online,
+        // transparently fall back to a direct download instead of just failing.
+        if (wasStreamingThis && hasInternetAccess(context)) {
+            Log.i(TAG, "Map '$normalizedMapId' missing on phone — falling back to internet download")
+            NavigationStateHolder.update { it.copy(missingMapId = null) }
+            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map not on phone — downloading from internet"))
+            watchdogJob?.cancel()
+            currentDownloadJob?.cancel()
+            currentDownloadJob = CoroutineScope(Dispatchers.IO).launch {
+                _downloadState.value = DownloadState.DOWNLOADING
+                val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
+                val urlMapId = normalizedMapId.replace(" ", "_")
+                val finalUrl = "https://direct.organicmaps.app/$dataVersion/$urlMapId.mwm"
+                downloadOverInternet(context, normalizedMapId, finalUrl)
+            }
+            return
+        }
+
         NavigationStateHolder.update { it.copy(missingMapId = normalizedMapId) }
         NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$normalizedMapId' not on phone — download it in Organic Maps on the phone"))
-        
-        if (_currentMap.value == normalizedMapId && (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING)) {
+
+        if (wasStreamingThis) {
             _downloadState.value = DownloadState.FAILED
             watchdogJob?.cancel()
         }

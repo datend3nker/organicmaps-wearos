@@ -8,7 +8,6 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -111,12 +110,6 @@ class WearOsSettingsFragment : BaseXmlSettingsFragment() {
         findPreference<Preference>(getString(R.string.pref_wear_os_backend))?.apply {
             setOnPreferenceChangeListener { _, newValue ->
                 val nextBackend = newValue as String
-
-                try {
-                    WearSyncService.getSyncLayer().sendBackendSwitch(requireContext(), nextBackend)
-                } catch (e: Exception) {
-                    Log.e("WearOsSettings", "Failed to send switch command", e)
-                }
 
                 PreferenceManager.getDefaultSharedPreferences(requireContext()).edit {
                     putString(getString(R.string.pref_wear_os_backend), nextBackend)

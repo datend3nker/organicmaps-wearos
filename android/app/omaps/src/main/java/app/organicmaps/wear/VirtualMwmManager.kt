@@ -1,15 +1,21 @@
 package app.organicmaps.wear
 
 import android.content.Context
+import android.os.StatFs
 import android.util.Log
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.BitSet
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import app.organicmaps.sdk.settings.StoragePathManager
 import app.organicmaps.sdk.Framework
 import app.organicmaps.sdk.util.MapIdUtils
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Manage the local sparse-cache and bridge the JNI calls to the Transport layer.
@@ -34,6 +40,149 @@ object VirtualMwmManager {
     private val mScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val nativeLibraryLoaded = CompletableDeferred<Unit>()
     private val nativeMountedMwms = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+
+    // --- Bounded LRU cache ---
+    // Per-(mwm, blockIndex) last-access tick; higher = more recently used.
+    private val mwmBlockAccess = ConcurrentHashMap<String, LongArray>()
+    private val accessTick = AtomicLong(0)
+    // Blocks that must never be evicted: the container header/footer (set on mount) and any
+    // natively-pinned range discovered lazily (e.g. the mmap'd features-offsets table).
+    private val mwmPinnedBlocks = ConcurrentHashMap<String, BitSet>()
+    // Physical bytes currently resident across all mounted virtual mwms (sum of present blocks).
+    private val residentBytes = AtomicLong(0)
+    private val evictionRunning = AtomicBoolean(false)
+    @Volatile private var cachedBudgetBytes = 0L
+    @Volatile private var budgetComputedAt = 0L
+    private val _cacheBytes = MutableStateFlow(0L)
+    /** Current streaming-cache size in bytes (for storage-aware UI). */
+    val cacheBytes: StateFlow<Long> = _cacheBytes.asStateFlow()
+
+    private const val MIN_BUDGET_BYTES = 24L * 1024 * 1024
+    private const val MAX_BUDGET_BYTES = 192L * 1024 * 1024
+
+    private fun blockLen(totalSize: Long, blockIdx: Int): Int =
+        (totalSize - blockIdx.toLong() * BLOCK_SIZE).coerceAtMost(BLOCK_SIZE.toLong()).coerceAtLeast(0).toInt()
+
+    private fun touchBlock(mwmName: String, blockIdx: Int) {
+        val totalSize = mwmTotalSizes[mwmName] ?: return
+        val numBlocks = ((totalSize + BLOCK_SIZE - 1) / BLOCK_SIZE).toInt()
+        if (blockIdx < 0 || blockIdx >= numBlocks) return
+        val arr = mwmBlockAccess.getOrPut(mwmName) { LongArray(numBlocks) }
+        if (blockIdx < arr.size) arr[blockIdx] = accessTick.incrementAndGet()
+    }
+
+    private fun touchRange(mwmName: String, offset: Long, size: Int) {
+        if (size <= 0) return
+        val start = (offset / BLOCK_SIZE).toInt()
+        val end = ((offset + size - 1) / BLOCK_SIZE).toInt()
+        for (i in start..end) touchBlock(mwmName, i)
+    }
+
+    /** Auto budget: ~25% of (free space + what we already hold), clamped. Cached for 30s. */
+    private fun computeBudgetBytes(): Long {
+        val now = System.currentTimeMillis()
+        if (cachedBudgetBytes > 0 && now - budgetComputedAt < 30_000) return cachedBudgetBytes
+        val budget = try {
+            val path = StoragePathManager.findMapsStorage(WearApplication.instance)
+            val available = StatFs(path).availableBytes
+            ((available + residentBytes.get()) / 4).coerceIn(MIN_BUDGET_BYTES, MAX_BUDGET_BYTES)
+        } catch (e: Exception) {
+            Log.w(TAG, "computeBudgetBytes failed, using min: ${e.message}")
+            MIN_BUDGET_BYTES
+        }
+        cachedBudgetBytes = budget
+        budgetComputedAt = now
+        return budget
+    }
+
+    private fun publishCacheBytes() { _cacheBytes.value = residentBytes.get() }
+
+    private fun initResidentFromTracker(mwmName: String, totalSize: Long) {
+        val tracker = mwmBlockTrackers[mwmName] ?: return
+        var sum = 0L
+        synchronized(tracker) {
+            var b = tracker.nextSetBit(0)
+            while (b != -1) { sum += blockLen(totalSize, b); b = tracker.nextSetBit(b + 1) }
+        }
+        if (sum > 0) { residentBytes.addAndGet(sum); publishCacheBytes() }
+    }
+
+    private fun maybeEnforceBudget() {
+        if (residentBytes.get() <= computeBudgetBytes()) return
+        if (!evictionRunning.compareAndSet(false, true)) return
+        mScope.launch {
+            try { enforceBudget() } finally { evictionRunning.set(false) }
+        }
+    }
+
+    private fun enforceBudget() {
+        val target = computeBudgetBytes() * 9 / 10  // hysteresis: free down to 90% of budget
+        data class Victim(val mwm: String, val block: Int, val tick: Long)
+        while (residentBytes.get() > target) {
+            val candidates = ArrayList<Victim>()
+            for (mwm in mountedMwms) {
+                val tracker = mwmBlockTrackers[mwm] ?: continue
+                val pinned = mwmPinnedBlocks[mwm]
+                val pending = mwmPendingTrackers[mwm]
+                val access = mwmBlockAccess[mwm]
+                synchronized(tracker) {
+                    var b = tracker.nextSetBit(0)
+                    while (b != -1) {
+                        val isPinned = pinned != null && synchronized(pinned) { pinned.get(b) }
+                        val isPending = pending != null && synchronized(pending) { pending.get(b) }
+                        if (!isPinned && !isPending) {
+                            val tick = access?.getOrElse(b) { 0L } ?: 0L
+                            candidates.add(Victim(mwm, b, tick))
+                        }
+                        b = tracker.nextSetBit(b + 1)
+                    }
+                }
+            }
+            if (candidates.isEmpty()) break
+            candidates.sortBy { it.tick }
+            var freedAny = false
+            for (v in candidates) {
+                if (residentBytes.get() <= target) break
+                if (evictBlock(v.mwm, v.block)) freedAny = true
+            }
+            if (!freedAny) break  // remaining are all pinned or hole-punch unsupported
+        }
+    }
+
+    /** Returns true iff a block's physical bytes were freed. */
+    private fun evictBlock(mwmName: String, blockIdx: Int): Boolean {
+        val totalSize = mwmTotalSizes[mwmName] ?: return false
+        val path = mwmPaths[mwmName] ?: return false
+        val offset = blockIdx.toLong() * BLOCK_SIZE
+        val len = blockLen(totalSize, blockIdx)
+        if (len <= 0) return false
+
+        // Clear native availability. Natively-pinned ranges (offsets table) return false.
+        val cleared = try { nativeInvalidateData(mwmName, offset, len.toLong()) } catch (e: Throwable) {
+            Log.w(TAG, "nativeInvalidateData failed for $mwmName@$offset: ${e.message}"); false
+        }
+        if (!cleared) {
+            // Remember the pin locally so we stop re-selecting this block.
+            mwmPinnedBlocks.getOrPut(mwmName) { BitSet() }.let { synchronized(it) { it.set(blockIdx) } }
+            return false
+        }
+
+        val punched = try { nativePunchHole(path, offset, len.toLong()) } catch (e: Throwable) {
+            Log.w(TAG, "nativePunchHole failed for $path@$offset: ${e.message}"); false
+        }
+        if (!punched) {
+            // Disk wasn't freed (fs unsupported). The bytes are still present, so re-signal
+            // availability to avoid a pointless re-fetch, and stop evicting.
+            try { nativeDataArrived(mwmName, offset, len) } catch (_: Throwable) {}
+            return false
+        }
+
+        mwmBlockTrackers[mwmName]?.let { synchronized(it) { it.clear(blockIdx) } }
+        residentBytes.addAndGet(-len.toLong())
+        publishCacheBytes()
+        scheduleSave(mwmName)
+        return true
+    }
 
     fun setNativeLibraryLoaded() {
         Log.d(TAG, "DEBUG_WEAR_PIPELINE: Native library signal received")
@@ -79,6 +228,8 @@ object VirtualMwmManager {
                 }
 
                 if (allAvailable) {
+                    // Reading from the viewport keeps these blocks hot so eviction spares them.
+                    touchRange(mwmName, alignedOffset, alignedLen)
                     nativeLibraryLoaded.await()
                     nativeMountedMwms[mwmName]?.await()
                     nativeDataArrived(mwmName, alignedOffset, alignedLen)
@@ -191,17 +342,27 @@ object VirtualMwmManager {
         }
         
         var changed = false
+        var addedBytes = 0L
         synchronized(tracker) {
             for (i in startBlock until endBlock) {
                 if (!tracker.get(i)) {
                     tracker.set(i)
+                    addedBytes += blockLen(totalSize, i)
                     changed = true
                 }
             }
         }
-        
+
+        // LRU + budget accounting: a freshly written block is the most-recently used.
+        touchRange(mwmName, offset, size)
+        if (addedBytes > 0) {
+            residentBytes.addAndGet(addedBytes)
+            publishCacheBytes()
+        }
+
         if (changed) {
             scheduleSave(mwmName)
+            maybeEnforceBudget()
         }
     }
 
@@ -294,11 +455,25 @@ object VirtualMwmManager {
                     }
                 }
             }
+            // Drop this mwm's resident bytes from the global budget accounting.
+            val totalSize = mwmTotalSizes[mwmName]
+            val tracker = mwmBlockTrackers[mwmName]
+            if (totalSize != null && tracker != null) {
+                var sum = 0L
+                synchronized(tracker) {
+                    var b = tracker.nextSetBit(0)
+                    while (b != -1) { sum += blockLen(totalSize, b); b = tracker.nextSetBit(b + 1) }
+                }
+                if (sum > 0) { residentBytes.addAndGet(-sum); publishCacheBytes() }
+            }
+
             mwmPaths.remove(mwmName)
             mwmTotalSizes.remove(mwmName)
             mountedMwms.remove(mwmName)
             mwmBlockTrackers.remove(mwmName)
             mwmPendingTrackers.remove(mwmName)
+            mwmBlockAccess.remove(mwmName)
+            mwmPinnedBlocks.remove(mwmName)
             nativeMountedMwms.remove(mwmName)
             saveRunnables.remove(mwmName)?.let { saveHandler.removeCallbacks(it) }
         } catch (e: Exception) {
@@ -408,6 +583,15 @@ object VirtualMwmManager {
             mwmPaths[mwmName] = path
             mwmTotalSizes[mwmName] = totalSize
             mountedMwms.add(mwmName)
+
+            // Account for blocks already resident on disk (restored from .bits) toward the budget,
+            // and pin the container header (first block) and footer (last block) so the directory
+            // structure is never evicted.
+            initResidentFromTracker(mwmName, totalSize)
+            mwmPinnedBlocks.getOrPut(mwmName) { BitSet() }.let { pinned ->
+                val lastBlk = ((totalSize - 1) / BLOCK_SIZE).toInt()
+                synchronized(pinned) { pinned.set(0); pinned.set(lastBlk) }
+            }
             
             if (headerData != null && headerData.isNotEmpty()) {
                 synchronized(raf) {
@@ -436,6 +620,13 @@ object VirtualMwmManager {
             // Native notification and replay tracker
             nativeNotifyMounted(mwmName, path, totalSize)
             mountedDeferred.complete(Unit)
+
+            // Pin header/footer natively too (RegisterVirtualMwm has now sized the pinned bitmap),
+            // so they are protected even if read via a direct mmap on some path.
+            if (headerData != null && headerData.isNotEmpty())
+                nativePinData(mwmName, 0L, headerData.size.toLong())
+            if (footerData != null && footerData.isNotEmpty())
+                nativePinData(mwmName, totalSize - footerData.size, footerData.size.toLong())
             
             val tracker = mwmBlockTrackers[mwmName]
             if (tracker != null) {
@@ -512,4 +703,10 @@ object VirtualMwmManager {
     external fun nativeDataArrived(mwmName: String, offset: Long, size: Int)
     @JvmStatic
     external fun nativeNotifyMounted(mwmName: String, path: String, totalSize: Long)
+    @JvmStatic
+    external fun nativePinData(mwmName: String, offset: Long, size: Long)
+    @JvmStatic
+    external fun nativeInvalidateData(mwmName: String, offset: Long, size: Long): Boolean
+    @JvmStatic
+    external fun nativePunchHole(path: String, offset: Long, size: Long): Boolean
 }

@@ -250,10 +250,10 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
 
         // --- CONNECTIVITY GROUP ---
         item { Spacer(modifier = Modifier.height(8.dp)) }
-        item { SettingHeader("Connectivity") }
+        item { SettingHeader("Operation Mode") }
 
         item {
-            val backendLabels = listOf("Google Play (GSM)", "Bluetooth (OSS)", "Standalone")
+            val backendLabels = listOf("Companion (GMS)", "Companion (BT)", "Standalone (Watch only)")
             val backendValues = listOf("GMS", "BLUETOOTH", "STANDALONE")
             Chip(
                 onClick = {

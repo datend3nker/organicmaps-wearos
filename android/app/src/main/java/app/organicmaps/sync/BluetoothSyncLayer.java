@@ -757,7 +757,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
                         throw new IOException("Protocol version mismatch");
                     }
 
-                    if (len < 0 || len > 15 * 1024 * 1024 || type < 0 || type > 25) {
+                    if (len < 0 || len > 15 * 1024 * 1024 || type < 0 || type > WearProtocol.MAX_MESSAGE_TYPE) {
                         Log.e(TAG, "DEBUG_BT_PIPELINE: Invalid message header: type=" + type + ", len=" + len + ". Stream desync?");
                         throw new IOException("Protocol desync");
                     }

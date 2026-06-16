@@ -402,7 +402,6 @@ public class WearSyncService {
         }
         
         if (context != null) {
-            sSyncLayer.sendBackendSwitch(context, backend);
             if (!getSyncLayer().isIgnoringPreferenceChanges()) {
                 syncPreferences(context);
             }

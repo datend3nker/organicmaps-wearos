@@ -173,6 +173,19 @@ fun MapManagerScreen(isVisible: Boolean = true) {
             }
         }
 
+        // Storage awareness: free space + current streaming-cache usage. Helps the user pick
+        // between full Copy to Watch (ample storage) and bounded streaming (tight storage).
+        item {
+            val freeBytes = remember(navState.lat, navState.lon) { app.organicmaps.wear.WatchStorage.freeBytes(context) }
+            val cacheBytes by app.organicmaps.wear.VirtualMwmManager.cacheBytes.collectAsState()
+            Text(
+                "Free: ${app.organicmaps.wear.WatchStorage.formatBytes(freeBytes)}  •  Stream cache: ${app.organicmaps.wear.WatchStorage.formatBytes(cacheBytes)}",
+                style = MaterialTheme.typography.caption3,
+                color = Color.Gray,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+        }
+
         if (downloadState == app.organicmaps.wear.WearMapDownloader.DownloadState.STREAMING_FROM_PHONE || 
             downloadState == app.organicmaps.wear.WearMapDownloader.DownloadState.DOWNLOADING) {
             item {
@@ -314,8 +327,19 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
             if (item.isExpandable) {
                 onPathStackChanged(pathStack + item.id)
             } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED || isOnPhone) {
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
-                    app.organicmaps.wear.WearMapDownloader.downloadOrStreamMap(context, item.id)
+                // Storage guard: a full Copy to Watch needs room for the whole region. If it won't
+                // fit comfortably, steer the user to bounded viewport streaming instead of filling
+                // the disk (streaming serves the map on demand when navigated to).
+                if (item.totalSize > 0 && !app.organicmaps.wear.WatchStorage.fitsComfortably(context, item.totalSize)) {
+                    val free = app.organicmaps.wear.WatchStorage.formatBytes(app.organicmaps.wear.WatchStorage.freeBytes(context))
+                    val size = app.organicmaps.wear.WatchStorage.formatBytes(item.totalSize)
+                    NavigationStateHolder.emitEvent(app.organicmaps.wear.UiEvent.ShowToast(
+                        "$size won't fit ($free free). It will stream on demand instead.",
+                        android.widget.Toast.LENGTH_LONG))
+                } else {
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                        app.organicmaps.wear.WearMapDownloader.downloadOrStreamMap(context, item.id)
+                    }
                 }
             }
         },

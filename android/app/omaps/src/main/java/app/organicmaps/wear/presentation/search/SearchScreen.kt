@@ -273,7 +273,7 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
                         onNavigate = { routerType, avoidTolls, avoidMotorways, avoidFerries, avoidUnpaved ->
                             coroutineScope.launch {
                                 val state = NavigationStateHolder.state.value
-                                if (state.standaloneMode || (!state.isPhoneConnected && state.watchLocalMode)) {
+                                if (state.standaloneMode || state.watchLocalMode || !state.isPhoneConnected) {
                                     try {
                                         val wearApp = context.applicationContext as WearApplication
                                         wearApp.waitForInitializationSuspend()

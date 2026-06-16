@@ -69,10 +69,31 @@ object WearMessageRouter {
         val backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS"
         app.organicmaps.sdk.sync.WearLog.logReceived("WATCH", backend, path, payload.size)
         
-        // Notify activity confirmed connection for ANY valid message
-        (context.applicationContext as WearApplication).onActivityReceived()
-        NavigationStateHolder.updateTimestamp(System.currentTimeMillis())
-        
+        // Only notify activity for messages from the SELECTED backend
+        // Bluetooth messages come from "bluetooth_phone", others are GMS/System
+        val isFromSelectedBackend = (backend == "BLUETOOTH" && sourceNodeId == "bluetooth_phone") ||
+                                   (backend == "GMS" && sourceNodeId != "bluetooth_phone")
+
+        // Control-plane paths must always be processed (even from the non-selected
+        // transport) so a backend switch can be negotiated over whichever transport
+        // currently carries it.
+        val isControlPlane = path == WearProtocol.PATH_PING || path == PATH_PONG ||
+                             path == WearProtocol.PATH_HANDSHAKE || path == WearProtocol.PATH_BACKEND_SWITCH
+
+        if (isFromSelectedBackend) {
+            (context.applicationContext as WearApplication).onActivityReceived()
+            NavigationStateHolder.updateTimestamp(System.currentTimeMillis())
+        }
+
+        // Drop data-plane traffic arriving on the non-selected backend. Without this a
+        // lingering/secondary transport (e.g. a still-running Bluetooth listener after
+        // switching to GMS) keeps injecting state — the root of the "switching isn't
+        // smooth / things still arrive over Bluetooth" symptom.
+        if (!isFromSelectedBackend && !isControlPlane) {
+            app.organicmaps.sdk.sync.WearLog.d("Dropping $path from non-selected backend (source=$sourceNodeId, selected=$backend)")
+            return
+        }
+
         // Handshake: Send pong back to phone so it knows we are alive
         if (path != PATH_PONG) {
             WearCommandService.sendPong(context, sourceNodeId)

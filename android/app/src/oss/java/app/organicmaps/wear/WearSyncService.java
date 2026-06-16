@@ -18,6 +18,9 @@ public class WearSyncService {
     private static final List<ISyncLayer.MessageListener> sListeners = new ArrayList<>();
     private static boolean sListenersRegistered = false;
     private static final android.os.Handler sHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static boolean sIsSilentSyncInProgress = false;
+    private static boolean sIsApplyingRemoteUpdate = false;
+
     private static final Runnable sSyncPrefsRunnable = () -> {
         android.util.Log.d("WearSync", "Debounced syncPreferences executing");
         Context context = app.organicmaps.MwmApplication.sInstance;
@@ -63,7 +66,7 @@ public class WearSyncService {
                     boolean isLast = sent >= length;
                     byte[] chunk = read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read);
                     android.util.Log.d("WearSync", "Sending bookmark chunk for " + catName + " isLast=" + isLast);
-                    getSyncLayer().sendBookmarkFile(app.organicmaps.MwmApplication.sInstance, catName, chunk, isLast);
+                    getSyncLayer().sendBookmarkFile(app.organicmaps.MwmApplication.sInstance, catName, chunk, isLast, false);
                     
                     // Report progress back to watch so UI can show it
                     int progress = (int) (sent * 100 / length);
@@ -264,7 +267,47 @@ public class WearSyncService {
         getSyncLayer().checkConnection(context, callback);
     }
 
+    public static boolean isSilentSyncInProgress() {
+        return sIsSilentSyncInProgress;
+    }
+
+    public static void setSilentSyncInProgress(boolean inProgress) {
+        sIsSilentSyncInProgress = inProgress;
+    }
+
+    public static void setApplyingRemoteUpdate(boolean applying) {
+        sIsApplyingRemoteUpdate = applying;
+    }
+
+    public static void addPendingMerge(String categoryName) {
+        // Stub for OSS
+    }
+
+    public static byte[] buildCommandPayload(String path, byte[] data) {
+        // Stub for OSS
+        return new byte[0];
+    }
+
+    public static void handleIncomingBookmarksMetadata(Context context, byte[] payload) {
+        // Stub for OSS
+    }
+
+    public static void handleIncomingBookmarkFile(Context context, byte[] payload) {
+        // Stub for OSS
+    }
+
+    public static void syncBookmarksNow() {
+        android.util.Log.d("WearSync", "syncBookmarksNow stub called");
+        Context context = app.organicmaps.MwmApplication.sInstance;
+        if (context == null || !isFrameworkReady()) return;
+        sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
+    }
+
     public static void launchWatchApp(@NonNull Context context) {
         getSyncLayer().launchWatchApp(context);
+    }
+
+    public static boolean isWatchAppConnected() {
+        return getSyncLayer().isLinked();
     }
 }

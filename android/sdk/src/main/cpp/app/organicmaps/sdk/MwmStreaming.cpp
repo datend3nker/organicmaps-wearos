@@ -4,6 +4,7 @@
 #include "storage/storage.hpp"
 
 #include "platform/local_country_file.hpp"
+#include "platform/local_country_file_utils.hpp"
 #include "platform/country_defines.hpp"
 
 #include "coding/file_reader.hpp"
@@ -37,11 +38,10 @@ JNIEXPORT jbyteArray Java_app_organicmaps_sdk_Framework_nativeGetMwmBytes(JNIEnv
     return env->NewByteArray(0);
   }
 
-  std::string const path = localFile->GetPath(MapFileType::Map);
   try
   {
-    FileReader reader(path);
-    uint64_t const fileSize = reader.Size();
+    std::unique_ptr<ModelReader> reader = platform::GetCountryReader(*localFile, MapFileType::Map);
+    uint64_t const fileSize = reader->Size();
     if (offset < 0 || static_cast<uint64_t>(offset) >= fileSize)
     {
       LOG(LWARNING, ("Offset out of bounds for:", mwmName, "offset:", offset, "fileSize:", fileSize));
@@ -53,15 +53,15 @@ JNIEXPORT jbyteArray Java_app_organicmaps_sdk_Framework_nativeGetMwmBytes(JNIEnv
       bytesToRead = static_cast<size_t>(fileSize - offset);
 
     std::vector<uint8_t> buffer(bytesToRead);
-    reader.Read(static_cast<uint64_t>(offset), buffer.data(), bytesToRead);
+    reader->Read(static_cast<uint64_t>(offset), buffer.data(), bytesToRead);
 
     jbyteArray result = env->NewByteArray(static_cast<jsize>(bytesToRead));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytesToRead), reinterpret_cast<jbyte const *>(buffer.data()));
     return result;
   }
-  catch (Reader::Exception const & e)
+  catch (RootException const & e)
   {
-    LOG(LERROR, ("Error reading MWM file:", path, e.what()));
+    LOG(LERROR, ("Error reading MWM file:", mwmName, e.what()));
     return env->NewByteArray(0);
   }
 }
@@ -80,11 +80,15 @@ JNIEXPORT jlong Java_app_organicmaps_sdk_Framework_nativeGetMwmSize(JNIEnv * env
 
   if (!localFile) return 0;
 
-  std::string const path = localFile->GetPath(MapFileType::Map);
-  uint64_t size = 0;
-  if (Platform::GetFileSizeByFullPath(path, size))
-    return static_cast<jlong>(size);
-
-  return 0;
+  try
+  {
+    std::unique_ptr<ModelReader> reader = platform::GetCountryReader(*localFile, MapFileType::Map);
+    return static_cast<jlong>(reader->Size());
+  }
+  catch (RootException const & e)
+  {
+    LOG(LERROR, ("Error getting MWM size:", mwmName, e.what()));
+    return 0;
+  }
 }
 }

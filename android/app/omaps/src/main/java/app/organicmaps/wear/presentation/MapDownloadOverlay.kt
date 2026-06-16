@@ -48,7 +48,7 @@ fun MapDownloadOverlay() {
         ) {
             val title = when (downloadState) {
                 WearMapDownloader.DownloadState.DOWNLOADING -> "Downloading (Internet)"
-                WearMapDownloader.DownloadState.STREAMING_FROM_PHONE -> "Serving from Phone"
+                WearMapDownloader.DownloadState.STREAMING_FROM_PHONE -> "Copying from Phone"
                 WearMapDownloader.DownloadState.FAILED -> "Sync Failed"
                 else -> "Synchronizing..."
             }

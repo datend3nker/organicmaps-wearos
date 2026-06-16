@@ -95,9 +95,9 @@ class HeartbeatManager(private val context: Context) {
         lastReceivedTime = now
         currentPingBackoffMs = 15000L
         val currentState = NavigationStateHolder.state.value
-        if (!currentState.isPhoneConnected) {
+        if (!currentState.isPhoneConnected || currentState.isConnecting) {
             app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Marking isPhoneConnected = true")
-            NavigationStateHolder.update(currentState.copy(isPhoneConnected = true))
+            NavigationStateHolder.update(currentState.copy(isPhoneConnected = true, isConnecting = false))
             
             // Reconnected! Trigger Handshake
             WearCommandService.sendHandshake(context)

@@ -141,6 +141,7 @@ class BluetoothWearDataListenerService : Service() {
                 return TcpSyncConnection(socket)
             } catch (e: Exception) {
                 Log.d(TAG, "TCP connection failed: ${e.message}")
+                Log.i(TAG, "EMULATOR TIP: To connect Watch emulator to Phone emulator, run: adb forward tcp:5610 tcp:5610")
             }
         }
 
@@ -197,7 +198,7 @@ class BluetoothWearDataListenerService : Service() {
                         throw java.io.IOException("Protocol version mismatch: received=$version, expected=${WearProtocol.PROTOCOL_VERSION}")
                     }
 
-                    if (length < 0 || length > 20 * 1024 * 1024 || type < 0 || type > 20) {
+                    if (length < 0 || length > 20 * 1024 * 1024 || type < 0 || type > WearProtocol.MAX_MESSAGE_TYPE) {
                         throw java.io.IOException("Invalid message header: type=$type, len=$length")
                     }
 
@@ -209,8 +210,17 @@ class BluetoothWearDataListenerService : Service() {
                         NavigationStateHolder.updateTimestamp(System.currentTimeMillis())
                         (application as WearApplication).onActivityReceived()
                     }
-                    
-                    dispatcher.dispatch(type, payload, this@BluetoothWearDataListenerService)
+
+                    // Route through WearMessageRouter (same as GMS) so control-plane messages —
+                    // handshake (21), bookmarks-metadata (22), ping/pong, backend-switch — are
+                    // handled on Bluetooth too, instead of being dropped by the type dispatcher.
+                    val path = WearProtocol.getPath(type)
+                    if (path != null) {
+                        WearMessageRouter.onMessageReceived(
+                            this@BluetoothWearDataListenerService, path, payload, "bluetooth_phone", null)
+                    } else {
+                        dispatcher.dispatch(type, payload, this@BluetoothWearDataListenerService)
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Receiver thread error: ${e.message}")

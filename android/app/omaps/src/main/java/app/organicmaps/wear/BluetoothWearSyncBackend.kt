@@ -317,6 +317,7 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
                     return connection
                 } catch (e: Exception) {
                     Log.d(TAG, "TCP connection failed: ${e.message}")
+                    Log.i(TAG, "EMULATOR TIP: To connect Watch emulator to Phone emulator, run: adb forward tcp:5610 tcp:5610")
                 }
             }
 

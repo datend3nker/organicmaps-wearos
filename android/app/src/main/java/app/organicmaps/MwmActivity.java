@@ -156,6 +156,8 @@ public class MwmActivity extends BaseMwmFragmentActivity
   public static final String EXTRA_BOOKMARK_ID = "bookmark_id";
   public static final String EXTRA_TRACK_ID = "track_id";
   public static final String EXTRA_UPDATE_THEME = "update_theme";
+  public static final String EXTRA_SHOW_MAP = "app.organicmaps.EXTRA_SHOW_MAP";
+
   private static final String EXTRA_CONSUMED = "mwm.extra.intent.processed";
   private boolean mPreciseLocationDialogShown = false;
 
@@ -366,6 +368,12 @@ public class MwmActivity extends BaseMwmFragmentActivity
     if (countryId != null)
     {
       Framework.nativeShowCountry(countryId, false);
+      return;
+    }
+
+    if (intent.getBooleanExtra(EXTRA_SHOW_MAP, false))
+    {
+      // Waking up activity is enough, just return
       return;
     }
 

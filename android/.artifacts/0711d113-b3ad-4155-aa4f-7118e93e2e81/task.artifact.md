@@ -1,0 +1,10 @@
+- [x] Update Shared Protocol (`WearProtocol.java`)
+- [x] Update Phone App
+    - [x] Update `MwmActivity.java`: Handle `EXTRA_SHOW_SEARCH` and `EXTRA_SHOW_MAP`
+    - [x] Update `WearMessageRouter.java`: Handle `PATH_SEARCH_ON_PHONE` and force wakeup on navigation
+- [x] Update Wear OS App
+    - [x] Update `NavigationStateHolder.kt`: Add `isConnecting` state
+    - [x] Update `WearCommandService.kt`: Immediate handshake on backend switch, implement `searchOnPhone()`
+    - [x] Update `SearchScreen.kt`: Add "Open Search on Phone" button
+    - [x] Update `Omaps.kt`: Default to Turn-by-Turn in Companion Mode, update status indicators
+- [x] Verify build and integration

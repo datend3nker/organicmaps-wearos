@@ -60,6 +60,7 @@ data class NavigationState(
     val routerType: Int = 0, // 0: Vehicle, 1: Pedestrian, 2: Bicycle, 3: Transit
     val routePoints: List<Pair<Double, Double>> = emptyList(),
     val isPhoneConnected: Boolean = false,
+    val isConnecting: Boolean = false,
     val poiCategoriesMask: Int = 0x7FFFFFFF, // Default to all POIs
     val mapDownloadMode: String = "PHONE_SYNC", // PHONE_SYNC, DIRECT_DOWNLOAD
     val autoDownloadRouteMaps: Boolean = true,
