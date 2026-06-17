@@ -304,6 +304,12 @@ public class WearSyncService {
         sIsApplyingRemoteUpdate = applying;
     }
 
+    public static void markSilentSync(long catId) {
+        synchronized (sSilentSyncCategoryIds) {
+            sSilentSyncCategoryIds.add(catId);
+        }
+    }
+
     public static void addPendingMerge(String categoryName) {
         // Stub for OSS
     }

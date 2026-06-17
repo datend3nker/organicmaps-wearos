@@ -17,6 +17,7 @@ import androidx.appcompat.widget.Toolbar;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.core.os.BundleCompat;
 import androidx.fragment.app.FragmentFactory;
 import androidx.fragment.app.FragmentManager;
 import app.organicmaps.R;
@@ -50,7 +51,6 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
 
   private TextInputEditText mEtDescription;
   private TextInputEditText mEtName;
-  @NonNull
   private TextInputLayout clearNameBtn;
   private TextView mTvBookmarkGroup;
   private ImageView mIvColor;
@@ -85,7 +85,7 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
     fragment.show(manager, name);
   }
 
-  public static void editTrack(long categoryId, long trackId, Context context, FragmentManager manager,
+  public static void editTrack(long categoryId, long trackId, @NonNull Context context, @NonNull FragmentManager manager,
                                @Nullable EditBookmarkListener listener)
   {
     final Bundle args = new Bundle();
@@ -118,7 +118,7 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
   @Override
   public void onViewCreated(@NonNull View view, Bundle savedInstanceState)
   {
-    final Bundle args = getArguments();
+    final Bundle args = requireArguments();
     mType = args.getInt(EXTRA_BOOKMARK_TYPE);
     mEtName = view.findViewById(R.id.et__bookmark_name);
     clearNameBtn = view.findViewById(R.id.edit_bookmark_name_input);
@@ -131,7 +131,7 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
       @Override
       public void onTextChanged(CharSequence charSequence, int i, int i1, int i2)
       {
-        clearNameBtn.setEndIconVisible(charSequence.length() > 0);
+        clearNameBtn.setEndIconVisible(!TextUtils.isEmpty(charSequence));
       }
 
       @Override
@@ -144,10 +144,11 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
     mIvColor = view.findViewById(R.id.iv__bookmark_color);
     mIvColor.setOnClickListener(this);
 
-    // For tracks an bookmarks same category is used so this portion is common for both
-    if (savedInstanceState != null && savedInstanceState.getParcelable(STATE_BOOKMARK_CATEGORY) != null)
-      mBookmarkCategory = savedInstanceState.getParcelable(STATE_BOOKMARK_CATEGORY);
-    else
+    // For tracks and bookmarks same category is used so this portion is common for both
+    if (savedInstanceState != null)
+      mBookmarkCategory = BundleCompat.getParcelable(savedInstanceState, STATE_BOOKMARK_CATEGORY, BookmarkCategory.class);
+    
+    if (mBookmarkCategory == null)
     {
       long categoryId = args.getLong(EXTRA_CATEGORY_ID);
       mBookmarkCategory = BookmarkManager.INSTANCE.getCategoryById(categoryId);
@@ -159,9 +160,10 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
     case TYPE_BOOKMARK ->
     {
       mBookmark = BookmarkManager.INSTANCE.getBookmarkInfo(id);
-      if (savedInstanceState != null && savedInstanceState.getParcelable(STATE_ICON) != null)
-        mIcon = savedInstanceState.getParcelable(STATE_ICON);
-      else if (mBookmark != null)
+      if (savedInstanceState != null)
+        mIcon = BundleCompat.getParcelable(savedInstanceState, STATE_ICON, Icon.class);
+      
+      if (mIcon == null && mBookmark != null)
         mIcon = mBookmark.getIcon();
       refreshBookmark();
     }
@@ -323,7 +325,7 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
         if (mIcon != null && mIcon.getColor() == colorPos)
           return;
 
-        mIcon = new Icon(colorPos, mIcon.getType());
+        mIcon = new Icon(colorPos, mIcon == null ? 0 : mIcon.getType());
         refreshColorMarker();
       });
     case TYPE_TRACK ->

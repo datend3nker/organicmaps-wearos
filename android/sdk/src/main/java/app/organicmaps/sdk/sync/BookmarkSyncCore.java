@@ -206,7 +206,7 @@ public final class BookmarkSyncCore
         }
         catch (Exception e)
         {
-          Log.w(TAG, "update failed for '" + name + "': " + e.getMessage());
+          Log.w(TAG, "update failed for '" + name + "': " + e.getMessage(), e);
         }
         editor.putLong(key, ts);
         editor.putInt(HASH_PREFIX + key, contentHash(name, color, type, desc));
@@ -322,7 +322,7 @@ public final class BookmarkSyncCore
     }
     catch (Exception e)
     {
-      Log.w(TAG, "createBookmark failed for '" + name + "': " + e.getMessage());
+      Log.w(TAG, "createBookmark failed for '" + name + "': " + e.getMessage(), e);
       return false;
     }
   }

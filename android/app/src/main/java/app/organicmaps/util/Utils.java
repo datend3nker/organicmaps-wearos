@@ -78,6 +78,7 @@ public class Utils
       w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
   }
 
+  @SuppressWarnings("deprecation")
   private static void showOnLockScreenOld(boolean enable, Activity activity)
   {
     if (enable)

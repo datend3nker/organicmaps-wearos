@@ -651,7 +651,13 @@ public class BluetoothSyncLayer implements ISyncLayer {
 
     private void runRfcommServer() {
         while (mIsServerRunning) {
-            BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+            Context context = app.organicmaps.MwmApplication.sInstance;
+            if (context == null) {
+                sleep(5000);
+                continue;
+            }
+            android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+            BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
             if (adapter == null || !adapter.isEnabled()) {
                 sleep(5000);
                 continue;
