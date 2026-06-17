@@ -238,7 +238,7 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
     boolean movedFromCategory = mBookmark.getCategoryId() != mBookmarkCategory.getId();
     if (movedFromCategory)
       mBookmark.changeCategory(mBookmarkCategory.getId());
-    mBookmark.update(mEtName.getText().toString(), mIcon, mEtDescription.getText().toString());
+    mBookmark.update(String.valueOf(mEtName.getText()), mIcon, String.valueOf(mEtDescription.getText()));
 
     if (mListener != null)
       mListener.onBookmarkSaved(mBookmark.getBookmarkId(), movedFromCategory);
@@ -255,7 +255,7 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
     final boolean movedFromCategory = mTrack.getCategoryId() != mBookmarkCategory.getId();
     if (movedFromCategory)
       mTrack.setCategoryId(mBookmarkCategory.getId());
-    mTrack.update(mEtName.getText().toString(), mColor, mEtDescription.getText().toString());
+    mTrack.update(String.valueOf(mEtName.getText()), mColor, String.valueOf(mEtDescription.getText()));
     if (mListener != null)
       mListener.onBookmarkSaved(mTrack.getTrackId(), movedFromCategory);
     dismiss();

@@ -448,6 +448,7 @@ public enum BookmarkManager {
   }
 
   @WorkerThread
+  @SuppressWarnings("WrongThread")
   public boolean importBookmarksFile(@NonNull ContentResolver resolver, @NonNull Uri uri, @NonNull File tempDir)
   {
     Logger.i(TAG, "Importing bookmarks from " + uri);
@@ -483,6 +484,7 @@ public enum BookmarkManager {
   }
 
   @WorkerThread
+  @SuppressWarnings("WrongThread")
   public void importBookmarksFile(@NonNull ContentResolver resolver, @NonNull Uri uri, @NonNull File tempDir, long targetCategoryId)
   {
     Logger.i(TAG, "Importing bookmarks from " + uri + " for merge into " + targetCategoryId);

@@ -13,10 +13,13 @@ import app.organicmaps.sdk.util.ConnectionState
 import app.organicmaps.sdk.routing.RoutingController
 import app.organicmaps.sdk.Framework
 import app.organicmaps.wear.BluetoothWearDataListenerService
+import androidx.core.content.edit
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.*
 import kotlin.math.hypot
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class WearApplication : Application() {
     companion object {
@@ -109,10 +112,10 @@ class WearApplication : Application() {
         if (shouldResetToGms || currentBackend == null) {
             val defaultBackend = if (BuildConfig.FLAVOR == "oss") "BLUETOOTH" else "GMS"
             Log.d("WearApp", "Backend migration/default logic: resetting to $defaultBackend (Emulator=$isEmulator, Current=$currentBackend)")
-            prefs.edit()
-                .putString("pref_wear_os_backend", defaultBackend)
-                .putBoolean("gms_migration_done", true)
-                .apply()
+            prefs.edit {
+                putString("pref_wear_os_backend", defaultBackend)
+                putBoolean("gms_migration_done", true)
+            }
         }
         
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
@@ -154,7 +157,7 @@ class WearApplication : Application() {
                 yield()
                 
                 if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                    delay(5000)
+                    delay(5.seconds)
                     continue
                 }
 
@@ -220,9 +223,9 @@ class WearApplication : Application() {
                 }
                 
                 val delayMs = when {
-                    routingController.isNavigating -> if (isAmbient) 5000L else 1000L
-                    isAmbient -> 30000L 
-                    else -> 10000L 
+                    routingController.isNavigating -> if (isAmbient) 5.seconds else 1.seconds
+                    isAmbient -> 30.seconds 
+                    else -> 10.seconds 
                 }
                 delay(delayMs)
             }
@@ -322,11 +325,11 @@ class WearApplication : Application() {
                     ))
                 }
                 
-                getSharedPreferences("wear_prefs", Context.MODE_PRIVATE).edit()
-                    .putFloat("last_known_lat", location.latitude.toFloat())
-                    .putFloat("last_known_lon", location.longitude.toFloat())
-                    .putFloat("last_known_bearing", location.bearing)
-                    .apply()
+                getSharedPreferences("wear_prefs", Context.MODE_PRIVATE).edit {
+                    putFloat("last_known_lat", location.latitude.toFloat())
+                    putFloat("last_known_lon", location.longitude.toFloat())
+                    putFloat("last_known_bearing", location.bearing)
+                }
             }
             override fun onLocationResolutionRequired(pendingIntent: android.app.PendingIntent) {}
             override fun onLocationDisabled() {}
@@ -344,7 +347,7 @@ class WearApplication : Application() {
         while (!isFullyInitialized) {
             if (initError != null) throw RuntimeException(initError)
             if (retries > 300) throw RuntimeException("Timeout waiting for init (30s)")
-            kotlinx.coroutines.delay(100)
+            delay(100.milliseconds)
             retries++
         }
     }

@@ -38,7 +38,6 @@ public class WearSyncService {
     private static final Runnable sSyncPrefsRunnable = () -> {
         Log.d("WearSync", "Debounced syncPreferences executing");
         Context context = app.organicmaps.MwmApplication.sInstance;
-        if (context == null) return;
         List<SettingsSyncManager.SettingUpdate> dirty = SettingsSyncManager.getInstance(context).getDirtyUpdates();
         if (!dirty.isEmpty()) {
             getSyncLayer().syncPreferenceUpdates(context, dirty);
@@ -56,7 +55,7 @@ public class WearSyncService {
 
     public static void syncBookmarksNow() {
         Context context = app.organicmaps.MwmApplication.sInstance;
-        if (context == null || !isFrameworkReady()) return;
+        if (!isFrameworkReady()) return;
 
         // BookmarkSyncCore.buildUpsertBatch calls per-bookmark native getters that assert
         // CalledOnOriginalThread; bounce to the main thread if we were invoked off it.
@@ -141,8 +140,12 @@ public class WearSyncService {
                 } catch (Exception ignored) {}
                 String fileName = safeName + (isZip ? ".kmz" : ".kml");
                 File finalFile = new File(context.getCacheDir(), fileName);
-                if (finalFile.exists()) finalFile.delete();
-                tmpFile.renameTo(finalFile);
+                if (finalFile.exists() && !finalFile.delete()) {
+                    Log.w("WearSync", "Failed to delete existing file: " + finalFile.getName());
+                }
+                if (!tmpFile.renameTo(finalFile)) {
+                    Log.e("WearSync", "Failed to rename tmp file to " + finalFile.getName());
+                }
 
                 Log.d("WearSync", "Successfully received bookmark file from watch: " + categoryName + " (zip=" + isZip + ", merge=" + remoteMerge + ")");
                 
@@ -265,7 +268,6 @@ public class WearSyncService {
             @Override
             public void onBookmarksLoadingFinished() {
                 Context context = app.organicmaps.MwmApplication.sInstance;
-                if (context == null) return;
                 sHandler.post(() -> {
                     if (!isFrameworkReady()) return;
                     app.organicmaps.sdk.bookmarks.data.BookmarkManager manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE;
@@ -322,12 +324,6 @@ public class WearSyncService {
         }
     }
 
-    /**
-     * Mark a category as a silent (background) sync push so the sharing listener streams its exported
-     * file to the watch instead of treating it as a user-initiated share. MUST be called before
-     * prepareCategoriesForSharing — otherwise the listener sees silent=false, drops the file, and the
-     * watch re-requests forever (prepare/save storm = the phone freezes).
-     */
     public static void markSilentSync(long catId) {
         synchronized (sSilentSyncCategoryIds) {
             sSilentSyncCategoryIds.add(catId);
@@ -402,7 +398,6 @@ public class WearSyncService {
     private static final app.organicmaps.sdk.bookmarks.data.DataChangedListener sBookmarkListener = () -> {
         if (sIsApplyingRemoteUpdate) return;
         Context context = app.organicmaps.MwmApplication.sInstance;
-        if (context == null) return;
 
         // A union-merge never removes, so per-bookmark deletions must be propagated as tombstones.
         detectBookmarkDeletions(context);

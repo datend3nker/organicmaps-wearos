@@ -1,8 +1,9 @@
 package app.organicmaps.wear.presentation.search
 
-import android.content.Intent
 import android.content.Context
+import android.content.Intent
 import android.speech.RecognizerIntent
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -12,64 +13,53 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
-import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.DirectionsTransit
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.compose.ui.graphics.Color
 import androidx.wear.compose.material.*
+import androidx.wear.compose.material.dialog.Dialog
 import androidx.wear.tooling.preview.devices.WearDevices
-import app.organicmaps.wear.NavigationStateHolder
-import app.organicmaps.wear.SearchResultItem
-import app.organicmaps.wear.WearCommandService
-import app.organicmaps.wear.WearApplication
-import android.util.Log
-import kotlinx.coroutines.*
+import app.organicmaps.sdk.Framework
+import app.organicmaps.sdk.Router
+import app.organicmaps.sdk.bookmarks.data.BookmarkManager
+import app.organicmaps.sdk.bookmarks.data.MapObject
+import app.organicmaps.sdk.bookmarks.data.Metadata
+import app.organicmaps.sdk.downloader.CountryItem
+import app.organicmaps.sdk.downloader.MapManager
+import app.organicmaps.sdk.routing.RoutingController
+import app.organicmaps.sdk.routing.RoutingOptions
 import app.organicmaps.sdk.search.SearchEngine
 import app.organicmaps.sdk.search.SearchListener
 import app.organicmaps.sdk.search.SearchResult
-import app.organicmaps.sdk.routing.RoutingController
-import app.organicmaps.sdk.bookmarks.data.MapObject
-import app.organicmaps.sdk.Router
-import app.organicmaps.sdk.downloader.MapManager
-import app.organicmaps.sdk.downloader.CountryItem
-import app.organicmaps.sdk.Framework
-import androidx.lifecycle.viewmodel.compose.viewModel
+import app.organicmaps.sdk.settings.RoadType
+import app.organicmaps.wear.*
 import app.organicmaps.wear.presentation.MainViewModel
 import app.organicmaps.wear.presentation.navigation.RoutingOptionsRow
-import app.organicmaps.sdk.settings.RoadType
-import app.organicmaps.sdk.routing.RoutingOptions
-import androidx.compose.ui.text.font.FontWeight
-import androidx.wear.compose.material.dialog.Dialog
-import app.organicmaps.sdk.bookmarks.data.Metadata
+import kotlinx.coroutines.*
+import java.util.*
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 @Composable
 fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainViewModel: MainViewModel = viewModel()) {
@@ -279,15 +269,15 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
                                         wearApp.waitForInitializationSuspend()
 
                                         // APPLY ROUTING OPTIONS
-                                        val roadTypes = app.organicmaps.sdk.settings.RoadType.values()
-                                        roadTypes.forEach { app.organicmaps.sdk.routing.RoutingOptions.removeOption(it) }
-                                        if (avoidTolls) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Toll)
-                                        if (avoidMotorways) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Motorway)
-                                        if (avoidFerries) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Ferry)
-                                        if (avoidUnpaved) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Dirty)
+                                        val roadTypes = RoadType.entries
+                                        roadTypes.forEach { RoutingOptions.removeOption(it) }
+                                        if (avoidTolls) RoutingOptions.addOption(RoadType.Toll)
+                                        if (avoidMotorways) RoutingOptions.addOption(RoadType.Motorway)
+                                        if (avoidFerries) RoutingOptions.addOption(RoadType.Ferry)
+                                        if (avoidUnpaved) RoutingOptions.addOption(RoadType.Dirty)
 
                                         // FALLBACK FOR STANDALONE ROUTING START POINT
-                                        val startPoint = wearApp.organicMaps.locationHelper.myPosition 
+                                        val startPoint = wearApp.organicMaps.locationHelper.myPosition
                                             ?: wearApp.organicMaps.locationHelper.savedLocation?.let { 
                                                 MapObject.createMapObject(MapObject.MY_POSITION, "Previous Fix", "", it.latitude, it.longitude)
                                             }
@@ -307,10 +297,10 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
                                         }
                                         val destination = MapObject.createMapObject(MapObject.POI, selectedResult!!.name, selectedResult!!.description, selectedResult!!.lat, selectedResult!!.lon)
                                         val router = when (routerType) {
-                                            0 -> app.organicmaps.sdk.Router.Vehicle
-                                            1 -> app.organicmaps.sdk.Router.Pedestrian
-                                            2 -> app.organicmaps.sdk.Router.Bicycle
-                                            else -> app.organicmaps.sdk.Router.Transit
+                                            0 -> Router.Vehicle
+                                            1 -> Router.Pedestrian
+                                            2 -> Router.Bicycle
+                                            else -> Router.Transit
                                         }
                                         val controller = RoutingController.get()
                                         controller.prepare(startPoint, destination, router)
@@ -521,7 +511,7 @@ fun PlacePage(
             } else {
                 item {
                     Text(
-                        String.format(java.util.Locale.US, "%.5f, %.5f", result.lat, result.lon),
+                        String.format(Locale.US, "%.5f, %.5f", result.lat, result.lon),
                         style = MaterialTheme.typography.caption2,
                         color = Color.Gray,
                         modifier = Modifier.padding(top = 4.dp)
@@ -551,12 +541,12 @@ fun PlacePage(
                 Chip(
                     onClick = {
                         try {
-                            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addNewBookmark(result.lat, result.lon)
-                            app.organicmaps.wear.WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
-                            app.organicmaps.wear.WatchBookmarkSyncManager.requestSync(context)
-                            NavigationStateHolder.emitEvent(app.organicmaps.wear.UiEvent.ShowToast("Bookmark saved"))
+                            BookmarkManager.INSTANCE.addNewBookmark(result.lat, result.lon)
+                            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
+                            WatchBookmarkSyncManager.requestSync(context)
+                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmark saved"))
                         } catch (e: Exception) {
-                            NavigationStateHolder.emitEvent(app.organicmaps.wear.UiEvent.ShowToast("Couldn't save bookmark"))
+                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Couldn't save bookmark"))
                         }
                     },
                     label = { Text("Save bookmark") },
@@ -708,7 +698,7 @@ fun SearchResultChip(result: SearchResultItem, onClick: () -> Unit) {
                 while (true) {
                     downloadStatus = MapManager.nativeGetStatus(countryId)
                     if (downloadStatus == CountryItem.STATUS_DONE) break
-                    delay(2000)
+                    delay(2000.milliseconds)
                 }
             }
         } catch (_: Throwable) {}

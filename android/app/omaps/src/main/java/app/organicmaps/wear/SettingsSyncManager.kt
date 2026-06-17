@@ -17,7 +17,7 @@ class SettingsSyncManager private constructor(context: Context) : BaseSettingsSy
         @JvmStatic
         fun getInstance(context: Context): SettingsSyncManager {
             return sInstance ?: synchronized(this) {
-                sInstance ?: SettingsSyncManager(context).also { sInstance = it }
+                sInstance ?: SettingsSyncManager(context.applicationContext).also { sInstance = it }
             }
         }
     }

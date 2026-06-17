@@ -27,7 +27,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.*
+import androidx.wear.compose.foundation.lazy.ScalingLazyListState
 
 import app.organicmaps.sdk.Framework
 import app.organicmaps.sdk.Map
@@ -64,6 +68,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.*
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 @Composable
 fun MapPanel(
@@ -96,7 +103,7 @@ fun MapPanel(
     
     LaunchedEffect(location, connectionStatus, hApp.isFullyInitialized) {
         if (hApp.isFullyInitialized) {
-            delay(500)
+            delay(500.milliseconds)
             val (lat, lon, _) = location
             isMapDownloaded = withContext(Dispatchers.Default) {
                 if (lat != 0.0) {
@@ -825,15 +832,21 @@ fun QuickMenu(onDismiss: () -> Unit) {
                     val sec = (ms / 1000) % 60
                     val min = (ms / 60000) % 60
                     val hr = ms / 3600000
-                    elapsedTime = if (hr > 0) java.lang.String.format(java.util.Locale.US, "%d:%02d:%02d", hr, min, sec) else java.lang.String.format(java.util.Locale.US, "%02d:%02d", min, sec)
-                    delay(1000)
+                    elapsedTime = if (hr > 0) String.format(Locale.US, "%d:%02d:%02d", hr, min, sec) else String.format(Locale.US, "%02d:%02d", min, sec)
+                    delay(1.seconds)
                 }
             } else {
                 elapsedTime = ""
             }
         }
 
-        ScalingLazyColumn(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp, start = 8.dp, end = 8.dp)) {
+        val listState = rememberScalingLazyListState()
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(), 
+            state = listState,
+            horizontalAlignment = Alignment.CenterHorizontally, 
+            contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp, start = 8.dp, end = 8.dp)
+        ) {
             item { Text("Quick Menu", style = MaterialTheme.typography.caption1, color = Color(0xFF00E5FF)) }
             
             if (routingStatus?.isActive == true) {

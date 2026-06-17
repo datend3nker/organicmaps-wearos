@@ -188,7 +188,7 @@ object WearCommandService {
             
             val wearApp = context.applicationContext as WearApplication
             val routing = RoutingController.get()
-            val router = Router.values().getOrNull(routerType) ?: Router.Vehicle
+            val router = Router.entries.getOrNull(routerType) ?: Router.Vehicle
             
             val myPos = wearApp.organicMaps.locationHelper.savedLocation?.let { 
                 MapObject.createMapObject(MapObject.POI, "My Location", "", it.latitude, it.longitude)

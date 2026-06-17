@@ -1,55 +1,55 @@
 package app.organicmaps.wear.presentation.downloads
 
-import android.content.Context
-import android.content.Intent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.*
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.items
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.launch
-import app.organicmaps.sdk.downloader.MapManager
-import app.organicmaps.sdk.downloader.CountryItem
-import app.organicmaps.wear.NavigationStateHolder
-import java.util.ArrayList
-
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.unit.sp
-import androidx.wear.compose.foundation.lazy.ScalingLazyListState
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ChevronRight
-
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.input.ImeAction
-
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material.*
+import app.organicmaps.sdk.downloader.CountryItem
+import app.organicmaps.sdk.downloader.MapManager
+import app.organicmaps.wear.NavigationStateHolder
+import app.organicmaps.wear.UiEvent
+import app.organicmaps.wear.VirtualMwmManager
+import app.organicmaps.wear.WatchStorage
+import app.organicmaps.wear.WearApplication
+import app.organicmaps.wear.WearMapDownloader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.*
+import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 fun MapManagerScreen(isVisible: Boolean = true) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val navState by NavigationStateHolder.state.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
     
     // Throttled location to avoid excessive re-polling on every tiny movement (approx 1km resolution)
     val centerLat = remember(navState.lat) { 
@@ -70,9 +70,9 @@ fun MapManagerScreen(isVisible: Boolean = true) {
 
     val listState = rememberScalingLazyListState()
 
-    val downloadState by app.organicmaps.wear.WearMapDownloader.downloadState.collectAsState()
-    val downloadProgress by app.organicmaps.wear.WearMapDownloader.downloadProgress.collectAsState()
-    val currentMap by app.organicmaps.wear.WearMapDownloader.currentMap.collectAsState()
+    val downloadState by WearMapDownloader.downloadState.collectAsState()
+    val downloadProgress by WearMapDownloader.downloadProgress.collectAsState()
+    val currentMap by WearMapDownloader.currentMap.collectAsState()
 
     LaunchedEffect(currentRoot, centerLat, centerLon, searchQuery, isVisible) {
         if (!isVisible) return@LaunchedEffect
@@ -80,7 +80,7 @@ fun MapManagerScreen(isVisible: Boolean = true) {
         withContext(Dispatchers.Default) {
             try {
                 System.loadLibrary("organicmaps")
-                val wearApp = context.applicationContext as app.organicmaps.wear.WearApplication
+                val wearApp = context.applicationContext as WearApplication
                 wearApp.waitForInitializationSuspend()
                 
                 while (true) {
@@ -127,7 +127,7 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                         countries = sorted
                         loading = false
                     }
-                    delay(500) // Increased frequency for better download status responsiveness
+                    delay(500.milliseconds) // Increased frequency for better download status responsiveness
                 }
             } catch (_: Throwable) {
                 withContext(Dispatchers.Main) { loading = false }
@@ -146,8 +146,8 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                 Card(
                     onClick = {
                         val mapId = navState.missingMapId!!
-                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
-                            app.organicmaps.wear.WearMapDownloader.downloadOrStreamMap(context, mapId, forceInternet = true)
+                        scope.launch(Dispatchers.Main) {
+                            WearMapDownloader.downloadOrStreamMap(context, mapId, forceInternet = true)
                         }
                     },
                     modifier = Modifier.padding(bottom = 8.dp)
@@ -176,10 +176,10 @@ fun MapManagerScreen(isVisible: Boolean = true) {
         // Storage awareness: free space + current streaming-cache usage. Helps the user pick
         // between full Copy to Watch (ample storage) and bounded streaming (tight storage).
         item {
-            val freeBytes = remember(navState.lat, navState.lon) { app.organicmaps.wear.WatchStorage.freeBytes(context) }
-            val cacheBytes by app.organicmaps.wear.VirtualMwmManager.cacheBytes.collectAsState()
+            val freeBytes = remember(navState.lat, navState.lon) { WatchStorage.freeBytes(context) }
+            val cacheBytes by VirtualMwmManager.cacheBytes.collectAsState()
             Text(
-                "Free: ${app.organicmaps.wear.WatchStorage.formatBytes(freeBytes)}  •  Stream cache: ${app.organicmaps.wear.WatchStorage.formatBytes(cacheBytes)}",
+                "Free: ${WatchStorage.formatBytes(freeBytes)}  •  Stream cache: ${WatchStorage.formatBytes(cacheBytes)}",
                 style = MaterialTheme.typography.caption3,
                 color = Color.Gray,
                 modifier = Modifier.padding(bottom = 8.dp)
@@ -270,7 +270,7 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                     Text("Downloaded", style = MaterialTheme.typography.caption1, color = Color(0xFF00FF00), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
                 }
                 items(downloadedItems) { item ->
-                    CountryItemRow(item, pathStack) { pathStack = it }
+                    CountryItemRow(item, pathStack, { pathStack = it }, scope)
                 }
                 item {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -297,7 +297,7 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                 }
                 
                 items(groupItems) { item ->
-                    CountryItemRow(item, pathStack) { pathStack = it }
+                    CountryItemRow(item, pathStack, { pathStack = it }, scope)
                 }
             }
         }
@@ -305,7 +305,7 @@ fun MapManagerScreen(isVisible: Boolean = true) {
 }
 
 @Composable
-fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit) {
+fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit, scope: kotlinx.coroutines.CoroutineScope) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val navState by NavigationStateHolder.state.collectAsState()
     val isDownloading = item.status == CountryItem.STATUS_PROGRESS || item.status == CountryItem.STATUS_ENQUEUED || item.status == CountryItem.STATUS_APPLYING
@@ -317,8 +317,8 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
         isDownloading -> "Downloading ${item.progress.toInt()}%"
         item.status == CountryItem.STATUS_ENQUEUED -> "Enqueued"
         item.status == CountryItem.STATUS_FAILED -> "Error - Tap to retry"
-        isOnPhone -> "Pull from Phone (${java.lang.String.format(java.util.Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
-        item.status == CountryItem.STATUS_DOWNLOADABLE -> "Download (${java.lang.String.format(java.util.Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
+        isOnPhone -> "Pull from Phone (${String.format(Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
+        item.status == CountryItem.STATUS_DOWNLOADABLE -> "Download (${String.format(Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
         else -> if (item.isExpandable) "${item.totalChildCount} regions" else "Status: ${item.status}"
     }
 
@@ -330,15 +330,15 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
                 // Storage guard: a full Copy to Watch needs room for the whole region. If it won't
                 // fit comfortably, steer the user to bounded viewport streaming instead of filling
                 // the disk (streaming serves the map on demand when navigated to).
-                if (item.totalSize > 0 && !app.organicmaps.wear.WatchStorage.fitsComfortably(context, item.totalSize)) {
-                    val free = app.organicmaps.wear.WatchStorage.formatBytes(app.organicmaps.wear.WatchStorage.freeBytes(context))
-                    val size = app.organicmaps.wear.WatchStorage.formatBytes(item.totalSize)
-                    NavigationStateHolder.emitEvent(app.organicmaps.wear.UiEvent.ShowToast(
+                if (item.totalSize > 0 && !WatchStorage.fitsComfortably(context, item.totalSize)) {
+                    val free = WatchStorage.formatBytes(WatchStorage.freeBytes(context))
+                    val size = WatchStorage.formatBytes(item.totalSize)
+                    NavigationStateHolder.emitEvent(UiEvent.ShowToast(
                         "$size won't fit ($free free). It will stream on demand instead.",
                         android.widget.Toast.LENGTH_LONG))
                 } else {
-                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
-                        app.organicmaps.wear.WearMapDownloader.downloadOrStreamMap(context, item.id)
+                    scope.launch(Dispatchers.Main) {
+                        WearMapDownloader.downloadOrStreamMap(context, item.id)
                     }
                 }
             }
@@ -377,8 +377,8 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
                     // A streamed (virtual/partial) map must be torn down through VirtualMwmManager so
                     // its sparse .mwm/.bits are removed cleanly. MapManager.delete is not virtual-aware
                     // and leaves a corrupt cache that crashes startup (#7).
-                    if (app.organicmaps.wear.VirtualMwmManager.isMounted(item.id)) {
-                        app.organicmaps.wear.VirtualMwmManager.deleteVirtual(context, item.id)
+                    if (VirtualMwmManager.isMounted(item.id)) {
+                        VirtualMwmManager.deleteVirtual(context, item.id)
                     } else {
                         MapManager.delete(item.id)
                     }

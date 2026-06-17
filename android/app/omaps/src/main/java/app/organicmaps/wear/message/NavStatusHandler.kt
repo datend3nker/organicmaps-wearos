@@ -15,7 +15,7 @@ import java.nio.charset.StandardCharsets
 class NavStatusHandler : WearMessageHandler {
     override fun handle(buffer: ByteBuffer, data: ByteArray, context: Context) {
         val wearApp = context.applicationContext as WearApplication
-        wearApp.onPongReceived()
+        wearApp.onActivityReceived()
         
         val active = buffer.get().toInt() == 1
         val currentState = NavigationStateHolder.state.value
