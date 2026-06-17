@@ -7,6 +7,8 @@
 #include <map>
 #include <chrono>
 #include <vector>
+#include <thread>
+#include <atomic>
 
 namespace
 {
@@ -111,6 +113,8 @@ std::map<std::string, std::unique_ptr<MwmWaitInfo>> g_waitInfos;
 std::vector<std::string> g_allVirtualMwms;
 std::mutex g_waitInfosMutex;
 wear::TRequestDataFn g_requestDataHandler;
+std::thread::id g_uiThreadId;
+std::atomic<bool> g_uiThreadIdSet{false};
 
 MwmWaitInfo & GetWaitInfo(std::string const & mwmNameWithExt)
 {
@@ -144,6 +148,22 @@ bool WaitForData(std::string const & mwmNameWithExt, uint64_t offset, size_t siz
   LOG(LDEBUG, ("WaitForData:", mwmName, "offset:", offset, "size:", size));
 
   MwmWaitInfo & info = GetWaitInfo(mwmName);
+
+  // Never block the UI/main thread on a network round-trip to the phone: it would freeze input and
+  // ANR. If the data isn't already cached, request it and fail fast — the read is skipped and will
+  // re-fault once the bytes arrive (same path as a normal timeout, just instant).
+  if (g_uiThreadIdSet.load(std::memory_order_relaxed) && std::this_thread::get_id() == g_uiThreadId)
+  {
+    {
+      std::lock_guard<std::mutex> lock(info.m_mutex);
+      if (info.IsAvailable(offset, size))
+        return true;
+    }
+    if (g_requestDataHandler)
+      g_requestDataHandler(mwmName, offset, size);
+    LOG(LDEBUG, ("WaitForData on UI thread, not blocking:", mwmName, "offset:", offset));
+    return false;
+  }
 
   for (int attempt = 1; attempt <= 4; ++attempt)
   {
@@ -257,5 +277,11 @@ bool IsVirtualMwm(std::string const & mwmName)
 void SetRequestDataHandler(TRequestDataFn fn)
 {
     g_requestDataHandler = std::move(fn);
+}
+
+void SetUiThreadId(std::thread::id id)
+{
+    g_uiThreadId = id;
+    g_uiThreadIdSet.store(true, std::memory_order_relaxed);
 }
 } // namespace wear

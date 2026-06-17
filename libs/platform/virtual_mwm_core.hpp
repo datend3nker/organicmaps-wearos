@@ -3,6 +3,7 @@
 #include <string>
 #include <cstdint>
 #include <functional>
+#include <thread>
 
 namespace wear
 {
@@ -38,4 +39,9 @@ bool IsVirtualMwm(std::string const & mwmName);
 // Callback mechanism to decouple platform logic from JNI.
 using TRequestDataFn = std::function<void(std::string const & mwmName, uint64_t offset, size_t size)>;
 void SetRequestDataHandler(TRequestDataFn fn);
+
+// Records the UI/main thread id (called once from JNI_OnLoad). WaitForData never blocks on this
+// thread: a streamed read that misses the local cache requests the data and returns immediately so
+// the read fails fast (skipped + re-faulted later) instead of stalling the UI thread into an ANR.
+void SetUiThreadId(std::thread::id id);
 } // namespace wear

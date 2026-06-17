@@ -6,6 +6,9 @@
 #include "base/exception.hpp"
 #include "base/string_utils.hpp"
 
+#include "platform/virtual_mwm_core.hpp"
+#include <thread>
+
 #include "app/organicmaps/sdk/bookmarks/data/Icon.hpp"
 #include "app/organicmaps/sdk/bookmarks/data/PredefinedColors.hpp"
 
@@ -63,6 +66,10 @@ JNIEXPORT jint JNI_OnLoad(JavaVM * jvm, void *)
   g_jvm = jvm;
   jni::InitSystemLog();
   jni::InitAssertLog();
+
+  // JNI_OnLoad runs on the thread that called System.loadLibrary — the app's main/UI thread. Record
+  // it so the virtual-MWM streaming layer never blocks the UI thread on a phone round-trip (ANR).
+  wear::SetUiThreadId(std::this_thread::get_id());
 
   JNIEnv * env = jni::GetEnv();
   if (env == nullptr)
