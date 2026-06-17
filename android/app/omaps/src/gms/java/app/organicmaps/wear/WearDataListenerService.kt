@@ -85,6 +85,9 @@ class WearDataListenerService : WearableListenerService() {
     }
 
     private var lastCheckTime = 0L
+    // True once we've prompted a reachable phone node for an initial sync; reset when unreachable.
+    // Decouples "node reachable" prompting from the actual app-connected state.
+    @Volatile private var mReachablePrompted = false
 
     private fun checkPhoneConnection() {
         val now = System.currentTimeMillis()
@@ -127,12 +130,15 @@ class WearDataListenerService : WearableListenerService() {
                 }
             }
 
-            val wasConnected = NavigationStateHolder.state.value.isPhoneConnected
             if (connected) {
-                (application as WearApplication).onActivityReceived()
-
-                if (!wasConnected) {
-                    Log.i(TAG, "DEBUG_GMS_PIPELINE: Connection established, performing initial sync")
+                // A reachable phone NODE over GMS does NOT mean the phone APP is on GMS and will
+                // answer — it may be on Bluetooth. So do NOT mark isPhoneConnected here (that was the
+                // "GMS shows connected while phone is on Bluetooth" bug). The app connection is set by
+                // WearMessageRouter only when a real app message/pong arrives on the selected backend.
+                // Prompt the phone once per reachability transition to elicit such a response.
+                if (!mReachablePrompted) {
+                    mReachablePrompted = true
+                    Log.i(TAG, "DEBUG_GMS_PIPELINE: Phone node reachable over GMS, requesting initial sync")
                     WearCommandService.syncPreferences(this@WearDataListenerService)
                     WearCommandService.requestPreferences(this@WearDataListenerService)
                     WearCommandService.requestBookmarks(this@WearDataListenerService)
@@ -145,7 +151,8 @@ class WearDataListenerService : WearableListenerService() {
                     }
                 }
             } else {
-                Log.d(TAG, "DEBUG_GMS_PIPELINE: No phone found (capability or physical), waiting for timeout")
+                mReachablePrompted = false
+                Log.d(TAG, "DEBUG_GMS_PIPELINE: No phone node reachable (capability or physical)")
             }
         }
     }
@@ -165,8 +172,9 @@ class WearDataListenerService : WearableListenerService() {
         }
 
         val data = messageEvent.data ?: ByteArray(0)
-        
-        (application as WearApplication).onActivityReceived()
+
+        // Connection liveness is marked by WearMessageRouter (gated by the selected backend) below,
+        // not here — so a GMS message can't flip the indicator when Bluetooth is selected.
         GmsWearSyncBackend.activePeerId = messageEvent.sourceNodeId
         
         if (data.isNotEmpty()) {
@@ -227,11 +235,18 @@ class WearDataListenerService : WearableListenerService() {
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
-        if (dataEvents.count > 0) {
-            (applicationContext as WearApplication).onActivityReceived()
-        }
+        // GMS DataLayer changes only indicate an app connection when GMS is the selected backend.
+        val gmsSelected = getSharedPreferences("wear_prefs", android.content.Context.MODE_PRIVATE)
+            .getString("pref_wear_os_backend", "GMS") == "GMS"
+        val localId = GmsWearSyncBackend.sLocalNodeId
+        var fromRemote = false
         for (event in dataEvents) {
             val uri = event.dataItem.uri
+            // Skip our OWN data-layer writes (loopback). GMS notifies a node of its own putDataItem,
+            // and treating that as incoming traffic falsely marked the watch "connected" even when the
+            // phone was on Bluetooth and nothing actually arrived.
+            if (localId != null && uri.host == localId) continue
+            fromRemote = true
             if (event.type == DataEvent.TYPE_CHANGED) {
                 val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
                 if (dataMap.containsKey("protocolVersion") && dataMap.getByte("protocolVersion") != WearProtocol.PROTOCOL_VERSION) {
@@ -247,7 +262,7 @@ class WearDataListenerService : WearableListenerService() {
                         NavigationStateHolder.update { it.copy(phoneDownloadedMaps = ids) }
                     }
                     WearProtocol.PATH_MAP_DOWNLOAD_PROGRESS -> {
-                        val countryId = dataMap.getString("countryId") ?: return
+                        val countryId = dataMap.getString("countryId") ?: continue
                         val progress = dataMap.getInt("progress", 0)
                         if (countryId == WearMapDownloader.currentMap.value) {
                             WearMapDownloader.setStreamingProgress(progress / 100f)
@@ -255,6 +270,11 @@ class WearDataListenerService : WearableListenerService() {
                     }
                 }
             }
+        }
+
+        // Mark the app connection live only for genuine remote traffic on the selected backend.
+        if (fromRemote && gmsSelected) {
+            (applicationContext as WearApplication).onActivityReceived()
         }
     }
 

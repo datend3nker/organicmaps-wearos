@@ -15,7 +15,7 @@ import app.organicmaps.sdk.Router;
 import app.organicmaps.sdk.bookmarks.data.MapObject;
 import app.organicmaps.sdk.routing.RoutingController;
 
-public final class HeadlessRouteInteractor implements RoutingController.Container {
+public final class HeadlessRouteInteractor implements RoutingController.RouteEventListener {
     private static final String TAG = "HeadlessRoute";
 
     private static HeadlessRouteInteractor sInstance;
@@ -26,7 +26,11 @@ public final class HeadlessRouteInteractor implements RoutingController.Containe
 
     private HeadlessRouteInteractor(@NonNull Context context) {
         mContext = context.getApplicationContext();
-        RoutingController.get().attach(this);
+        // Register as a non-exclusive observer rather than the single UI Container. Attaching as the
+        // Container would steal route callbacks from the foreground map UI (MwmActivity) and, because
+        // this is a once-built singleton, would also lose the slot forever once MwmActivity detaches —
+        // breaking navigation on BOTH the phone and the watch.
+        RoutingController.get().addRouteEventListener(this);
     }
 
     @NonNull
@@ -49,6 +53,13 @@ public final class HeadlessRouteInteractor implements RoutingController.Containe
     public void onCommonBuildError(int lastRouteError, @NonNull String[] lastMissingMaps) {
         Log.e(TAG, "Route build error: " + lastRouteError);
         WearSyncService.sendRouteBuildProgress(mContext, -1); // Indicate error
+        WearCompanionNotificationManager.hideNotification(mContext, WearCompanionNotificationManager.NOTIFICATION_ID_ROUTE);
+    }
+
+    @Override
+    public void onRouteCancelled() {
+        Log.d(TAG, "Route cancelled on phone — notifying watch");
+        WearSyncService.stopNavigation(mContext);
         WearCompanionNotificationManager.hideNotification(mContext, WearCompanionNotificationManager.NOTIFICATION_ID_ROUTE);
     }
 
@@ -99,7 +110,8 @@ public final class HeadlessRouteInteractor implements RoutingController.Containe
         controller.prepare(startPoint, endPoint, router);
         controller.checkAndBuildRoute();
 
-        WearSyncService.startNavigation(mContext);
+        // Navigation is started from onBuiltRoute() once the async build actually completes; calling
+        // it here (right after the async checkAndBuildRoute) is premature and races the build.
         Log.d(TAG, "Headless route planning requested for '" + name + "' via " + router);
     }
 

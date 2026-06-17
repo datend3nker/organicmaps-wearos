@@ -373,7 +373,16 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
             } else if (isInstalled) {
                 // Using Button as a wrapper for Delete icon to make it clickable independently is tricky in Chip icon.
                 // We'll use the chip's icon slot for the status or action.
-                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(24.dp).clickable { MapManager.delete(item.id) })
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(24.dp).clickable {
+                    // A streamed (virtual/partial) map must be torn down through VirtualMwmManager so
+                    // its sparse .mwm/.bits are removed cleanly. MapManager.delete is not virtual-aware
+                    // and leaves a corrupt cache that crashes startup (#7).
+                    if (app.organicmaps.wear.VirtualMwmManager.isMounted(item.id)) {
+                        app.organicmaps.wear.VirtualMwmManager.deleteVirtual(context, item.id)
+                    } else {
+                        MapManager.delete(item.id)
+                    }
+                })
             }
         }
     )

@@ -1,5 +1,7 @@
 #include "base/thread_pool.hpp"
 
+#include "base/exception.hpp"
+#include "base/logging.hpp"
 #include "base/thread.hpp"
 #include "base/threaded_list.hpp"
 
@@ -33,7 +35,22 @@ public:
       }
 
       if (!task->IsCancelled())
-        task->Do();
+      {
+        try
+        {
+          task->Do();
+        }
+        catch (RootException const & e)
+        {
+          // A reading task on this pool (drape feature read, transit read) can throw
+          // Reader::ReadException when a virtual (streamed) MWM's bytes never arrive — e.g. after
+          // switching to a Bluetooth backend that isn't connected, the watch keeps faulting blocks
+          // that the dropped transport can't serve. Uncaught on a pool worker this terminates the
+          // whole process (observed: gms->bt switch SIGABRT in ReadTransitTask). Log and drop the
+          // task instead; the read is retried once the data lands.
+          LOG(LWARNING, ("ThreadPool task threw, skipping:", e.Msg()));
+        }
+      }
       m_finishFn(task);
     }
   }

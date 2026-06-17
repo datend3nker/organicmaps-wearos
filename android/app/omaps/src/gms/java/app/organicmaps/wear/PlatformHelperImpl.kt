@@ -61,7 +61,7 @@ object PlatformHelperImpl : PlatformHelper {
         }
         Log.d("WearApp", "DEBUG_GMS_PIPELINE: manualListener received message. Path: ${event.path} Data size: ${data?.size ?: "null"} Hex: $dataHex")
         
-        WearApplication.instance.onActivityReceived()
+        // Liveness is marked by WearMessageRouter (gated by selected backend) below.
         GmsWearSyncBackend.activePeerId = event.sourceNodeId
         
         if (data != null && data.isNotEmpty()) {

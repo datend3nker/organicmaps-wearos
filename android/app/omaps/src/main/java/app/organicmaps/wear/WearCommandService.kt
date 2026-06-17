@@ -352,6 +352,10 @@ object WearCommandService {
         getBackend(context).sendBookmarksMetadata(context, payload)
     }
 
+    fun sendBookmarkUpsert(context: Context, payload: ByteArray) {
+        getBackend(context).sendBookmarkUpsert(context, payload)
+    }
+
     fun sendBookmarkTombstone(context: Context, payload: ByteArray) {
         getBackend(context).sendBookmarkTombstone(context, payload)
     }

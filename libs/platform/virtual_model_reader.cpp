@@ -4,6 +4,7 @@
 
 #include "coding/file_reader.hpp"
 
+#include "base/exception.hpp"
 #include "base/logging.hpp"
 
 VirtualModelReader::VirtualModelReader(std::string const & mwmName, std::string const & sparsePath)
@@ -28,7 +29,17 @@ void VirtualModelReader::Read(uint64_t pos, void * p, size_t size) const
   uint64_t const absPos = m_offset + pos;
   if (!wear::IsDataAvailable(m_mwmName, absPos, size))
   {
-    wear::WaitForData(m_mwmName, absPos, size);
+    if (!wear::WaitForData(m_mwmName, absPos, size))
+    {
+      // Data never arrived (slow/dropped transport, e.g. Bluetooth). Reading the sparse holes here
+      // would feed zeroed bytes to the feature parser, which then aborts hard (e.g.
+      // CHECK(!def.empty()) in StringUtf8Multilang) on whatever thread happens to be reading —
+      // including the GUI thread. Fail the read cleanly instead; the drape read task and the GUI
+      // task loop catch RootException and skip, so the tile/feature simply re-renders once the
+      // bytes land rather than crashing the app.
+      MYTHROW(Reader::ReadException,
+              ("Virtual MWM data unavailable (timeout):", m_mwmName, "pos:", absPos, "size:", size));
+    }
   }
 
   EnsureReader();

@@ -175,6 +175,8 @@ public enum BookmarkManager {
     // Native passes the source path we loaded as fileName, so the path key resolves the target.
     Long targetCategoryId = mPendingFileMerges.remove(fileName);
     java.util.Set<Long> snapshot = mPendingMergeSnapshots.remove(fileName);
+    Logger.d(TAG, "onBookmarksFileLoaded: success=" + success + " fileName=" + fileName
+        + " pathKeyTarget=" + targetCategoryId + " fifoSize=" + mPendingMergeOrder.size());
     if (targetCategoryId == null && !mPendingMergeOrder.isEmpty())
     {
       // Path key missed (shouldn't normally happen) — fall back to FIFO order; loads complete in
@@ -190,6 +192,7 @@ public enum BookmarkManager {
       // intended target and delete the leftover, so a name collision never leaves a "My PlacesN"
       // duplicate (category explosion). nativeGetCategoryByFileName can't find it — the import was
       // renamed on collision.
+      boolean merged = false;
       if (snapshot != null)
       {
         for (BookmarkCategory c : nativeGetBookmarkCategories())
@@ -200,10 +203,13 @@ public enum BookmarkManager {
             Logger.d(TAG, "Merging imported category " + id + " (" + c.getName() + ") into " + targetCategoryId);
             nativeMergeCategories(id, targetCategoryId);
             nativeDeleteCategory(id);
+            merged = true;
             break;
           }
         }
       }
+      if (!merged)
+        Logger.d(TAG, "onBookmarksFileLoaded: no new category to merge (snapshot=" + (snapshot == null ? "null" : snapshot.size()) + ", target=" + targetCategoryId + ")");
     }
     else if (!success && !mPendingMergeOrder.isEmpty())
     {

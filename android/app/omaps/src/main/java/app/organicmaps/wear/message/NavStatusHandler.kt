@@ -38,13 +38,20 @@ class NavStatusHandler : WearMessageHandler {
                 isActive = false,
                 isNavigating = false,
                 isRouteBuilding = false,
+                isRouteBuilt = false,
+                isRouteReady = false,
                 lat = if (lat != 0.0) lat else currentState.lat,
                 lon = if (lon != 0.0) lon else currentState.lon,
                 bearing = if (bearing != -1f) bearing else currentState.bearing,
                 isPhoneConnected = true
             )
             NavigationStateHolder.update(newState)
-            
+
+            // Navigation ended → clear the companion route polyline.
+            CoroutineScope(Dispatchers.Main).launch {
+                try { app.organicmaps.sdk.Framework.nativeRemoveRouteLine() } catch (_: Throwable) {}
+            }
+
             // Still update location in native core if we got a valid one
             if (!newState.standaloneMode && lat != 0.0) {
                 // Ensure UI thread for native core updates - FIX: Use launch to always post
@@ -75,11 +82,19 @@ class NavStatusHandler : WearMessageHandler {
         val routeLen = if (buffer.remaining() >= 4) buffer.int else 0
         val streetLen = buffer.int
         val distLen = buffer.int
-        
+        // distToTarget (total remaining distance) + ETA seconds — drive the Stats screen.
+        val targetLen = if (buffer.remaining() >= 8) buffer.int else 0
+        val etaSeconds = if (targetLen >= 0 && buffer.remaining() >= 4) buffer.int else 0
+
         val street = String(data, buffer.position(), streetLen, StandardCharsets.UTF_8)
         buffer.position(buffer.position() + streetLen)
         val dist = String(data, buffer.position(), distLen, StandardCharsets.UTF_8)
         buffer.position(buffer.position() + distLen)
+        val distToTargetStr = if (targetLen > 0) {
+            String(data, buffer.position(), targetLen, StandardCharsets.UTF_8).also {
+                buffer.position(buffer.position() + targetLen)
+            }
+        } else ""
 
         val routePoints = mutableListOf<Pair<Double, Double>>()
         if (routeLen > 0 && buffer.remaining() >= routeLen * 4 * 2) {
@@ -109,6 +124,8 @@ class NavStatusHandler : WearMessageHandler {
             speedLimitMps = speedLimit,
             nextStreet = street,
             distToTurn = dist,
+            distToTarget = distToTargetStr,
+            eta = etaSeconds,
             routePoints = if (routePoints.isNotEmpty()) routePoints else currentState.routePoints,
             isPhoneConnected = true
         )
@@ -142,9 +159,38 @@ class NavStatusHandler : WearMessageHandler {
                     }
                 } catch (_: Throwable) {}
             }
+
+            // Companion mode: draw the route polyline the phone computed (energy-efficient — phone
+            // already routed; watch only renders). Geometry arrives once on startNavigation, so draw
+            // only when it's present in this frame. DrapeApi line keyed "route" → replaced, not stacked.
+            if (routePoints.isNotEmpty()) {
+                val rp = routePoints
+                CoroutineScope(Dispatchers.Main).launch {
+                    try {
+                        val rLats = DoubleArray(rp.size) { rp[it].first }
+                        val rLons = DoubleArray(rp.size) { rp[it].second }
+                        app.organicmaps.sdk.Framework.nativeDrawRouteLine(rLats, rLons, 8f, 0xFF1E88E5.toInt())
+                    } catch (_: Throwable) {}
+                }
+            }
         }
 
         if (!currentState.isActive) {
+            // Navigation just started: engage FOLLOW_AND_ROTATE so the map tracks the live
+            // location fed via nativeLocationUpdated above. Without this the viewport stays put
+            // and looks frozen (#1). Only on the start transition, so it never fights a manual
+            // unlock the user performs mid-navigation.
+            if (!newState.standaloneMode) {
+                CoroutineScope(Dispatchers.Main).launch {
+                    try {
+                        repeat(6) {
+                            if (app.organicmaps.sdk.location.LocationState.getMode() ==
+                                app.organicmaps.sdk.location.LocationState.FOLLOW_AND_ROTATE) return@repeat
+                            app.organicmaps.sdk.location.LocationState.nativeSwitchToNextMode()
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
             val intent = Intent(context, Omaps::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }

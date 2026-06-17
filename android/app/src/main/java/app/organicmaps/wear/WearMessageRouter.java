@@ -562,8 +562,11 @@ public class WearMessageRouter {
                     context.sendBroadcast(intent);
                 });
                 break;
+            case WearProtocol.PATH_BOOKMARK_UPSERT:
+                WearSyncService.handleIncomingBookmarkUpsert(context, finalPayload);
+                break;
             case PATH_BOOKMARKS_METADATA:
-                sMainHandler.post(() -> WearSyncService.handleIncomingBookmarksMetadata(context, finalPayload));
+                // Legacy category-grained KMZ reconcile — replaced by per-bookmark upsert sync. Ignore.
                 break;
             case PATH_BOOKMARK_FILE:
                 sMainHandler.post(() -> WearSyncService.handleIncomingBookmarkFile(context, finalPayload));

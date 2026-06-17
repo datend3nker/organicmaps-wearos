@@ -81,13 +81,16 @@ For transferring full map files (e.g., copying a region to the watch):
 - **Bluetooth**: Implements a manual chunking loop with `MSG_TYPE_MAP_CHUNK`.
 
 ### 3.4 Bookmark Synchronization
-Bookmarks are synchronized between devices using KML/KMZ files, but the synchronization logic MUST be **Non-Destructive**.
+Bookmarks are synchronized between devices using KML/KMZ files. The synchronization is **Non-Destructive**: background sync is **always a union-merge**, never a category-level overwrite.
 
-- **Handshake**: Devices exchange a list of categories including their local `LAST_MODIFIED` timestamp and a unique `CATEGORY_UUID`.
-- **Merge Logic**:
-  - If a category is missing on one side, it is streamed and imported.
-  - If a category exists on both sides but with different timestamps, the side with the **Newer Timestamp Wins**.
-- **Granular Updates**: For future implementation, individual bookmarks within a category should be merged based on their own UUIDs and timestamps to prevent losing data when both sides are edited offline.
+- **Handshake**: Devices exchange a list of categories including their local `LAST_MODIFIED` timestamp and bookmark/track counts (`TYPE_BOOKMARKS_METADATA`).
+- **Transfer format (CRITICAL)**: A category is exported with `prepareCategoriesForSharing(...)`, which — for **every** `KmlFileType` including `Text` — wraps the `.kml` in a **KMZ (ZIP) archive** (`ExportSingleFileKml` → `CreateZipFromFiles`). The receiver therefore receives ZIP bytes. OM's loader (`GetKMLOrGPXFilesPathsToLoad`) selects the parser **by file extension**, so the receiver MUST save the payload with the correct extension: sniff the magic (`50 4B 03 04` = ZIP → `.kmz`, else `.kml`). Saving ZIP bytes as `.kml` makes the import silently fail to parse; the category never persists, so the metadata handshake keeps reporting it "missing" and re-requests it forever — a **re-sync storm** (symptom: "Bookmarks synchronized" toast firing ~once per second). Both receivers (`BookmarkFileHandler.kt`, `WearSyncService.handleIncomingBookmarkFile`) sniff the magic.
+- **Merge Logic (granular, de-duplicating)**: The import always loads into a temp category and calls `nativeMergeCategories(src, dst)`, which moves marks src→dst **with de-duplication**:
+  - Bookmark identity = preferred name + position (Mercator, quantized to ~1 m). A duplicate already present in `dst` is **not** re-added, so repeated syncs are **idempotent** (no doubling).
+  - On a same-identity collision, the **newer `GetTimeStamp()` wins** (Last-Write-Wins): the older copy is replaced.
+  - Tracks are de-duplicated by name.
+  - Because the merge is idempotent + LWW, a **conflict** (both sides edited offline) is resolved by syncing **both ways** (each side pulls the other's file *and* pushes its own); both converge to the same union with nothing lost.
+- **Convergence / loop termination**: After a successful import the receiver sets `last_synced_<cat>`; the next handshake sees `localLastEdit <= localLastSynced` (the merge itself runs under `isApplyingRemoteUpdate`, so it does **not** bump `last_local_edit`) and stops requesting — so the bidirectional resolution cannot ping-pong.
 
 ---
 
@@ -155,11 +158,11 @@ The current LWW (Last Write Wins) relies on `System.currentTimeMillis()`.
 - **Issue**: If one device has a manual clock offset, sync will fail (one side will always win).
 - **Recommendation**: Transition to **Logical Clocks (Vector Clocks)** or a simple monotonically increasing **Version Counter** per setting key.
 
-### 5.2 Bookmark Merging (Critical)
-- **Current Issue**: The current implementation is "Destructive Sync". It deletes the existing category and re-loads the new file. Local changes made on the watch while offline are lost.
-- **Robustness Plan**:
-  - Implement **Granular Merging**: Instead of category-level overwrites, sync individual bookmarks by UUID.
-  - Use a **Tombstone mechanism** for deletions to ensure they propagate correctly instead of reappearing on the next sync.
+### 5.2 Bookmark Merging
+- **Resolved**: Sync is no longer destructive. Imports always union-merge with de-duplication (name+position) and per-pin timestamp LWW (see §3.4), so offline edits on either side are preserved and repeated syncs don't duplicate. (Verified on emulators: a 2-pin category syncs phone→watch, persists, and stays at 2 pins across repeated re-sync cycles — no duplication, no storm.)
+- **Still open**:
+  - **Deletions**: there is no **tombstone** mechanism yet — a bookmark deleted on one device reappears on the next sync from the other (the union has no way to know it was intentionally removed vs. never seen). Needs a tombstone list keyed by the same identity (name+position) with a deletion timestamp.
+  - **Independently-created same-name categories**: two categories with the same name but different KML GUIDs created offline on both devices will be unioned by name on import (correct), but the GUID divergence should be reconciled to a single canonical id.
 
 ### 5.3 Bluetooth Reliability
 - **Issue**: Bluetooth (RFCOMM) can be flaky. The current implementation lacks app-level acknowledgments (ACKs) for critical commands.

@@ -167,17 +167,13 @@ object WearMessageRouter {
                 prefRequestDebouncer.request(context)
                 return
             }
-            WearProtocol.PATH_BOOKMARKS_METADATA -> {
-                WatchBookmarkSyncManager.handleIncomingMetadata(context, payload)
+            WearProtocol.PATH_BOOKMARK_UPSERT -> {
+                WatchBookmarkSyncManager.handleIncomingUpsert(context, payload)
                 return
             }
-            WearProtocol.PATH_BOOKMARK_SYNC_REQUEST -> {
-                // The phone asks the watch to PUSH a category (it detected the watch is newer). This
-                // path isn't registered in PATH_TO_TYPE, so without this case it would fall through to
-                // getMessageType() -> TYPE_COMMAND and be silently dropped, breaking watch->phone
-                // bookmark propagation. Prepare the named category for sharing; the registered
-                // sharingListener then streams the file to the phone.
-                WatchBookmarkSyncManager.respondToSyncRequest(context, String(payload))
+            WearProtocol.PATH_BOOKMARKS_METADATA, WearProtocol.PATH_BOOKMARK_SYNC_REQUEST -> {
+                // Legacy category-grained KMZ reconcile — replaced by per-bookmark upsert sync. Ignore
+                // (a stale/older phone may still emit these; acting on them re-opens the explosion).
                 return
             }
             WearProtocol.PATH_BOOKMARK_TOMBSTONE -> {

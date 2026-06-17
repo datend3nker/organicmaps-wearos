@@ -52,112 +52,55 @@ public class WearSyncService {
         syncBookmarksNow();
     };
 
-    private static byte[] sLastSentBookmarkMetadata = null;
+    private static byte[] sLastSentBookmarkUpsert = null;
 
     public static void syncBookmarksNow() {
         Context context = app.organicmaps.MwmApplication.sInstance;
         if (context == null || !isFrameworkReady()) return;
 
-        // Re-send pending deletions first so the watch removes them even if the metadata is unchanged.
-        flushTombstones(context);
-
-        List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories();
-        android.content.SharedPreferences prefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
-        
-        ByteBuffer buffer = ByteBuffer.allocate(4 + categories.size() * 256);
-        buffer.putInt(categories.size());
-        
-        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : categories) {
-            byte[] nameBytes = cat.getName().getBytes(StandardCharsets.UTF_8);
-            buffer.putInt(nameBytes.length);
-            buffer.put(nameBytes);
-            buffer.putInt(cat.getBookmarksCount());
-            buffer.putInt(cat.getTracksCount());
-            buffer.putLong(prefs.getLong("last_local_edit_" + cat.getName(), 0));
-            buffer.putLong(prefs.getLong("last_synced_" + cat.getName(), 0));
-        }
-        
-        byte[] payload = new byte[buffer.position()];
-        buffer.flip();
-        buffer.get(payload);
-        
-        if (java.util.Arrays.equals(sLastSentBookmarkMetadata, payload)) {
-            Log.d("WearSync", "Bookmark metadata unchanged, skipping sync push");
+        // BookmarkSyncCore.buildUpsertBatch calls per-bookmark native getters that assert
+        // CalledOnOriginalThread; bounce to the main thread if we were invoked off it.
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            sHandler.post(WearSyncService::syncBookmarksNow);
             return;
         }
-        sLastSentBookmarkMetadata = payload;
-        
-        Log.d("WearSync", "Sending bookmarks metadata to watch. Count: " + categories.size());
-        getSyncLayer().sendRawMessage(context, app.organicmaps.sdk.sync.WearProtocol.TYPE_BOOKMARKS_METADATA, payload);
+
+        // Re-send pending deletions first so the watch removes them even if nothing else changed.
+        flushTombstones(context);
+
+        byte[] payload = app.organicmaps.sdk.sync.BookmarkSyncCore.buildUpsertBatch(
+            context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE);
+
+        if (java.util.Arrays.equals(sLastSentBookmarkUpsert, payload)) {
+            Log.d("WearSync", "Bookmark upsert batch unchanged, skipping sync push");
+            return;
+        }
+        sLastSentBookmarkUpsert = payload;
+
+        Log.d("WearSync", "Sending bookmark upsert batch to watch");
+        getSyncLayer().sendRawMessage(context, app.organicmaps.sdk.sync.WearProtocol.TYPE_BOOKMARK_UPSERT, payload);
     }
 
-    /** Force a bookmark-metadata push regardless of the unchanged-dedup (used on connect to reconcile). */
+    /** Force a bookmark push regardless of the unchanged-dedup (used on connect to reconcile). */
     public static void syncBookmarksMetadataForced() {
-        sLastSentBookmarkMetadata = null;
+        sLastSentBookmarkUpsert = null;
         syncBookmarksNow();
     }
 
-    public static void handleIncomingBookmarksMetadata(Context context, byte[] payload) {
-        ByteBuffer buffer = ByteBuffer.wrap(payload);
-        if (buffer.remaining() < 4) return;
-        int count = buffer.getInt();
-        
-        List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> localCategories = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories();
-        android.content.SharedPreferences prefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
-        
-        for (int i = 0; i < count; i++) {
-            int nameLen = buffer.getInt();
-            byte[] nameBytes = new byte[nameLen];
-            buffer.get(nameBytes);
-            String name = new String(nameBytes, StandardCharsets.UTF_8);
-            int remoteBmkCount = buffer.getInt();
-            int remoteTrkCount = buffer.getInt();
-            long remoteLastEdit = buffer.getLong();
-            long remoteLastSynced = buffer.getLong();
-
-            long localLastEdit = prefs.getLong("last_local_edit_" + name, 0);
-            long localLastSynced = prefs.getLong("last_synced_" + name, 0);
-
-            app.organicmaps.sdk.bookmarks.data.BookmarkCategory localCat = null;
-            for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : localCategories) {
-                if (cat.getName().equals(name)) { localCat = cat; break; }
+    /** Apply a per-bookmark LWW upsert batch received from the watch (content-addressed, no KMZ). */
+    public static void handleIncomingBookmarkUpsert(Context context, byte[] payload) {
+        sHandler.post(() -> {
+            if (!isFrameworkReady()) return;
+            sIsApplyingRemoteUpdate = true;
+            try {
+                app.organicmaps.sdk.sync.BookmarkSyncCore.applyUpsertBatch(
+                    context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE, payload);
+            } finally {
+                sIsApplyingRemoteUpdate = false;
             }
-
-            boolean localChanged = localLastEdit > localLastSynced;
-            boolean remoteChanged = remoteLastEdit > localLastSynced;
-            boolean countsDiffer = localCat != null
-                && (remoteBmkCount != localCat.getBookmarksCount() || remoteTrkCount != localCat.getTracksCount());
-            boolean neverSynced = localLastSynced == 0;
-
-            // Full-mirror reconcile: both devices must converge to the same set.
-            boolean doPull = false, doPush = false;
-            if (localCat == null) {
-                doPull = true;                              // remote-only category → create it here
-            } else if (localChanged && remoteChanged) {
-                doPull = true; doPush = true;               // both edited offline
-            } else if (remoteChanged) {
-                doPull = true;
-            } else if (localChanged) {
-                doPush = true;
-            } else if (countsDiffer || neverSynced) {
-                doPull = true; doPush = true;               // drifted / never reconciled
-            }
-
-            if (doPull) {
-                Log.i("WearSync", "Bookmark reconcile PULL: " + name);
-                getSyncLayer().sendRawMessage(context, app.organicmaps.sdk.sync.WearProtocol.TYPE_COMMAND, buildCommandPayload(app.organicmaps.sdk.sync.WearProtocol.PATH_BOOKMARK_SYNC_REQUEST, name.getBytes(StandardCharsets.UTF_8)));
-            }
-            // Never share an EMPTY category: prepareCategoriesForSharing returns EMPTY_CATEGORY, which
-            // the phone's BookmarksSharingHelper surfaces as a generic "Error" dialog (and there's
-            // nothing to mirror anyway — the non-empty peer still pushes). Skip the push if empty.
-            if (doPush && localCat != null && (localCat.getBookmarksCount() > 0 || localCat.getTracksCount() > 0)) {
-                Log.i("WearSync", "Bookmark reconcile PUSH: " + name);
-                synchronized (sSilentSyncCategoryIds) {
-                    sSilentSyncCategoryIds.add(localCat.getId());
-                }
-                app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.prepareCategoriesForSharing(new long[]{localCat.getId()}, app.organicmaps.sdk.bookmarks.data.KmlFileType.Text);
-            }
-        }
+            // Refresh snapshot so applied additions aren't later mistaken for local user edits.
+            refreshIdentitySnapshot(context);
+        });
     }
 
     public static void handleIncomingBookmarkFile(Context context, byte[] payload) {

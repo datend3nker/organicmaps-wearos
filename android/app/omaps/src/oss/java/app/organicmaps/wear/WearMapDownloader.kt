@@ -113,26 +113,16 @@ object WearMapDownloader {
         val wasStreamingThis = _currentMap.value == normalizedMapId &&
             (_downloadState.value == DownloadState.STREAMING_FROM_PHONE || _downloadState.value == DownloadState.VALIDATING)
 
-        // Phone-first, then internet: if the phone doesn't have the map but the watch is online,
-        // transparently fall back to a direct download instead of just failing.
-        if (wasStreamingThis && hasInternetAccess(context)) {
-            Log.i(TAG, "Map '$normalizedMapId' missing on phone — falling back to internet download")
-            NavigationStateHolder.update { it.copy(missingMapId = null) }
-            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map not on phone — downloading from internet"))
-            watchdogJob?.cancel()
-            currentDownloadJob?.cancel()
-            currentDownloadJob = CoroutineScope(Dispatchers.IO).launch {
-                _downloadState.value = DownloadState.DOWNLOADING
-                val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
-                val urlMapId = normalizedMapId.replace(" ", "_")
-                val finalUrl = "https://direct.organicmaps.app/$dataVersion/$urlMapId.mwm"
-                downloadOverInternet(context, normalizedMapId, finalUrl)
-            }
-            return
-        }
-
+        // Don't silently pull a whole region from the internet behind the user's back. Surface a
+        // prompt instead (the Map Manager "Not on Phone — Download via Internet?" card) so the
+        // user explicitly chooses, respecting their data preference (#6).
         NavigationStateHolder.update { it.copy(missingMapId = normalizedMapId) }
-        NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map '$normalizedMapId' not on phone — download it in Organic Maps on the phone"))
+        val online = hasInternetAccess(context)
+        val msg = if (online)
+            "Map '$normalizedMapId' not on phone — open Map Manager to download it via internet"
+        else
+            "Map '$normalizedMapId' not on phone, and the watch has no internet connection"
+        NavigationStateHolder.emitEvent(UiEvent.ShowToast(msg))
 
         if (wasStreamingThis) {
             _downloadState.value = DownloadState.FAILED

@@ -14,6 +14,9 @@ import app.organicmaps.sdk.util.concurrency.UiThread;
 import app.organicmaps.sdk.util.log.Logger;
 import app.organicmaps.sdk.widget.placepage.CoordinatesFormat;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+
 @androidx.annotation.UiThread
 public class RoutingController
 {
@@ -59,10 +62,27 @@ public class RoutingController
     default void onStartRouteBuilding() {}
   }
 
+  /**
+   * A lightweight observer of route-build events that, unlike {@link Container}, does NOT occupy the
+   * single UI container slot. Multiple listeners may be registered. Used by headless integrations
+   * (e.g. the Wear OS companion's route forwarder) so they no longer have to hijack the single
+   * {@link #mContainer}, which would otherwise steal route callbacks from the foreground map UI.
+   */
+  public interface RouteEventListener
+  {
+    default void onStartRouteBuilding() {}
+    default void updateBuildProgress(@IntRange(from = 0, to = 100) int progress, Router router) {}
+    default void onBuiltRoute() {}
+    default void onCommonBuildError(int lastResultCode, @NonNull String[] lastMissingMaps) {}
+    default void onRouteCancelled() {}
+  }
+
   private static final RoutingController sInstance = new RoutingController();
 
   @Nullable
   private Container mContainer;
+
+  private final List<RouteEventListener> mRouteEventListeners = new CopyOnWriteArrayList<>();
 
   private BuildState mBuildState = BuildState.NONE;
   private State mState = State.NONE;
@@ -107,6 +127,13 @@ public class RoutingController
         if (mContainer != null)
           mContainer.onDrivingOptionsWarning();
       }
+      else if (mLastResultCode != ResultCodes.CANCELLED)
+      {
+        // Genuine build error. Notify container-less observers (e.g. the Wear forwarder) here, since
+        // processRoutingEvent() below early-returns when there is no UI container.
+        for (RouteEventListener l : mRouteEventListeners)
+          l.onCommonBuildError(mLastResultCode, mLastMissingMaps);
+      }
 
       processRoutingEvent();
     }
@@ -121,6 +148,8 @@ public class RoutingController
     mLastBuildProgress = 100;
     if (mContainer != null)
       mContainer.onBuiltRoute();
+    for (RouteEventListener l : mRouteEventListeners)
+      l.onBuiltRoute();
   }
 
   private final RoutingProgressListener mRoutingProgressListener = progress ->
@@ -207,6 +236,8 @@ public class RoutingController
   {
     if (mContainer != null)
       mContainer.updateBuildProgress(mLastBuildProgress, mLastRouterType);
+    for (RouteEventListener l : mRouteEventListeners)
+      l.updateBuildProgress(mLastBuildProgress, mLastRouterType);
   }
 
   private void showRoutePlan()
@@ -230,6 +261,18 @@ public class RoutingController
   public void attach(@NonNull Container container)
   {
     mContainer = container;
+  }
+
+  /** Register an observer of route-build events that does not occupy the single UI container slot. */
+  public void addRouteEventListener(@NonNull RouteEventListener listener)
+  {
+    if (!mRouteEventListeners.contains(listener))
+      mRouteEventListeners.add(listener);
+  }
+
+  public void removeRouteEventListener(@NonNull RouteEventListener listener)
+  {
+    mRouteEventListeners.remove(listener);
   }
 
   public void initialize(@NonNull LocationHelper locationHelper)
@@ -283,6 +326,8 @@ public class RoutingController
     setBuildState(BuildState.BUILDING);
     if (mContainer != null)
       mContainer.onStartRouteBuilding();
+    for (RouteEventListener l : mRouteEventListeners)
+      l.onStartRouteBuilding();
 
     updatePlan();
 
@@ -465,6 +510,8 @@ public class RoutingController
 
       cancelInternal(deleteSavedRoute);
       cancelPlanning(true);
+      for (RouteEventListener l : mRouteEventListeners)
+        l.onRouteCancelled();
       return true;
     }
 
@@ -478,6 +525,8 @@ public class RoutingController
       {
         mContainer.updateMenu();
       }
+      for (RouteEventListener l : mRouteEventListeners)
+        l.onRouteCancelled();
       return true;
     }
 

@@ -46,9 +46,18 @@ fun MapDownloadOverlay() {
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
         ) {
+            // Smoothly animate progress so the ring/bar glide rather than jump between chunks.
+            val animatedProgress by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = progress.coerceIn(0f, 1f),
+                animationSpec = androidx.compose.animation.core.tween(durationMillis = 400),
+                label = "downloadProgress"
+            )
+
             val title = when (downloadState) {
-                WearMapDownloader.DownloadState.DOWNLOADING -> "Downloading (Internet)"
-                WearMapDownloader.DownloadState.STREAMING_FROM_PHONE -> "Copying from Phone"
+                WearMapDownloader.DownloadState.DOWNLOADING ->
+                    if (progress <= 0f) "Connecting (Internet)…" else "Downloading (Internet)"
+                WearMapDownloader.DownloadState.STREAMING_FROM_PHONE ->
+                    if (progress <= 0f) "Connecting to phone…" else if (progress >= 0.99f) "Finishing…" else "Copying from Phone"
                 WearMapDownloader.DownloadState.FAILED -> "Sync Failed"
                 else -> "Synchronizing..."
             }
@@ -86,20 +95,45 @@ fun MapDownloadOverlay() {
                 )
             } else {
                 val isIndeterminate = progress <= 0f
-                if (isIndeterminate) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(40.dp),
-                        indicatorColor = MaterialTheme.colors.primary,
-                        trackColor = Color.White.copy(alpha = 0.1f),
-                        strokeWidth = 3.dp
-                    )
-                } else {
-                    CircularProgressIndicator(
-                        progress = progress,
-                        modifier = Modifier.size(40.dp),
-                        indicatorColor = MaterialTheme.colors.primary,
-                        trackColor = Color.White.copy(alpha = 0.1f),
-                        strokeWidth = 3.dp
+                Box(contentAlignment = Alignment.Center) {
+                    if (isIndeterminate) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(48.dp),
+                            indicatorColor = MaterialTheme.colors.primary,
+                            trackColor = Color.White.copy(alpha = 0.1f),
+                            strokeWidth = 3.dp
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            progress = animatedProgress,
+                            modifier = Modifier.size(48.dp),
+                            indicatorColor = MaterialTheme.colors.primary,
+                            trackColor = Color.White.copy(alpha = 0.1f),
+                            strokeWidth = 3.dp
+                        )
+                        // Percentage inside the ring for at-a-glance reading on the small display.
+                        Text(
+                            text = "${(animatedProgress * 100).toInt()}%",
+                            style = MaterialTheme.typography.caption3,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Slim determinate bar underneath — easier to gauge at a glance than the ring alone.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(4.dp)
+                        .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(2.dp))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(if (isIndeterminate) 0f else animatedProgress)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colors.primary, RoundedCornerShape(2.dp))
                     )
                 }
             }

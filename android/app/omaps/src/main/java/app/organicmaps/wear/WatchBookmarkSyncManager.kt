@@ -86,8 +86,43 @@ object WatchBookmarkSyncManager {
     }
 
     fun requestSync(context: Context) {
-        sendMetadata(context)
+        pushUpsertBatch(context)
         flushTombstones(context)
+    }
+
+    /**
+     * Push every local bookmark to the phone as a per-bookmark LWW upsert batch (content-addressed
+     * identity, no KMZ). Replaces the old category-metadata + KMZ export reconcile that cascaded into
+     * the My Places1/11/111 explosion. The phone applies the batch idempotently; deletions ride the
+     * separate tombstone channel.
+     */
+    private fun pushUpsertBatch(context: Context) {
+        scope.launch(Dispatchers.Main) {
+            try {
+                val payload = app.organicmaps.sdk.sync.BookmarkSyncCore.buildUpsertBatch(
+                    context, BookmarkManager.INSTANCE)
+                WearCommandService.sendBookmarkUpsert(context, payload)
+            } catch (e: Exception) {
+                Log.w(TAG, "pushUpsertBatch failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Apply an upsert batch received from the phone (per-bookmark LWW), guarded so it isn't echoed. */
+    fun handleIncomingUpsert(context: Context, payload: ByteArray) {
+        scope.launch(Dispatchers.Main) {
+            isApplyingRemoteUpdate = true
+            try {
+                app.organicmaps.sdk.sync.BookmarkSyncCore.applyUpsertBatch(
+                    context, BookmarkManager.INSTANCE, payload)
+            } catch (e: Exception) {
+                Log.w(TAG, "handleIncomingUpsert failed: ${e.message}")
+            } finally {
+                isApplyingRemoteUpdate = false
+            }
+            // Refresh snapshot so applied additions aren't later mistaken for local user edits.
+            detectBookmarkDeletions(context, isUserAction = false)
+        }
     }
 
     /**

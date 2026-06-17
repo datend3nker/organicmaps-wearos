@@ -486,6 +486,68 @@ object VirtualMwmManager {
         mountedMwms.toList().forEach { unmount(it) }
     }
 
+    /**
+     * Delete a streamed (virtual / partial) map: tear down the mount AND remove its sparse
+     * `.mwm` + `.bits` files. The generic `MapManager.delete` is not virtual-aware — it leaves
+     * the sparse cache half-deleted, which `restoreMountsEarly` then re-mounts into a corrupt
+     * map (zeroed holes marked "present") that crashes the render thread on next launch
+     * (issue #7: "app won't start after removing a partial map"). This leaves no leftovers.
+     * Returns true if a virtual map was found and handled.
+     */
+    fun deleteVirtual(context: Context, mwmNameWithExt: String): Boolean {
+        val mwmName = MapIdUtils.normalize(mwmNameWithExt) ?: return false
+        val path = mwmPaths[mwmName] ?: findSparseFile(context, mwmName)?.absolutePath ?: return false
+        Log.i(TAG, "DEBUG_WEAR_PIPELINE: Deleting virtual MWM $mwmName at $path")
+
+        // Close the RAF synchronously so the file handle is released before we delete the file.
+        mwmFiles.remove(mwmName)?.let { raf -> runCatching { raf.close() } }
+
+        // Drop this mwm's resident bytes from the global budget accounting, then clear all state.
+        val totalSize = mwmTotalSizes[mwmName]
+        val tracker = mwmBlockTrackers[mwmName]
+        if (totalSize != null && tracker != null) {
+            var sum = 0L
+            synchronized(tracker) {
+                var b = tracker.nextSetBit(0)
+                while (b != -1) { sum += blockLen(totalSize, b); b = tracker.nextSetBit(b + 1) }
+            }
+            if (sum > 0) { residentBytes.addAndGet(-sum); publishCacheBytes() }
+        }
+        mwmPaths.remove(mwmName)
+        mwmTotalSizes.remove(mwmName)
+        mountedMwms.remove(mwmName)
+        mwmBlockTrackers.remove(mwmName)
+        mwmPendingTrackers.remove(mwmName)
+        mwmBlockAccess.remove(mwmName)
+        mwmPinnedBlocks.remove(mwmName)
+        nativeMountedMwms.remove(mwmName)
+        saveRunnables.remove(mwmName)?.let { saveHandler.removeCallbacks(it) }
+        metadataFailures.remove(mwmName)
+
+        // Remove the sparse cache files so nothing is left to restore on next launch.
+        runCatching { File(path).delete() }
+        runCatching { File("$path.bits").delete() }
+
+        // Re-scan so the engine drops the now-missing map within this session.
+        runCatching { ReloadWorldMapsDebouncer.reload() }
+        return true
+    }
+
+    /** Locate an on-disk sparse file (with sibling .bits) for a not-currently-mounted map. */
+    private fun findSparseFile(context: Context, mwmName: String): File? {
+        return try {
+            val storagePath = StoragePathManager.findMapsStorage(context) ?: return null
+            File(storagePath)
+                .listFiles { f -> f.isDirectory && f.name.all { it.isDigit() } }
+                ?.asSequence()
+                ?.map { File(it, "$mwmName.mwm") }
+                ?.firstOrNull { it.exists() && File("${it.absolutePath}.bits").exists() }
+        } catch (e: Exception) {
+            Log.w(TAG, "findSparseFile failed for $mwmName: ${e.message}")
+            null
+        }
+    }
+
     fun markMetadataFailure(mwmNameWithExt: String) {
         val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         metadataFailures[mwmName] = System.currentTimeMillis()
@@ -536,7 +598,20 @@ object VirtualMwmManager {
                                 }
 
                                 Log.i(TAG, "DEBUG_WEAR_PIPELINE: Restoring early mount for partial file: $mwmName")
-                                doMount(mwmName, file, file.length(), null, null)
+                                // Isolate per-file failures: a single un-mountable sparse file must
+                                // never abort the whole restore (or be left to crash the render thread
+                                // later). If it can't be mounted, delete it to self-heal.
+                                val mounted = try {
+                                    doMount(mwmName, file, file.length(), null, null)
+                                } catch (e: Throwable) {
+                                    Log.e(TAG, "DEBUG_WEAR_PIPELINE: doMount threw for $mwmName: ${e.message}")
+                                    null
+                                }
+                                if (mounted == null) {
+                                    Log.w(TAG, "DEBUG_WEAR_PIPELINE: removing un-mountable sparse file: $mwmName")
+                                    runCatching { file.delete() }
+                                    runCatching { bitsFile.delete() }
+                                }
                             }
                         } else if (file.name.endsWith(".bits")) {
                             val mwmFile = File(file.absolutePath.substringBeforeLast("."))

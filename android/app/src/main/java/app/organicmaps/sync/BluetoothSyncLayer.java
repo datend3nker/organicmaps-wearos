@@ -775,6 +775,10 @@ public class BluetoothSyncLayer implements ISyncLayer {
                         notifyMessageReceived(WearProtocol.PATH_MAP_DOWNLOAD_PROGRESS, payload, "bluetooth_watch");
                     } else if (type == WearProtocol.TYPE_BOOKMARKS_METADATA) {
                         notifyMessageReceived(WearProtocol.PATH_BOOKMARKS_METADATA, payload, "bluetooth_watch");
+                    } else if (type == WearProtocol.TYPE_BOOKMARK_UPSERT) {
+                        notifyMessageReceived(WearProtocol.PATH_BOOKMARK_UPSERT, payload, "bluetooth_watch");
+                    } else if (type == WearProtocol.TYPE_BOOKMARK_TOMBSTONE) {
+                        notifyMessageReceived(WearProtocol.PATH_BOOKMARK_TOMBSTONE, payload, "bluetooth_watch");
                     }
                 }
             } catch (IOException e) {

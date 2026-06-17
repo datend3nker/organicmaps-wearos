@@ -2,6 +2,9 @@
 
 #include "app/organicmaps/sdk/core/jni_helper.hpp"
 
+#include "base/exception.hpp"
+#include "base/logging.hpp"
+
 #include <memory>
 
 namespace android
@@ -30,7 +33,18 @@ GuiThread::~GuiThread()
 void GuiThread::ProcessTask(jlong task)
 {
   std::unique_ptr<Task> t(reinterpret_cast<Task *>(task));
-  (*t)();
+  try
+  {
+    (*t)();
+  }
+  catch (RootException & e)
+  {
+    // A GUI-thread task that reads streamed (virtual) MWM data can fail when the bytes have not
+    // arrived yet over a slow/dropped transport (e.g. Bluetooth). Swallow it so the app keeps
+    // running instead of aborting in native code across the JNI boundary; the work retries once
+    // the data is available.
+    LOG(LWARNING, ("GuiThread task failed:", e.Msg()));
+  }
 }
 
 base::TaskLoop::PushResult GuiThread::Push(Task && task)

@@ -33,6 +33,18 @@ class BluetoothWearDataListenerService : Service() {
         @Volatile
         var activeConnection: SyncConnection? = null
             private set
+
+        /**
+         * Close and clear the single shared connection. Called by the sender backend on a write
+         * error so the listener loop reconnects. The listener service is the sole owner of the
+         * socket (it has the read loop); nothing else may create one.
+         */
+        fun dropConnection() {
+            synchronized(this) {
+                try { activeConnection?.close() } catch (ignored: Exception) {}
+                activeConnection = null
+            }
+        }
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -171,7 +183,10 @@ class BluetoothWearDataListenerService : Service() {
         activeConnection = connection
         Log.d(TAG, "Connected to phone")
 
-        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = true))
+        // A live socket is not the same as an app-level connection, and it must not flip the
+        // indicator unless Bluetooth is the *selected* backend. WearMessageRouter marks
+        // isPhoneConnected when the first gated message (handshake/pong/data) arrives — the
+        // requests below trigger exactly those responses.
 
         WearCommandService.requestPreferences(this@BluetoothWearDataListenerService)
         WearCommandService.requestBookmarks(this@BluetoothWearDataListenerService)
@@ -205,11 +220,11 @@ class BluetoothWearDataListenerService : Service() {
                     val payload = ByteArray(length)
                     input.readFully(payload)
 
-                    withContext(Dispatchers.Main) {
-                        NavigationStateHolder.update(NavigationStateHolder.state.value.copy(isPhoneConnected = true))
-                        NavigationStateHolder.updateTimestamp(System.currentTimeMillis())
-                        (application as WearApplication).onActivityReceived()
-                    }
+                    // NOTE: do NOT mark isPhoneConnected here. Liveness must be gated by the
+                    // *selected* backend — WearMessageRouter.onMessageReceived does that
+                    // (only "bluetooth_phone" messages count when the chosen backend is BLUETOOTH).
+                    // Marking connected unconditionally here made the watch show "connected" off a
+                    // lingering Bluetooth link even when GMS was selected (split-brain indicator).
 
                     // Route through WearMessageRouter (same as GMS) so control-plane messages —
                     // handshake (21), bookmarks-metadata (22), ping/pong, backend-switch — are

@@ -321,6 +321,10 @@ public class WearSyncService {
         // Stub for OSS
     }
 
+    public static void handleIncomingBookmarkUpsert(Context context, byte[] payload) {
+        // Stub for OSS
+    }
+
     public static void applyIncomingTombstone(Context context, byte[] payload) {
         // Stub for OSS
     }

@@ -137,6 +137,14 @@ class WearApplication : Application() {
         app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addCategoriesUpdatesListener {
             WatchBookmarkSyncManager.onLocalBookmarksChanged(this)
         }
+        // After every bookmark file merge, purge any bookmark the union-merge resurrected but that is
+        // tombstoned locally (a merge never removes), so deletions stay deleted across syncs.
+        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addLoadingListener(
+            object : app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksLoadingListener {
+                override fun onBookmarksLoadingFinished() {
+                    WatchBookmarkSyncManager.onBookmarksFileMergeFinished(this@WearApplication)
+                }
+            })
     }
 
     private fun setupLifecycleAwareUpdates() {
@@ -252,6 +260,15 @@ class WearApplication : Application() {
             override fun onNavigationStarted() {
                 Log.d("WearApp", "Routing: Navigation started")
                 NavigationStateHolder.update { it.copy(isNavigating = true, isRouteReady = false, isActive = true, isRouteBuilding = false, isMapUnlocked = false) }
+                // Engage FOLLOW_AND_ROTATE so the map tracks the live location instead of sitting
+                // frozen at the last viewport (#1). Runs on the routing callback (main) thread.
+                try {
+                    repeat(6) {
+                        if (app.organicmaps.sdk.location.LocationState.getMode() ==
+                            app.organicmaps.sdk.location.LocationState.FOLLOW_AND_ROTATE) return@repeat
+                        app.organicmaps.sdk.location.LocationState.nativeSwitchToNextMode()
+                    }
+                } catch (_: Throwable) {}
             }
             override fun onNavigationCancelled() {
                 Log.d("WearApp", "Routing: Navigation cancelled")
@@ -357,10 +374,18 @@ class WearApplication : Application() {
                 app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
             }
             app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
+            // The KMZ importer extracts the inner KML into files/bookmarks/; on a fresh watch that
+            // directory doesn't exist yet, so unzip fails ("No such file or directory") and the
+            // import silently aborts (no onBookmarksFileLoaded callback) — imported bookmarks never
+            // land and the phone re-pulls forever (sync storm). Create it so extraction succeeds.
+            // NOTE: do NOT call BookmarkManager.loadBookmarks() here — the framework already calls
+            // Framework::LoadBookmarks during init, and a second call aborts natively
+            // (bookmark_manager.cpp CHECK(!m_loadBookmarksCalled)).
+            java.io.File(filesDir, "bookmarks").mkdirs()
             if (organicMaps.locationHelper.isInFirstRun) {
                 organicMaps.locationHelper.onExitFromFirstRun()
             }
-            ReloadWorldMapsDebouncer.reloadImmediate() 
+            ReloadWorldMapsDebouncer.reloadImmediate()
 
             Framework.nativeSet3dMode(state.is3dEnabled, state.is3dBuildingsEnabled)
             Framework.nativeSetAutoZoomEnabled(state.isAutoZoomEnabled)

@@ -24,6 +24,11 @@ class SettingsSyncManager private constructor(context: Context) : BaseSettingsSy
 
     override fun getCanonicalToLocalMapping(): Map<String, String> = CANONICAL_TO_LOCAL
 
+    // The phone is the settings authority: on a tie (or a fresh install where everything is 0/0)
+    // the watch adopts the phone's value so the two converge. Without this, equal-version updates
+    // were ignored forever and a freshly installed watch never reconciled with the phone.
+    override fun prefersRemoteOnEqual(): Boolean = true
+
     override fun getMainPrefs(): SharedPreferences {
         return context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
     }

@@ -111,6 +111,25 @@ fun MapPanel(
         }
     }
 
+    // Feed the device compass to the native engine so FOLLOW_AND_ROTATE actually rotates the map
+    // (phone does this via SensorHelper; the watch never wired it). Active only while the map is
+    // visible and not ambient, to spare the sensor/battery.
+    DisposableEffect(isVisible, isAmbient, hApp.isFullyInitialized) {
+        if (!isVisible || isAmbient || !hApp.isFullyInitialized) return@DisposableEffect onDispose {}
+        val sensors = hApp.organicMaps.sensorHelper
+        val listener = object : app.organicmaps.sdk.location.SensorListener {
+            override fun onCompassUpdated(north: Double) {
+                Map.onCompassUpdated(north, false)
+            }
+        }
+        sensors.addListener(listener)
+        sensors.start()
+        onDispose {
+            sensors.removeListener(listener)
+            sensors.stop()
+        }
+    }
+
     // Side Effect: MWM Mounting — instant reaction while panning
     DisposableEffect(isVisible, hApp.isFullyInitialized, connectionStatus) {
         if (!isVisible || !hApp.isFullyInitialized || !connectionStatus.isPhoneConnected || connectionStatus.watchLocalMode) {
@@ -237,7 +256,7 @@ fun MapPanel(
                         if (mapStatus.isMapUnlocked) {
                             repeat(5) {
                                 val mode = LocationState.getMode()
-                                if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
+                                if (mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
                                 LocationState.nativeSwitchToNextMode()
                             }
                         } else {
@@ -249,7 +268,7 @@ fun MapPanel(
                         if (mapStatus.isMapUnlocked) {
                             repeat(5) {
                                 val mode = LocationState.getMode()
-                                if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
+                                if (mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
                                 LocationState.nativeSwitchToNextMode()
                             }
                             true
@@ -465,7 +484,7 @@ private fun MapLockControl(
                         if (isMapUnlocked) {
                             repeat(5) {
                                 val mode = LocationState.getMode()
-                                if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
+                                if (mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
                                 LocationState.nativeSwitchToNextMode()
                             }
                         } else {
@@ -828,7 +847,7 @@ fun QuickMenu(onDismiss: () -> Unit) {
                             }
                             repeat(5) {
                                 val mode = LocationState.getMode()
-                                if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
+                                if (mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
                                 LocationState.nativeSwitchToNextMode()
                             }
                             NavigationStateHolder.update { it.copy(isActive = false, isNavigating = false, isRouteBuilt = false, isRouteBuilding = false, isMapUnlocked = false) }
@@ -844,7 +863,34 @@ fun QuickMenu(onDismiss: () -> Unit) {
 
             item { Chip(onClick = { if (Map.isEngineCreated()) Map.zoomIn(); onDismiss() }, label = { Text("Zoom In") }, icon = { Icon(Icons.Default.Add, contentDescription = null) }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = ChipDefaults.secondaryChipColors()) }
             item { Chip(onClick = { if (Map.isEngineCreated()) Map.zoomOut(); onDismiss() }, label = { Text("Zoom Out") }, icon = { Icon(Icons.Default.Remove, contentDescription = null) }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = ChipDefaults.secondaryChipColors()) }
-            
+
+            item {
+                Chip(
+                    onClick = {
+                        // Create a bookmark at the current map centre and push it to the phone via
+                        // the normal metadata→file sync (de-dup + tombstone aware).
+                        val center = Framework.nativeGetScreenRectCenter()
+                        if (center != null && center.size == 2) {
+                            try {
+                                app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addNewBookmark(center[0], center[1])
+                                app.organicmaps.wear.WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
+                                app.organicmaps.wear.WatchBookmarkSyncManager.requestSync(context)
+                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmark added"))
+                            } catch (e: Exception) {
+                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("Couldn't add bookmark"))
+                            }
+                        } else {
+                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map not ready"))
+                        }
+                        onDismiss()
+                    },
+                    label = { Text("Add Bookmark") },
+                    icon = { Icon(Icons.Default.Star, contentDescription = null) },
+                    colors = ChipDefaults.secondaryChipColors(),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                )
+            }
+
             item {
                 val isRecording = trackRecording?.isRecording == true
                 Chip(

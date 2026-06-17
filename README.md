@@ -51,10 +51,15 @@ Organic Maps on the phone acts as a hub for the Wear OS experience:
 - **Main Pager**: Swipe horizontally between Map, Search, Bookmarks, Map Manager, and Settings.
 - **Long Press Map**: Unlocks the map for free roaming and opens the Quick Menu.
 - **Recenter Button**: Re-locks the camera to your position and enables panel swiping.
-- **Quick Menu**: Toggle layers, zoom, or stop navigation directly from the map.
+- **Quick Menu**: Toggle layers, zoom, add a bookmark at the map centre, or stop navigation directly from the map.
 - **Rotary Crown**: Zoom in and out of the map smoothly.
 - **Hardware Button 1**: Open Quick Menu.
 - **Hardware Button 2**: Toggle between Locked and Interactive modes.
+
+### Developer Documentation
+- **[Wear OS module README](android/app/omaps/README.md)** — features, settings, and connection states.
+- **[Architecture](android/app/omaps/docs/ARCHITECTURE.md)** — modules, components, threading, and data flows.
+- **[Companion Protocol](android/app/omaps/docs/PROTOCOL.md)** — phone↔watch message framing, catalogue, and sync algorithms.
 
 ---
 

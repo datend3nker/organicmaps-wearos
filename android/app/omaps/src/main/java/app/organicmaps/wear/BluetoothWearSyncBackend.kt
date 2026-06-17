@@ -258,6 +258,10 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARKS_METADATA, payload, WearProtocol.TYPE_BOOKMARKS_METADATA)
     }
 
+    override fun sendBookmarkUpsert(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_BOOKMARK_UPSERT, payload, WearProtocol.TYPE_BOOKMARK_UPSERT)
+    }
+
     override fun sendBookmarkTombstone(context: Context, payload: ByteArray) {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_TOMBSTONE, payload, WearProtocol.TYPE_BOOKMARK_TOMBSTONE)
     }

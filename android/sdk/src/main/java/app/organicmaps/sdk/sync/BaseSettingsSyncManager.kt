@@ -13,7 +13,21 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
         private const val KEY_PREFIX_TIMESTAMP = "ts_"
         private const val KEY_PREFIX_DIRTY = "dirty_"
         private const val KEY_PREFIX_VERSION = "v_"
+
+        // The transport backend is negotiated via the dedicated BACKEND_SWITCH control message, not
+        // here. Syncing it as an LWW setting too made the watch's runtime backend and persisted pref
+        // diverge and the two sides fight forever ("Ignoring stale remote update for backend"), which
+        // also blocked switching to Bluetooth. Keep it out of the LWW pipeline entirely.
+        private val NON_LWW_KEYS = setOf(WearProtocol.SETTING_BACKEND)
     }
+
+    /**
+     * When versions and timestamps tie, defer to the remote so two independently-versioned devices
+     * converge instead of ignoring each other's equal updates forever — and so a fresh device adopts
+     * the peer's settings on the very first sync (everything at version 0 / timestamp 0). The watch
+     * overrides this to true (the phone is the authority); the phone keeps its own value on ties.
+     */
+    protected open fun prefersRemoteOnEqual(): Boolean = false
 
     @get:Synchronized
     var isApplyingRemoteUpdates: Boolean = false
@@ -63,6 +77,7 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
         for (prefKey in allSync.keys) {
             if (prefKey.startsWith(KEY_PREFIX_DIRTY) && (allSync[prefKey] == true)) {
                 val canonicalKey = prefKey.substring(KEY_PREFIX_DIRTY.length)
+                if (canonicalKey in NON_LWW_KEYS) continue
                 val localKey = getCanonicalToLocalMapping()[canonicalKey]
                 if (localKey != null) {
                     val ts = syncPrefs.getLong(KEY_PREFIX_TIMESTAMP + canonicalKey, 0)
@@ -85,6 +100,7 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
 
         for ((localKey, value) in allValues) {
             val canonicalKey = getLocalToCanonicalMapping()[localKey]
+            if (canonicalKey != null && canonicalKey in NON_LWW_KEYS) continue
             if ((canonicalKey != null) && (value != null)) {
                 val ts = syncPrefs.getLong(KEY_PREFIX_TIMESTAMP + canonicalKey, 0)
                 val ver = syncPrefs.getLong(KEY_PREFIX_VERSION + canonicalKey, 0)
@@ -114,24 +130,33 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
             val syncEditor = syncPrefs.edit()
 
             for (remote in updates) {
+                if (remote.key in NON_LWW_KEYS) continue
+
                 val localTs = syncPrefs.getLong(KEY_PREFIX_TIMESTAMP + remote.key, 0)
                 val localVer = syncPrefs.getLong(KEY_PREFIX_VERSION + remote.key, 0)
-                
-                val isNewer = if (remote.version > 0 || localVer > 0) {
-                    remote.version > localVer || (remote.version == localVer && remote.timestamp > localTs)
-                } else {
-                    remote.timestamp > localTs
-                }
+
+                // Defer to the remote on an exact tie (and on a fresh device where everything is
+                // 0/0) so the two sides converge instead of ignoring each other forever.
+                val tieDeferToRemote = prefersRemoteOnEqual() &&
+                        remote.version >= localVer && remote.timestamp >= localTs
+                val isNewer = remote.version > localVer ||
+                        (remote.version == localVer && remote.timestamp > localTs) ||
+                        tieDeferToRemote
 
                 if (isNewer) {
                     val localKey = getCanonicalToLocalMapping()[remote.key]
                     if (localKey != null) {
-                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: APPLYING REMOTE update for ${remote.key} -> ${remote.value} (remoteVer=${remote.version}, localVer=$localVer, remoteTs=${remote.timestamp}, localTs=$localTs)")
-                        applyValue(mainEditor, localKey, remote.value)
-                        syncEditor.putLong(KEY_PREFIX_TIMESTAMP + remote.key, remote.timestamp)
-                        syncEditor.putLong(KEY_PREFIX_VERSION + remote.key, remote.version)
+                        // Only count as a real change (and re-apply native settings) when the value
+                        // actually differs — otherwise a 0/0 tie would re-fire onSettingsApplied every
+                        // sync and churn the UI.
+                        if (mainPrefs.all[localKey] != remote.value) {
+                            Log.d(TAG, "DEBUG_WEAR_PIPELINE: APPLYING REMOTE update for ${remote.key} -> ${remote.value} (remoteVer=${remote.version}, localVer=$localVer, remoteTs=${remote.timestamp}, localTs=$localTs)")
+                            applyValue(mainEditor, localKey, remote.value)
+                            changed = true
+                        }
+                        syncEditor.putLong(KEY_PREFIX_TIMESTAMP + remote.key, maxOf(remote.timestamp, localTs))
+                        syncEditor.putLong(KEY_PREFIX_VERSION + remote.key, maxOf(remote.version, localVer))
                         syncEditor.remove(KEY_PREFIX_DIRTY + remote.key)
-                        changed = true
                     }
                 } else {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Ignoring stale remote update for ${remote.key} (remoteVer=${remote.version}, localVer=$localVer, remoteTs=${remote.timestamp}, localTs=$localTs)")

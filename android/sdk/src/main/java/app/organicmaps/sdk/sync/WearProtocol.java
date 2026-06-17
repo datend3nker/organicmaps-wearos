@@ -40,6 +40,10 @@ public class WearProtocol {
     public static final String PATH_BOOKMARK_VISIBLE_TOGGLE = "/bookmark/visible/toggle";
     public static final String PATH_BOOKMARK_SYNC_REQUEST = "/bookmark/sync/request";
     public static final String PATH_BOOKMARK_CATEGORY_CREATE = "/bookmark/category/create";
+    // Per-bookmark LWW upsert batch. Replaces the old category-grained KMZ export/import sync, whose
+    // name-keyed category identity collided on import (My Places -> My Places1 -> ...) and cascaded
+    // exponentially. Identity is now content-addressed (cat|name|lat|lon); see BookmarkSyncCore.
+    public static final String PATH_BOOKMARK_UPSERT = "/bookmark/upsert";
     public static final String PATH_MAP_TILE_RESPONSE = "/map/tile/response";
     public static final String PATH_MAP_DOWNLOAD_REQUEST = "/map/download/request";
     public static final String PATH_MAP_DOWNLOAD_PROGRESS = "/map/download/progress";
@@ -106,11 +110,12 @@ public class WearProtocol {
     public static final byte TYPE_BOOKMARKS_METADATA = 22;
     public static final byte TYPE_BOOKMARK_TOMBSTONE = 23;
     public static final byte TYPE_BOOKMARK_CATEGORY_CREATE = 24;
+    public static final byte TYPE_BOOKMARK_UPSERT = 25;
 
     // Highest valid message type id. The Bluetooth framing layer uses this as a desync sanity
     // bound when parsing headers; keep it >= the largest TYPE_* above (with a little headroom).
     // MUST be updated when new TYPE_* values are added, or BT will reject them as "invalid header".
-    public static final byte MAX_MESSAGE_TYPE = 25;
+    public static final byte MAX_MESSAGE_TYPE = 26;
 
     // Priorities
     public static final int PRIORITY_HIGH = 0;
@@ -140,6 +145,7 @@ public class WearProtocol {
         register(PATH_BOOKMARK_DELETE, TYPE_BOOKMARK_DELETE);
         register(PATH_BOOKMARK_TOMBSTONE, TYPE_BOOKMARK_TOMBSTONE);
         register(PATH_BOOKMARK_CATEGORY_CREATE, TYPE_BOOKMARK_CATEGORY_CREATE);
+        register(PATH_BOOKMARK_UPSERT, TYPE_BOOKMARK_UPSERT);
         register(PATH_MAP_PHONE_DOWNLOADED, TYPE_MAP_PHONE_DOWNLOADED);
         register(PATH_VIRTUAL_MWM_REQUEST, TYPE_VIRTUAL_MWM_REQUEST);
         register(PATH_VIRTUAL_MWM_DATA, TYPE_VIRTUAL_MWM_DATA);
@@ -177,6 +183,7 @@ public class WearProtocol {
             case TYPE_BOOKMARKS_METADATA:
             case TYPE_BOOKMARK_RENAME:
             case TYPE_BOOKMARK_DELETE:
+            case TYPE_BOOKMARK_UPSERT:
             case TYPE_MAP_DOWNLOAD_PROGRESS:
             case TYPE_ROUTE_BUILD_PROGRESS:
             case TYPE_MAP_PHONE_DOWNLOADED:

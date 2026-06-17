@@ -544,6 +544,28 @@ fun PlacePage(
                 )
             }
 
+            item {
+                // Save this place as a bookmark and push it to the phone via the normal
+                // metadata→file sync (de-dup + tombstone aware). Gives tapped/searched places a
+                // direct "save" flow rather than only the map-centre QuickMenu action (#3).
+                Chip(
+                    onClick = {
+                        try {
+                            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addNewBookmark(result.lat, result.lon)
+                            app.organicmaps.wear.WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
+                            app.organicmaps.wear.WatchBookmarkSyncManager.requestSync(context)
+                            NavigationStateHolder.emitEvent(app.organicmaps.wear.UiEvent.ShowToast("Bookmark saved"))
+                        } catch (e: Exception) {
+                            NavigationStateHolder.emitEvent(app.organicmaps.wear.UiEvent.ShowToast("Couldn't save bookmark"))
+                        }
+                    },
+                    label = { Text("Save bookmark") },
+                    icon = { Icon(Icons.Default.Star, contentDescription = null) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ChipDefaults.secondaryChipColors()
+                )
+            }
+
             if (result.website.isNotEmpty()) {
                 item {
                     Chip(

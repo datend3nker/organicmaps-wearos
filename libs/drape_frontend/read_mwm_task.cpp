@@ -1,5 +1,8 @@
 #include "drape_frontend/read_mwm_task.hpp"
 
+#include "base/exception.hpp"
+#include "base/logging.hpp"
+
 namespace df
 {
 ReadMWMTask::ReadMWMTask(MapDataProvider & model) : m_model(model)
@@ -51,6 +54,13 @@ void ReadMWMTask::Do()
   }
   catch (TileInfo::ReadCanceledException &)
   {
+    return;
+  }
+  catch (RootException & e)
+  {
+    // A virtual-MWM (streamed) read can fail when data hasn't arrived yet (slow/dropped transport).
+    // Skip this tile rather than crash; it is re-read once the bytes land.
+    LOG(LWARNING, ("Skipping tile read due to reader error:", e.Msg()));
     return;
   }
 }

@@ -311,6 +311,10 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARKS_METADATA, payload)
     }
 
+    override fun sendBookmarkUpsert(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_BOOKMARK_UPSERT, payload)
+    }
+
     override fun sendBookmarkTombstone(context: Context, payload: ByteArray) {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_TOMBSTONE, payload)
     }
