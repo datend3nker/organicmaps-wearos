@@ -61,12 +61,12 @@ object VirtualMwmManager {
     private const val MAX_BUDGET_BYTES = 192L * 1024 * 1024
 
     private fun blockLen(totalSize: Long, blockIdx: Int): Int =
-        (totalSize - blockIdx.toLong() * BLOCK_SIZE).coerceAtMost(BLOCK_SIZE.toLong()).coerceAtLeast(0).toInt()
+        (totalSize - (blockIdx.toLong() * BLOCK_SIZE)).coerceAtMost(BLOCK_SIZE.toLong()).coerceAtLeast(0).toInt()
 
     private fun touchBlock(mwmName: String, blockIdx: Int) {
         val totalSize = mwmTotalSizes[mwmName] ?: return
         val numBlocks = ((totalSize + BLOCK_SIZE - 1) / BLOCK_SIZE).toInt()
-        if (blockIdx < 0 || blockIdx >= numBlocks) return
+        if (blockIdx !in 0 until numBlocks) return
         val arr = mwmBlockAccess.getOrPut(mwmName) { LongArray(numBlocks) }
         if (blockIdx < arr.size) arr[blockIdx] = accessTick.incrementAndGet()
     }
@@ -128,8 +128,8 @@ object VirtualMwmManager {
                 synchronized(tracker) {
                     var b = tracker.nextSetBit(0)
                     while (b != -1) {
-                        val isPinned = pinned != null && synchronized(pinned) { pinned.get(b) }
-                        val isPending = pending != null && synchronized(pending) { pending.get(b) }
+                        val isPinned = pinned != null && synchronized(pinned) { pinned[b] }
+                        val isPending = pending != null && synchronized(pending) { pending[b] }
                         if (!isPinned && !isPending) {
                             val tick = access?.getOrElse(b) { 0L } ?: 0L
                             candidates.add(Victim(mwm, b, tick))
@@ -195,6 +195,7 @@ object VirtualMwmManager {
     }
 
     @JvmStatic
+    @Suppress("UNUSED")
     fun onDataRequired(mwmNameWithExt: String, offset: Long, size: Int) {
         mScope.launch {
             try {
@@ -291,7 +292,7 @@ object VirtualMwmManager {
                     nativeDataArrived(mwmName, offset, data.size)
                 }
                 
-                val totalSize = mwmTotalSizes[mwmName] ?: try { raf.length() } catch (e: Exception) { 0L }
+                val totalSize = mwmTotalSizes[mwmName] ?: try { raf.length() } catch (_: Exception) { 0L }
                 val end = offset + data.size
                 
                 if (totalSize > 0 && end >= totalSize) {
@@ -431,12 +432,12 @@ object VirtualMwmManager {
     private fun loadTracker(mwmPath: String): BitSet? {
         val bitsFile = File("$mwmPath.bits")
         if (!bitsFile.exists()) return null
-        try {
+        return try {
             val bytes = bitsFile.readBytes()
-            return BitSet.valueOf(bytes)
+            BitSet.valueOf(bytes)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load bitset for $mwmPath: ${e.message}")
-            return null
+            null
         }
     }
 
@@ -479,11 +480,6 @@ object VirtualMwmManager {
         } catch (e: Exception) {
             Log.e(TAG, "Error during unmount of $mwmName: ${e.message}")
         }
-    }
-
-    fun cleanup() {
-        Log.d(TAG, "Cleaning up all virtual MWMs")
-        mountedMwms.toList().forEach { unmount(it) }
     }
 
     /**
@@ -551,11 +547,6 @@ object VirtualMwmManager {
     fun markMetadataFailure(mwmNameWithExt: String) {
         val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         metadataFailures[mwmName] = System.currentTimeMillis()
-    }
-
-    fun clearMetadataFailure(mwmNameWithExt: String) {
-        val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
-        metadataFailures.remove(mwmName)
     }
 
     fun shouldRequestMetadata(mwmNameWithExt: String): Boolean {

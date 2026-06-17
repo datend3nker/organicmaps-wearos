@@ -16,7 +16,7 @@
 
 extern "C"
 {
-JNIEXPORT jbyteArray Java_app_organicmaps_sdk_Framework_nativeGetMwmBytes(JNIEnv * env, jclass, jstring name, jlong offset, jint size)
+JNIEXPORT jbyteArray JNICALL Java_app_organicmaps_sdk_Framework_nativeGetMwmBytes(JNIEnv * env, jclass, jstring name, jlong offset, jint size)
 {
   ::Framework * f = frm();
   if (!f)
@@ -66,7 +66,7 @@ JNIEXPORT jbyteArray Java_app_organicmaps_sdk_Framework_nativeGetMwmBytes(JNIEnv
   }
 }
 
-JNIEXPORT jlong Java_app_organicmaps_sdk_Framework_nativeGetMwmSize(JNIEnv * env, jclass, jstring name)
+JNIEXPORT jlong JNICALL Java_app_organicmaps_sdk_Framework_nativeGetMwmSize(JNIEnv * env, jclass, jstring name)
 {
   ::Framework * f = frm();
   if (!f) return 0;

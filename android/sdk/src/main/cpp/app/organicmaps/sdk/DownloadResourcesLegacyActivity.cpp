@@ -66,7 +66,7 @@ static int HasSpaceForFiles(Platform & pl, std::string const & sdcardPath, size_
   }
 }
 
-JNIEXPORT jint Java_app_organicmaps_sdk_DownloadResourcesLegacyActivity_nativeGetBytesToDownload(JNIEnv * env,
+JNIEXPORT jint JNICALL Java_app_organicmaps_sdk_DownloadResourcesLegacyActivity_nativeGetBytesToDownload(JNIEnv * env,
                                                                                                  jclass clazz)
 {
   // clear all
@@ -150,7 +150,7 @@ static void DownloadFileProgress(std::shared_ptr<jobject> listener, HttpRequest 
                       static_cast<jint>(g_totalDownloadedBytes + req.GetProgress().m_bytesDownloaded));
 }
 
-JNIEXPORT jint Java_app_organicmaps_sdk_DownloadResourcesLegacyActivity_nativeStartNextFileDownload(JNIEnv * env,
+JNIEXPORT jint JNICALL Java_app_organicmaps_sdk_DownloadResourcesLegacyActivity_nativeStartNextFileDownload(JNIEnv * env,
                                                                                                     jclass clazz,
                                                                                                     jobject listener)
 {
@@ -177,7 +177,7 @@ JNIEXPORT jint Java_app_organicmaps_sdk_DownloadResourcesLegacyActivity_nativeSt
   return ERR_FILE_IN_PROGRESS;
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_DownloadResourcesLegacyActivity_nativeCancelCurrentFile(JNIEnv * env,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_DownloadResourcesLegacyActivity_nativeCancelCurrentFile(JNIEnv * env,
                                                                                                 jclass clazz)
 {
   LOG(LDEBUG, ("cancelCurrentFile, currentRequest=", g_currentRequest));

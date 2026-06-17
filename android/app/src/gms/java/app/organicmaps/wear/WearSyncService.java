@@ -7,7 +7,6 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import app.organicmaps.sdk.routing.RoutingInfo;
-import app.organicmaps.sdk.search.SearchRecents;
 import app.organicmaps.sdk.search.SearchResult;
 
 import java.io.File;
@@ -33,7 +32,6 @@ public class WearSyncService {
     private static final Set<Long> sSilentSyncCategoryIds = new HashSet<>();
     private static boolean sIsApplyingRemoteUpdate = false;
     private static final Map<String, FileOutputStream> sBookmarkOutputStreams = new HashMap<>();
-    private static final Set<String> sPendingMerges = new HashSet<>();
 
     private static final Runnable sSyncPrefsRunnable = () -> {
         Log.d("WearSync", "Debounced syncPreferences executing");
@@ -166,7 +164,6 @@ public class WearSyncService {
                             // merge de-duplicates by name+position and resolves same-pin edits by
                             // timestamp (LWW), so re-importing never deletes locally-made bookmarks.
                             // (A destructive replace would drop edits made on this device while offline.)
-                            sPendingMerges.remove(categoryName);
                             if (existing != null) {
                                 manager.loadBookmarksFile(finalFile.getAbsolutePath(), true, existing.getId());
                             } else {
@@ -309,12 +306,6 @@ public class WearSyncService {
         return buffer.array();
     }
 
-    public static boolean isSilentSyncInProgress() {
-        synchronized (sSilentSyncCategoryIds) {
-            return !sSilentSyncCategoryIds.isEmpty();
-        }
-    }
-
     public static void setSilentSyncInProgress(boolean inProgress) {
         // Not used with the new ID-based logic, but kept for compatibility or clearing
         if (!inProgress) {
@@ -332,10 +323,6 @@ public class WearSyncService {
 
     public static void setApplyingRemoteUpdate(boolean applying) {
         sIsApplyingRemoteUpdate = applying;
-    }
-
-    public static void addPendingMerge(String categoryName) {
-        sPendingMerges.add(categoryName);
     }
 
     private static final app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksSharingListener sSharingListener = (result) -> {
@@ -436,7 +423,6 @@ public class WearSyncService {
 
     private static final app.organicmaps.sdk.location.LocationListener sLocationListener = (location) -> {
         Context context = app.organicmaps.MwmApplication.sInstance;
-        if (context == null) return;
         if (isFrameworkReady()) {
             RoutingInfo info = app.organicmaps.sdk.routing.RoutingController.get().getCachedRoutingInfo();
             long now = android.os.SystemClock.elapsedRealtime();
@@ -481,8 +467,7 @@ public class WearSyncService {
     }
 
     private static boolean isFrameworkReady() {
-        return app.organicmaps.MwmApplication.sInstance != null && 
-               app.organicmaps.MwmApplication.sInstance.getOrganicMaps().arePlatformAndCoreInitialized();
+        return app.organicmaps.MwmApplication.sInstance.getOrganicMaps().arePlatformAndCoreInitialized();
     }
 
     public static synchronized void initSyncLayer(@Nullable Context context) {
@@ -515,9 +500,7 @@ public class WearSyncService {
 
         if ("BLUETOOTH".equals(backend)) {
             sSyncLayer = new BluetoothSyncLayer();
-            if (context != null) {
-                context.startService(new Intent(context, BluetoothMessageListenerService.class));
-            }
+            context.startService(new Intent(context, BluetoothMessageListenerService.class));
         } else {
             sSyncLayer = new GmsSyncLayer();
             if (context != null) {
@@ -597,11 +580,6 @@ public class WearSyncService {
     public static void sendSearchState(@NonNull Context context, boolean isSearching) {
         if (isFrameworkReady())
             getSyncLayer().sendSearchState(context, isSearching);
-    }
-
-    public static void updateNavigation(@NonNull Context context, @Nullable RoutingInfo info, @Nullable Location location, @Nullable float[] lats, @Nullable float[] lons) {
-        if (isFrameworkReady())
-            getSyncLayer().updateNavigation(context, info, location);
     }
 
     public static void sendSearchResults(@NonNull Context context, @NonNull SearchResult[] results, boolean isSearching) {
@@ -694,20 +672,12 @@ public class WearSyncService {
         getSyncLayer().sendRouteBuildProgress(context, progress);
     }
 
-    public static void sendMwmBytes(@NonNull Context context, @NonNull String mwmName, long offset, @NonNull byte[] data) {
-        getSyncLayer().sendMwmBytes(context, mwmName, offset, data);
-    }
-
     public static void checkConnection(@NonNull Context context, @NonNull ISyncLayer.ConnectionCallback callback) {
         getSyncLayer().checkConnection(context, callback);
     }
 
     public static void launchWatchApp(@NonNull Context context) {
         getSyncLayer().launchWatchApp(context);
-    }
-
-    public static boolean isWatchAppConnected() {
-        return getSyncLayer().isLinked();
     }
 
     public static void onLocalTrafficSent() {

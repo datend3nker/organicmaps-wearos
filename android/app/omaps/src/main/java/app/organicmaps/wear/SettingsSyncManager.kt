@@ -1,5 +1,6 @@
 package app.organicmaps.wear
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -11,6 +12,7 @@ class SettingsSyncManager private constructor(context: Context) : BaseSettingsSy
     companion object {
         private val CANONICAL_TO_LOCAL = SyncSettingsRegistry.getMapping(isWatch = true)
 
+        @SuppressLint("StaticFieldLeak")
         @Volatile
         private var sInstance: SettingsSyncManager? = null
 

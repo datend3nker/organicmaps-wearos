@@ -9,7 +9,7 @@
 extern "C"
 {
 // static void nativeSetSettingsDir(String settingsPath);
-JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeSetSettingsDir(JNIEnv * env, jclass clazz,
+void Java_app_organicmaps_sdk_OrganicMaps_nativeSetSettingsDir(JNIEnv * env, jclass clazz,
                                                                          jstring settingsPath)
 {
   android::Platform::Instance().SetSettingsDir(jni::ToNativeString(env, settingsPath));
@@ -17,7 +17,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeSetSettingsDir(JNIEnv 
 
 // static void nativeInitPlatform(Context context, String apkPath, String storagePath, String privatePath, String
 // tmpPath, String flavorName, String buildType, boolean isTablet);
-JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitPlatform(JNIEnv * env, jclass clazz, jobject context,
+void Java_app_organicmaps_sdk_OrganicMaps_nativeInitPlatform(JNIEnv * env, jclass clazz, jobject context,
                                                                        jstring apkPath, jstring writablePath,
                                                                        jstring privatePath, jstring tmpPath,
                                                                        jstring flavorName, jstring buildType,
@@ -28,7 +28,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitPlatform(JNIEnv * 
 }
 
 // static void nativeInitFramework(@NonNull Runnable onComplete);
-JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv * env, jclass clazz, jobject onComplete)
+void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv * env, jclass clazz, jobject onComplete)
 {
   if (!df::VisualParams::Instance().IsInited())
   {
@@ -52,14 +52,14 @@ JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv *
 }
 
 // static void nativeAddLocalization(String name, String value);
-JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeAddLocalization(JNIEnv * env, jclass clazz, jstring name,
+void Java_app_organicmaps_sdk_OrganicMaps_nativeAddLocalization(JNIEnv * env, jclass clazz, jstring name,
                                                                           jstring value)
 {
   if (g_framework)
     g_framework->AddString(jni::ToNativeString(env, name), jni::ToNativeString(env, value));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_OrganicMaps_nativeOnTransit(JNIEnv *, jclass, jboolean foreground)
+void Java_app_organicmaps_sdk_OrganicMaps_nativeOnTransit(JNIEnv *, jclass, jboolean foreground)
 {
   if (!g_framework)
     return;

@@ -15,7 +15,7 @@ static void TrafficStateChanged(TrafficManager::TrafficState state, std::shared_
                       static_cast<jint>(state));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeSetListener(JNIEnv * env, jclass clazz,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeSetListener(JNIEnv * env, jclass clazz,
                                                                                         jobject listener)
 {
   if (g_framework)
@@ -25,24 +25,24 @@ JNIEXPORT void Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeSetL
   }
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeRemoveListener(JNIEnv * env, jclass clazz)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeRemoveListener(JNIEnv * env, jclass clazz)
 {
   if (g_framework)
     g_framework->SetTrafficStateListener(TrafficManager::TrafficStateChangedFn());
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeEnable(JNIEnv * env, jclass clazz)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeEnable(JNIEnv * env, jclass clazz)
 {
   if (g_framework)
     g_framework->EnableTraffic();
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeIsEnabled(JNIEnv * env, jclass clazz)
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeIsEnabled(JNIEnv * env, jclass clazz)
 {
   return g_framework ? static_cast<jboolean>(g_framework->IsTrafficEnabled()) : false;
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeDisable(JNIEnv * env, jclass clazz)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_maplayer_traffic_TrafficState_nativeDisable(JNIEnv * env, jclass clazz)
 {
   if (g_framework)
     g_framework->DisableTraffic();

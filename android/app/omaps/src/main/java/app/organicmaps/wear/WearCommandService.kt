@@ -2,14 +2,22 @@ package app.organicmaps.wear
 
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import app.organicmaps.sdk.Router
 import app.organicmaps.sdk.bookmarks.data.MapObject
+import app.organicmaps.sdk.bookmarks.data.BookmarkManager
 import app.organicmaps.sdk.routing.RoutingController
 import app.organicmaps.sdk.search.SearchEngine
 import app.organicmaps.sdk.search.SearchListener
 import app.organicmaps.sdk.search.SearchResult
+import app.organicmaps.sdk.search.SearchRecents
+import app.organicmaps.sdk.sync.WearLog
+import app.organicmaps.sdk.location.TrackRecorder
+import app.organicmaps.sdk.Framework
 import kotlinx.coroutines.*
+import kotlin.time.Duration.Companion.milliseconds
 
 object WearCommandService {
     private const val TAG = "WearCommandService"
@@ -27,7 +35,7 @@ object WearCommandService {
     fun initBackend(context: Context) {
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         val defaultBackend = if (BuildConfig.FLAVOR == "oss") "BLUETOOTH" else "GMS"
-        val selectedBackend = prefs.getString("pref_wear_os_backend", defaultBackend)
+        val selectedBackend = prefs.getString("pref_wear_os_backend", defaultBackend) ?: defaultBackend
 
         backend?.stop()
         backend = null 
@@ -39,7 +47,7 @@ object WearCommandService {
         // settings screen.
         NavigationStateHolder.update {
             it.copy(
-                backend = selectedBackend ?: defaultBackend,
+                backend = selectedBackend,
                 standaloneMode = isStandalone,
                 isPhoneConnected = false,
                 isConnecting = !isStandalone
@@ -72,7 +80,7 @@ object WearCommandService {
 
     // Watchdog so the search spinner never hangs forever: cleared on results-end / fresh search,
     // fired if neither the local engine nor the phone produces a result in time.
-    private val searchWatchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val searchWatchdogHandler = Handler(Looper.getMainLooper())
     private val searchWatchdogRunnable = Runnable {
         if (NavigationStateHolder.state.value.isSearching) {
             Log.w(TAG, "DEBUG_WEAR_SEARCH: search timed out; clearing spinner")
@@ -92,7 +100,7 @@ object WearCommandService {
     fun search(context: Context, query: String) {
         val navState = NavigationStateHolder.state.value
         armSearchWatchdog()
-        app.organicmaps.sdk.sync.WearLog.logState("WATCH", "UI Search Request: '$query'. Standalone=${navState.standaloneMode}, Connected=${navState.isPhoneConnected}")
+        WearLog.logState("WATCH", "UI Search Request: '$query'. Standalone=${navState.standaloneMode}, Connected=${navState.isPhoneConnected}")
         
         ensureSearchInitialized(context)
 
@@ -103,10 +111,10 @@ object WearCommandService {
             val lat = navState.lat
             val lon = navState.lon
             
-            app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Standalone search at $lat, $lon (hasLocation=$hasLocation)")
+            WearLog.logState("WATCH", "Standalone search at $lat, $lon (hasLocation=$hasLocation)")
             
             val zoom = if (hasLocation) 13 else 1
-            app.organicmaps.sdk.Framework.nativeSetSearchViewport(lat, lon, zoom)
+            Framework.nativeSetSearchViewport(lat, lon, zoom)
             
             SearchEngine.INSTANCE.initialize()
             val success = SearchEngine.INSTANCE.search(
@@ -121,7 +129,7 @@ object WearCommandService {
                 NavigationStateHolder.update { it.copy(isSearching = false) }
             }
         } else {
-            app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Requesting phone search at ${navState.lat}, ${navState.lon}")
+            WearLog.logState("WATCH", "Requesting phone search at ${navState.lat}, ${navState.lon}")
             getBackend(context).search(context, query, navState.lat, navState.lon)
         }
     }
@@ -141,12 +149,12 @@ object WearCommandService {
                         type = it.type
                     )
                 }
-                app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Received local results. Count: ${mapped.size}")
+                WearLog.logState("WATCH", "Received local results. Count: ${mapped.size}")
                 NavigationStateHolder.update { it.copy(searchResults = mapped, isSearching = true) }
             }
 
             override fun onResultsEnd(timestamp: Long) {
-                app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Local results END")
+                WearLog.logState("WATCH", "Local results END")
                 cancelSearchWatchdog()
                 NavigationStateHolder.update { it.copy(isSearching = false) }
             }
@@ -166,7 +174,7 @@ object WearCommandService {
             launchPhoneApp(context)
             
             CoroutineScope(Dispatchers.Main).launch {
-                delay(4000)
+                delay(4000.milliseconds)
                 val latestState = NavigationStateHolder.state.value
                 if (!latestState.isPhoneConnected && latestState.isActive && !latestState.isNavigating && !latestState.watchLocalMode) {
                     Log.d("WearCommand", "Phone failed to connect for routing - falling back to standalone")
@@ -197,7 +205,7 @@ object WearCommandService {
             
             val endPoint = MapObject.createMapObject(MapObject.SEARCH, result.name, result.description, result.lat, result.lon)
             
-            app.organicmaps.sdk.search.SearchRecents.add(result.name, context)
+            SearchRecents.add(result.name, context)
 
             routing.prepare(startPoint, endPoint, router)
         } else {
@@ -210,7 +218,7 @@ object WearCommandService {
 
     fun requestMwmMetadata(context: Context, mwmName: String) = getBackend(context).requestMwmMetadata(context, mwmName)
 
-    private val syncHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val syncHandler = Handler(Looper.getMainLooper())
     private val syncRunnable = Runnable {
         val ctx = WearApplication.instance
         val manager = SettingsSyncManager.getInstance(ctx)
@@ -224,13 +232,12 @@ object WearCommandService {
 
     fun sendPing(context: Context) = getBackend(context).sendPing(context)
     fun sendHandshake(context: Context) = getBackend(context).sendHandshake(context)
-    fun syncPreferences(context: Context) {
+    fun syncPreferences(context: Context? = null) {
         syncHandler.removeCallbacks(syncRunnable)
         syncHandler.postDelayed(syncRunnable, 100) 
     }
     fun requestPreferences(context: Context) = getBackend(context).requestPreferences(context)
     fun syncSearchHistory(context: Context) = getBackend(context).syncSearchHistory(context)
-    fun checkConnection(context: Context, callback: (Boolean, String?) -> Unit) = getBackend(context).checkConnection(context, callback)
     fun startNavigation(context: Context) = getBackend(context).startNavigation(context)
     fun showOnPhone(context: Context, result: SearchResultItem) = getBackend(context).showOnPhone(context, result)
     fun cancelMapSync(context: Context, mapId: String) = getBackend(context).cancelMapSync(context, mapId)
@@ -246,15 +253,15 @@ object WearCommandService {
     fun toggleTrackRecording(context: Context) {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || !navState.isPhoneConnected) {
-            val isRecording = app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled()
+            val isRecording = TrackRecorder.nativeIsTrackRecordingEnabled()
             if (isRecording) {
-                if (!app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEmpty()) {
-                    app.organicmaps.sdk.location.TrackRecorder.nativeSaveTrackRecordingWithName("")
+                if (!TrackRecorder.nativeIsTrackRecordingEmpty()) {
+                    TrackRecorder.nativeSaveTrackRecordingWithName("")
                 }
-                app.organicmaps.sdk.location.TrackRecorder.nativeStopTrackRecording()
+                TrackRecorder.nativeStopTrackRecording()
                 NavigationStateHolder.update { it.copy(isTrackRecording = false, trackRecordingStartTime = 0L) }
             } else {
-                app.organicmaps.sdk.location.TrackRecorder.nativeStartTrackRecording()
+                TrackRecorder.nativeStartTrackRecording()
                 NavigationStateHolder.update { it.copy(isTrackRecording = true, trackRecordingStartTime = System.currentTimeMillis()) }
             }
         } else {
@@ -270,7 +277,7 @@ object WearCommandService {
             try {
                 // If native framework is not ready, we might need a fallback or wait, 
                 // but usually it's initialized if we are seeing bookmarks locally.
-                app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId)
+                BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId)
                 NavigationStateHolder.emitEvent(UiEvent.OpenMap)
                 // Force lock map to center on bookmark
                 NavigationStateHolder.update { it.copy(isMapUnlocked = false) }
@@ -286,7 +293,7 @@ object WearCommandService {
     fun updateBookmark(context: Context, bmkId: Long, name: String, color: Int, categoryId: Long = -1) {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || navState.watchLocalMode) {
-            val info = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
+            val info = BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
             info?.update(name, null, "")
             if (categoryId != -1L && info != null && info.categoryId != categoryId) {
                 info.changeCategory(categoryId)
@@ -301,7 +308,7 @@ object WearCommandService {
     fun createBookmarkCategory(context: Context, name: String) {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || navState.watchLocalMode) {
-            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.createCategory(name)
+            BookmarkManager.INSTANCE.createCategory(name)
             WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
             WatchBookmarkSyncManager.requestSync(context)
         } else {
@@ -322,7 +329,7 @@ object WearCommandService {
     fun renameBookmarkCategory(context: Context, oldName: String, newName: String) {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || navState.watchLocalMode) {
-            val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
+            val manager = BookmarkManager.INSTANCE
             manager.getCategories().find { it.name.equals(oldName, ignoreCase = true) }?.name = newName
             WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
             WatchBookmarkSyncManager.requestSync(context)
@@ -334,7 +341,7 @@ object WearCommandService {
     fun deleteBookmarkCategory(context: Context, name: String) {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || navState.watchLocalMode) {
-            val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
+            val manager = BookmarkManager.INSTANCE
             val category = manager.getCategories().find { it.name.equals(name, ignoreCase = true) }
             category?.let { manager.deleteCategory(it.id) }
             WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)

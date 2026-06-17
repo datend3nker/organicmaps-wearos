@@ -17,7 +17,7 @@ public:
     if (env == nullptr)
       return;
     static jmethodID const socketConstructor = jni::GetConstructorID(env, g_platformSocketClazz, "()V");
-    jni::TScopedLocalRef localSelf(env, env->NewObject(g_platformSocketClazz, socketConstructor));
+    jni::ScopedLocalRef localSelf(env, env->NewObject(g_platformSocketClazz, socketConstructor));
     m_self = env->NewGlobalRef(localSelf.get());
     ASSERT(m_self, ());
   }
@@ -36,7 +36,7 @@ public:
     if (env == nullptr || m_self == nullptr)
       return false;
     static jmethodID const openMethod = jni::GetMethodID(env, m_self, "open", "(Ljava/lang/String;I)Z");
-    jni::TScopedLocalRef hostRef(env, jni::ToJavaString(env, host));
+    jni::ScopedLocalRef hostRef(env, jni::ToJavaString(env, host));
     jboolean result = env->CallBooleanMethod(m_self, openMethod, hostRef.get(), static_cast<jint>(port));
     if (jni::HandleJavaException(env))
       return false;

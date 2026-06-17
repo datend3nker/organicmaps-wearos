@@ -5,13 +5,13 @@
 
 extern "C"
 {
-JNIEXPORT jobjectArray Java_app_organicmaps_sdk_search_DisplayedCategories_nativeGetKeys(JNIEnv * env, jclass)
+JNIEXPORT jobjectArray JNICALL Java_app_organicmaps_sdk_search_DisplayedCategories_nativeGetKeys(JNIEnv * env, jclass)
 {
   search::DisplayedCategories const & categories = frm()->GetDisplayedCategories();
   return jni::ToJavaStringArray(env, categories.GetKeys());
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_search_DisplayedCategories_nativeIsLangSupported(JNIEnv * env, jclass,
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_search_DisplayedCategories_nativeIsLangSupported(JNIEnv * env, jclass,
                                                                                              jstring langCode)
 {
   return search::DisplayedCategories::IsLanguageSupported(jni::ToNativeString(env, langCode));

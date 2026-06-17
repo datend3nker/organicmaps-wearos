@@ -132,7 +132,7 @@ public class RoutingController
         // Genuine build error. Notify container-less observers (e.g. the Wear forwarder) here, since
         // processRoutingEvent() below early-returns when there is no UI container.
         for (RouteEventListener l : mRouteEventListeners)
-          l.onCommonBuildError(mLastResultCode, mLastMissingMaps);
+          l.onCommonBuildError(mLastResultCode, mLastMissingMaps == null ? new String[0] : mLastMissingMaps);
       }
 
       processRoutingEvent();
@@ -268,11 +268,6 @@ public class RoutingController
   {
     if (!mRouteEventListeners.contains(listener))
       mRouteEventListeners.add(listener);
-  }
-
-  public void removeRouteEventListener(@NonNull RouteEventListener listener)
-  {
-    mRouteEventListeners.remove(listener);
   }
 
   public void initialize(@NonNull LocationHelper locationHelper)

@@ -100,8 +100,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
     }
 
     private boolean isFrameworkReady() {
-        return app.organicmaps.MwmApplication.sInstance != null && 
-               app.organicmaps.MwmApplication.sInstance.getOrganicMaps().arePlatformAndCoreInitialized();
+        return app.organicmaps.MwmApplication.sInstance.getOrganicMaps().arePlatformAndCoreInitialized();
     }
 
     @Override
@@ -420,7 +419,12 @@ public class BluetoothSyncLayer implements ISyncLayer {
             Log.d(TAG, "DEBUG_BT_PIPELINE: Starting map stream thread for " + mapId + " from offset " + offset + " (File size: " + file.length() + ")");
             long totalBytes = file.length();
             try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
-                if (offset > 0) fis.skip(offset);
+                if (offset > 0) {
+                    long skipped = fis.skip(offset);
+                    if (skipped < offset) {
+                        Log.w(TAG, "DEBUG_BT_PIPELINE: Requested offset " + offset + " but only skipped " + skipped);
+                    }
+                }
                 
                 byte[] buffer = new byte[32 * 1024]; 
                 int bytesRead;
@@ -583,25 +587,19 @@ public class BluetoothSyncLayer implements ISyncLayer {
         }));
     }
 
-    private static class PriorityRunnable implements Runnable, Comparable<PriorityRunnable> {
-        private final int priority;
-        private final Runnable runnable;
-
-        PriorityRunnable(int priority, Runnable runnable) {
-            this.priority = priority;
-            this.runnable = runnable;
-        }
+    private record PriorityRunnable(int priority,
+                                    Runnable runnable) implements Runnable, Comparable<PriorityRunnable> {
 
         @Override
-        public void run() {
-            runnable.run();
-        }
+            public void run() {
+                runnable.run();
+            }
 
-        @Override
-        public int compareTo(@NonNull PriorityRunnable other) {
-            return Integer.compare(this.priority, other.priority);
+            @Override
+            public int compareTo(@NonNull PriorityRunnable other) {
+                return Integer.compare(this.priority, other.priority);
+            }
         }
-    }
 
     private void startConnectionListener() {
         if (mIsServerRunning) return;
@@ -619,8 +617,8 @@ public class BluetoothSyncLayer implements ISyncLayer {
     private void runTcpServer() {
         int retryCount = 0;
         while (mIsServerRunning && retryCount < 5) {
-            try {
-                mTcpServerSocket = new java.net.ServerSocket();
+            try (java.net.ServerSocket serverSocket = new java.net.ServerSocket()) {
+                mTcpServerSocket = serverSocket;
                 mTcpServerSocket.setReuseAddress(true);
                 mTcpServerSocket.bind(new java.net.InetSocketAddress(5610));
                 Log.i(TAG, "REF_TCP_RFCOMM_SUCCESS: TCP server listening on port 5610 (Emulator mode)");
@@ -652,10 +650,6 @@ public class BluetoothSyncLayer implements ISyncLayer {
     private void runRfcommServer() {
         while (mIsServerRunning) {
             Context context = app.organicmaps.MwmApplication.sInstance;
-            if (context == null) {
-                sleep(5000);
-                continue;
-            }
             android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
             BluetoothAdapter adapter = bm != null ? bm.getAdapter() : null;
             if (adapter == null || !adapter.isEnabled()) {
@@ -696,9 +690,7 @@ public class BluetoothSyncLayer implements ISyncLayer {
         startListening(connection);
 
         Context context = app.organicmaps.MwmApplication.sInstance;
-        if (context != null) {
-            app.organicmaps.wear.WearSyncService.onConnectionEstablished(context);
-        }
+        app.organicmaps.wear.WearSyncService.onConnectionEstablished(context);
     }
 
     private void sleep(long ms) {

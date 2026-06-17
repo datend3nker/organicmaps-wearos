@@ -61,24 +61,24 @@ jobject CreateTrack(JNIEnv * env, place_page::Info const & info, jni::TScopedLoc
 
 extern "C"
 {
-JNIEXPORT jstring Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetDescription(JNIEnv * env, jclass, jlong id)
+JNIEXPORT jstring JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetDescription(JNIEnv * env, jclass, jlong id)
 {
   return jni::ToJavaString(env, frm()->GetBookmarkManager().GetTrack(static_cast<kml::TrackId>(id))->GetDescription());
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevationInfo(JNIEnv * env, jclass, jlong id)
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevationInfo(JNIEnv * env, jclass, jlong id)
 {
   auto const & track = frm()->GetBookmarkManager().GetTrack(id);
   auto const & elevationInfo = track->GetElevationInfo();
   return track->GetElevationInfo().has_value() ? ToJavaElevationInfo(env, elevationInfo.value()) : nullptr;
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetStatistics(JNIEnv * env, jclass, jlong id)
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetStatistics(JNIEnv * env, jclass, jlong id)
 {
   return ToJavaTrackStatistics(env, frm()->GetBookmarkManager().GetTrack(id)->GetStatistics());
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevationActivePointCoordinates(JNIEnv * env,
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevationActivePointCoordinates(JNIEnv * env,
                                                                                                          jclass,
                                                                                                          jlong trackId)
 {
@@ -87,7 +87,7 @@ JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevati
   return ToJavaElevationInfoPoint(env, latlon);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_Track_nativeSetParams(JNIEnv * env, jclass, jlong id,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeSetParams(JNIEnv * env, jclass, jlong id,
                                                                              jstring name, jint color, jstring descr)
 {
   auto const * nTrack = frm()->GetBookmarkManager().GetTrack(static_cast<kml::TrackId>(id));
@@ -104,27 +104,27 @@ JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_Track_nativeSetParams(JNI
   g_framework->ReplaceTrack(static_cast<kml::TrackId>(id), trackData);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_Track_nativeChangeColor(JNIEnv *, jclass, jlong id, jint color)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeChangeColor(JNIEnv *, jclass, jlong id, jint color)
 {
   uint8_t const alpha = ExtractByte(color, 3);
   g_framework->ChangeTrackColor(static_cast<kml::TrackId>(id), static_cast<dp::Color>(shift(color, 8) + alpha));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_Track_nativeChangeCategory(JNIEnv *, jclass, jlong oldCat,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeChangeCategory(JNIEnv *, jclass, jlong oldCat,
                                                                                   jlong newCat, jlong trackId)
 {
   g_framework->MoveTrack(static_cast<kml::TrackId>(trackId), static_cast<kml::MarkGroupId>(oldCat),
                          static_cast<kml::MarkGroupId>(newCat));
 }
 
-JNIEXPORT jdouble Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevationCurPositionDistance(JNIEnv *, jclass,
+JNIEXPORT jdouble JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevationCurPositionDistance(JNIEnv *, jclass,
                                                                                                       jlong trackId)
 {
   auto const & bm = frm()->GetBookmarkManager();
   return static_cast<jdouble>(bm.GetElevationMyPosition(static_cast<kml::TrackId>(trackId)));
 }
 
-JNIEXPORT jdouble Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevationActivePointDistance(JNIEnv *, jclass,
+JNIEXPORT jdouble JNICALL Java_app_organicmaps_sdk_bookmarks_data_Track_nativeGetElevationActivePointDistance(JNIEnv *, jclass,
                                                                                                       jlong trackId)
 {
   auto & bm = frm()->GetBookmarkManager();

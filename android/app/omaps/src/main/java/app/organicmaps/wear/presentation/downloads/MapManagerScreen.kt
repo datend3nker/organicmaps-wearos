@@ -2,9 +2,6 @@ package app.organicmaps.wear.presentation.downloads
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -20,11 +17,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -37,16 +36,18 @@ import app.organicmaps.wear.VirtualMwmManager
 import app.organicmaps.wear.WatchStorage
 import app.organicmaps.wear.WearApplication
 import app.organicmaps.wear.WearMapDownloader
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.*
+import kotlin.math.round
 import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 fun MapManagerScreen(isVisible: Boolean = true) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val navState by NavigationStateHolder.state.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
@@ -54,11 +55,11 @@ fun MapManagerScreen(isVisible: Boolean = true) {
     // Throttled location to avoid excessive re-polling on every tiny movement (approx 1km resolution)
     val centerLat = remember(navState.lat) { 
         val raw = if (navState.lat != 0.0) navState.lat else 48.2082
-        kotlin.math.round(raw * 100.0) / 100.0
+        round(raw * 100.0) / 100.0
     }
     val centerLon = remember(navState.lon) { 
         val raw = if (navState.lon != 0.0) navState.lon else 16.3738
-        kotlin.math.round(raw * 100.0) / 100.0
+        round(raw * 100.0) / 100.0
     }
 
     var pathStack by remember { mutableStateOf(listOf<String>()) }
@@ -186,11 +187,11 @@ fun MapManagerScreen(isVisible: Boolean = true) {
             )
         }
 
-        if (downloadState == app.organicmaps.wear.WearMapDownloader.DownloadState.STREAMING_FROM_PHONE || 
-            downloadState == app.organicmaps.wear.WearMapDownloader.DownloadState.DOWNLOADING) {
+        if (downloadState == WearMapDownloader.DownloadState.STREAMING_FROM_PHONE || 
+            downloadState == WearMapDownloader.DownloadState.DOWNLOADING) {
             item {
                 Chip(
-                    onClick = { app.organicmaps.wear.WearMapDownloader.cancel(context) },
+                    onClick = { WearMapDownloader.cancel(context) },
                     label = { Text("Cancel Sync: $currentMap") },
                     secondaryLabel = { Text("${(downloadProgress * 100).toInt()}%") },
                     colors = ChipDefaults.secondaryChipColors(),
@@ -305,10 +306,12 @@ fun MapManagerScreen(isVisible: Boolean = true) {
 }
 
 @Composable
-fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit, scope: kotlinx.coroutines.CoroutineScope) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit, scope: CoroutineScope) {
+    val context = LocalContext.current
     val navState by NavigationStateHolder.state.collectAsState()
-    val isDownloading = item.status == CountryItem.STATUS_PROGRESS || item.status == CountryItem.STATUS_ENQUEUED || item.status == CountryItem.STATUS_APPLYING
+    val isDownloading = (item.status == CountryItem.STATUS_PROGRESS ||
+                        item.status == CountryItem.STATUS_ENQUEUED ||
+                        item.status == CountryItem.STATUS_APPLYING)
     val isInstalled = item.status == CountryItem.STATUS_DONE || item.status == CountryItem.STATUS_PARTLY || item.present
     val isOnPhone = navState.phoneDownloadedMaps.contains(item.id)
     
@@ -335,7 +338,8 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
                     val size = WatchStorage.formatBytes(item.totalSize)
                     NavigationStateHolder.emitEvent(UiEvent.ShowToast(
                         "$size won't fit ($free free). It will stream on demand instead.",
-                        android.widget.Toast.LENGTH_LONG))
+                        Toast.LENGTH_LONG,
+                    ))
                 } else {
                     scope.launch(Dispatchers.Main) {
                         WearMapDownloader.downloadOrStreamMap(context, item.id)

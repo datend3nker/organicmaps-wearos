@@ -7,7 +7,7 @@
 
 extern "C"
 {
-JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeSetEnabled(JNIEnv * env, jclass clazz,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeSetEnabled(JNIEnv * env, jclass clazz,
                                                                                 jboolean enable)
 {
   GpsTracker::Instance().SetEnabled(enable);
@@ -20,18 +20,18 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeSetEnabled(
     f->DisconnectFromGpsTracker();
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_location_TrackRecorder_nativeIsEnabled(JNIEnv * env, jclass clazz)
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeIsEnabled(JNIEnv * env, jclass clazz)
 {
   return GpsTracker::Instance().IsEnabled();
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeStartTrackRecording(JNIEnv * env, jclass clazz)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeStartTrackRecording(JNIEnv * env, jclass clazz)
 {
   LOG(LINFO, ("Native Start Track Recording"));
   frm()->StartTrackRecording();
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeSetTrackRecordingStatsListener(
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeSetTrackRecordingStatsListener(
     JNIEnv * env, jclass clazz, jobject updateListener)
 {
   if (updateListener == nullptr)
@@ -59,7 +59,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeSetTrackRec
   });
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_location_TrackRecorder_nativeGetElevationInfo(JNIEnv * env, jclass clazz)
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeGetElevationInfo(JNIEnv * env, jclass clazz)
 {
   ASSERT(frm()->IsTrackRecordingEnabled(), ("Track recording is not started"));
   auto const & elevationInfo = frm()->GetTrackRecordingElevationInfo();
@@ -68,31 +68,31 @@ JNIEXPORT jobject Java_app_organicmaps_sdk_location_TrackRecorder_nativeGetEleva
   return ToJavaElevationInfo(env, elevationInfo);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeStopTrackRecording(JNIEnv * env, jclass clazz)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeStopTrackRecording(JNIEnv * env, jclass clazz)
 {
   LOG(LINFO, ("Native Stop Track Recording"));
   frm()->StopTrackRecording();
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeClearTrackRecording(JNIEnv * env, jclass clazz)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeClearTrackRecording(JNIEnv * env, jclass clazz)
 {
   GpsTracker::Instance().Clear();
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_location_TrackRecorder_nativeSaveTrackRecordingWithName(JNIEnv * env,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeSaveTrackRecordingWithName(JNIEnv * env,
                                                                                                 jclass clazz,
                                                                                                 jstring name)
 {
   frm()->SaveTrackRecordingWithName(jni::ToNativeString(env, name));
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_location_TrackRecorder_nativeIsTrackRecordingEmpty(JNIEnv * env,
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeIsTrackRecordingEmpty(JNIEnv * env,
                                                                                                jclass clazz)
 {
   return frm()->IsTrackRecordingEmpty();
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_location_TrackRecorder_nativeIsTrackRecordingEnabled(JNIEnv * env,
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_location_TrackRecorder_nativeIsTrackRecordingEnabled(JNIEnv * env,
                                                                                                  jclass clazz)
 {
   return frm()->IsTrackRecordingEnabled();

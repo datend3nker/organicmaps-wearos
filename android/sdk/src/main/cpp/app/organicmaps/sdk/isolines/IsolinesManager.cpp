@@ -16,14 +16,14 @@ static void IsolinesStateChanged(IsolinesManager::IsolinesState state, std::shar
   env->CallVoidMethod(*listener, jni::GetMethodID(env, *listener, "onStateChanged", "(I)V"), static_cast<jint>(state));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_maplayer_isolines_IsolinesManager_nativeAddListener(JNIEnv * env, jclass clazz,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_maplayer_isolines_IsolinesManager_nativeAddListener(JNIEnv * env, jclass clazz,
                                                                                             jobject listener)
 {
   g_framework->SetIsolinesListener(
       std::bind(&IsolinesStateChanged, std::placeholders::_1, jni::make_global_ref(listener)));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_maplayer_isolines_IsolinesManager_nativeRemoveListener(JNIEnv * env,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_maplayer_isolines_IsolinesManager_nativeRemoveListener(JNIEnv * env,
                                                                                                jclass clazz)
 {
   g_framework->SetIsolinesListener(nullptr);

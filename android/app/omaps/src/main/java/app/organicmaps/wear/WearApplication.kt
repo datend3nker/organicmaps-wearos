@@ -1,23 +1,34 @@
 package app.organicmaps.wear
 
 import android.app.Application
-import android.content.Context
+import android.app.PendingIntent
 import android.content.Intent
+import android.location.Location
 import android.util.Log
+import androidx.core.content.edit
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
-import app.organicmaps.sdk.location.LocationProviderFactory
+import app.organicmaps.sdk.Framework
 import app.organicmaps.sdk.OrganicMaps
+import app.organicmaps.sdk.Router
+import app.organicmaps.sdk.bookmarks.data.BookmarkManager
+import app.organicmaps.sdk.downloader.MapManager
+import app.organicmaps.sdk.location.LocationState
+import app.organicmaps.sdk.routing.RoutingController
+import app.organicmaps.sdk.routing.RoutingOptions
+import app.organicmaps.sdk.search.SearchEngine
+import app.organicmaps.sdk.settings.RoadType
 import app.organicmaps.sdk.settings.StoragePathManager
 import app.organicmaps.sdk.util.ConnectionState
-import app.organicmaps.sdk.routing.RoutingController
-import app.organicmaps.sdk.Framework
-import app.organicmaps.wear.BluetoothWearDataListenerService
-import androidx.core.content.edit
+import app.organicmaps.sdk.util.LocationUtils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.io.File
-import java.io.FileOutputStream
-import kotlinx.coroutines.*
-import kotlin.math.hypot
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -80,14 +91,13 @@ class WearApplication : Application() {
             nativeLocationFactory
         )
 
-        // Restore mounts only AFTER OrganicMaps (and thus native SetSettingsDir) is initialized.
         VirtualMwmManager.restoreMountsEarly(this)
 
         organicMaps.locationHelper.onEnteredIntoFirstRun()
 
-        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
-        app.organicmaps.sdk.routing.RoutingController.get()
-        app.organicmaps.sdk.search.SearchEngine.INSTANCE
+        BookmarkManager.INSTANCE
+        RoutingController.get()
+        SearchEngine.INSTANCE
 
         try {
             val asyncContinue = organicMaps.init {
@@ -107,10 +117,10 @@ class WearApplication : Application() {
         
         val isEmulator = android.os.Build.PRODUCT.contains("sdk") || android.os.Build.PRODUCT.contains("vbox")
         val currentBackend = prefs.getString("pref_wear_os_backend", null)
-        val shouldResetToGms = isEmulator && currentBackend == "BLUETOOTH" && BuildConfig.FLAVOR != "oss" && !prefs.getBoolean("gms_migration_done", false)
+        val shouldResetToGms = isEmulator && currentBackend == "BLUETOOTH" && !prefs.getBoolean("gms_migration_done", false)
 
         if (shouldResetToGms || currentBackend == null) {
-            val defaultBackend = if (BuildConfig.FLAVOR == "oss") "BLUETOOTH" else "GMS"
+            val defaultBackend = "GMS"
             Log.d("WearApp", "Backend migration/default logic: resetting to $defaultBackend (Emulator=$isEmulator, Current=$currentBackend)")
             prefs.edit {
                 putString("pref_wear_os_backend", defaultBackend)
@@ -136,14 +146,14 @@ class WearApplication : Application() {
         WearNotificationManager.createNotificationChannel(this)
 
         // Initialize Bookmark Sync
-        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addSharingListener(WatchBookmarkSyncManager.sharingListener)
-        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addCategoriesUpdatesListener {
+        BookmarkManager.INSTANCE.addSharingListener(WatchBookmarkSyncManager.sharingListener)
+        BookmarkManager.INSTANCE.addCategoriesUpdatesListener {
             WatchBookmarkSyncManager.onLocalBookmarksChanged(this)
         }
         // After every bookmark file merge, purge any bookmark the union-merge resurrected but that is
         // tombstoned locally (a merge never removes), so deletions stay deleted across syncs.
-        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addLoadingListener(
-            object : app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksLoadingListener {
+        BookmarkManager.INSTANCE.addLoadingListener(
+            object : BookmarkManager.BookmarksLoadingListener {
                 override fun onBookmarksLoadingFinished() {
                     WatchBookmarkSyncManager.onBookmarksFileMergeFinished(this@WearApplication)
                 }
@@ -167,7 +177,7 @@ class WearApplication : Application() {
                 if (state.isEffectivelyStandalone) {
                     if (!organicMaps.locationHelper.isActive) {
                         try { 
-                            if (app.organicmaps.sdk.util.LocationUtils.checkFineLocationPermission(this@WearApplication)) {
+                            if (LocationUtils.checkFineLocationPermission(this@WearApplication)) {
                                 withContext(Dispatchers.Main) { 
                                     Log.d("WearApp", "Auto-starting local GPS (Standalone/Disconnected)")
                                     organicMaps.locationHelper.start() 
@@ -267,9 +277,9 @@ class WearApplication : Application() {
                 // frozen at the last viewport (#1). Runs on the routing callback (main) thread.
                 try {
                     repeat(6) {
-                        if (app.organicmaps.sdk.location.LocationState.getMode() ==
-                            app.organicmaps.sdk.location.LocationState.FOLLOW_AND_ROTATE) return@repeat
-                        app.organicmaps.sdk.location.LocationState.nativeSwitchToNextMode()
+                        if (LocationState.getMode() ==
+                            LocationState.FOLLOW_AND_ROTATE) return@repeat
+                        LocationState.nativeSwitchToNextMode()
                     }
                 } catch (_: Throwable) {}
             }
@@ -284,7 +294,7 @@ class WearApplication : Application() {
                     isRouteBuilding = false
                 ), force = true)
             }
-            override fun updateBuildProgress(progress: Int, router: app.organicmaps.sdk.Router) {
+            override fun updateBuildProgress(progress: Int, router: Router) {
                 NavigationStateHolder.update { it.copy(routeBuildProgress = progress) }
             }
             override fun onCommonBuildError(lastRouteError: Int, lastMissingMaps: Array<out String>) {
@@ -304,17 +314,15 @@ class WearApplication : Application() {
             }
         })
 
-        app.organicmaps.sdk.location.LocationState.nativeSetListener(object : app.organicmaps.sdk.location.LocationState.ModeChangeListener {
-            override fun onMyPositionModeChanged(newMode: Int) {
-                val isUnlocked = newMode == app.organicmaps.sdk.location.LocationState.NOT_FOLLOW || 
-                                newMode == app.organicmaps.sdk.location.LocationState.NOT_FOLLOW_NO_POSITION
-                Log.d("WearApp", "Native location mode changed: $newMode (isUnlocked=$isUnlocked)")
-                NavigationStateHolder.update { it.copy(isMapUnlocked = isUnlocked) }
-            }
-        })
+        LocationState.nativeSetListener { newMode ->
+            val isUnlocked = newMode == LocationState.NOT_FOLLOW ||
+                    newMode == LocationState.NOT_FOLLOW_NO_POSITION
+            Log.d("WearApp", "Native location mode changed: $newMode (isUnlocked=$isUnlocked)")
+            NavigationStateHolder.update { it.copy(isMapUnlocked = isUnlocked) }
+        }
 
         organicMaps.locationHelper.addListener(object : app.organicmaps.sdk.location.LocationListener {
-            override fun onLocationUpdated(location: android.location.Location) {
+            override fun onLocationUpdated(location: Location) {
                 val state = NavigationStateHolder.state.value
                 if (state.isEffectivelyStandalone) {
                     NavigationStateHolder.update(state.copy(
@@ -325,13 +333,13 @@ class WearApplication : Application() {
                     ))
                 }
                 
-                getSharedPreferences("wear_prefs", Context.MODE_PRIVATE).edit {
+                getSharedPreferences("wear_prefs", MODE_PRIVATE).edit {
                     putFloat("last_known_lat", location.latitude.toFloat())
                     putFloat("last_known_lon", location.longitude.toFloat())
                     putFloat("last_known_bearing", location.bearing)
                 }
             }
-            override fun onLocationResolutionRequired(pendingIntent: android.app.PendingIntent) {}
+            override fun onLocationResolutionRequired(pendingIntent: PendingIntent) {}
             override fun onLocationDisabled() {}
         })
         
@@ -352,16 +360,7 @@ class WearApplication : Application() {
         }
     }
     
-    @Deprecated("Use waitForInitializationSuspend", ReplaceWith("waitForInitializationSuspend()"))
-    fun waitForInitializationBlocking() {
-        var retries = 0
-        while (!isFullyInitialized) {
-            if (initError != null) throw java.lang.RuntimeException(initError)
-            if (retries > 300) throw java.lang.RuntimeException("Timeout waiting for init (30s)")
-            Thread.sleep(100)
-            retries++
-        }
-    }
+
 
     private fun onCoreInitialized() {
         CoroutineScope(Dispatchers.Main).launch {
@@ -370,13 +369,13 @@ class WearApplication : Application() {
             copyCountriesFileToWritableStorage()
 
             WearCommandService.initBackend(this@WearApplication)
-            WearCommandService.syncPreferences(this@WearApplication)
+            WearCommandService.syncPreferences()
 
             val state = NavigationStateHolder.state.value
             if (state.allowMobileData) {
-                app.organicmaps.sdk.downloader.MapManager.nativeEnableDownloadOn3g()
+                MapManager.nativeEnableDownloadOn3g()
             }
-            app.organicmaps.sdk.search.SearchEngine.INSTANCE.initialize()
+            SearchEngine.INSTANCE.initialize()
             // The KMZ importer extracts the inner KML into files/bookmarks/; on a fresh watch that
             // directory doesn't exist yet, so unzip fails ("No such file or directory") and the
             // import silently aborts (no onBookmarksFileLoaded callback) — imported bookmarks never
@@ -384,7 +383,7 @@ class WearApplication : Application() {
             // NOTE: do NOT call BookmarkManager.loadBookmarks() here — the framework already calls
             // Framework::LoadBookmarks during init, and a second call aborts natively
             // (bookmark_manager.cpp CHECK(!m_loadBookmarksCalled)).
-            java.io.File(filesDir, "bookmarks").mkdirs()
+            File(filesDir, "bookmarks").mkdirs()
             if (organicMaps.locationHelper.isInFirstRun) {
                 organicMaps.locationHelper.onExitFromFirstRun()
             }
@@ -397,10 +396,10 @@ class WearApplication : Application() {
             Framework.nativeSetHikingLayerEnabled(state.hikingEnabled)
             Framework.nativeSetIsolinesLayerEnabled(state.isolinesEnabled)
 
-            if (state.avoidTolls) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Toll)
-            if (state.avoidMotorways) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Motorway)
-            if (state.avoidFerries) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Ferry)
-            if (state.avoidUnpaved) app.organicmaps.sdk.routing.RoutingOptions.addOption(app.organicmaps.sdk.settings.RoadType.Dirty)
+            if (state.avoidTolls) RoutingOptions.addOption(RoadType.Toll)
+            if (state.avoidMotorways) RoutingOptions.addOption(RoadType.Motorway)
+            if (state.avoidFerries) RoutingOptions.addOption(RoadType.Ferry)
+            if (state.avoidUnpaved) RoutingOptions.addOption(RoadType.Dirty)
 
             setupLocalNavigationListener()
         }
@@ -425,34 +424,5 @@ class WearApplication : Application() {
         }
     }
 
-    private fun copyAssetsRecursively(path: String, targetDir: String) {
-        val assetList = assets.list(path) ?: return
-        if (assetList.isEmpty()) {
-            copySingleAsset(path, targetDir)
-        } else {
-            val newTargetDir = if (path.isEmpty()) targetDir else File(targetDir, path).absolutePath
-            val dirFile = File(newTargetDir)
-            if (!dirFile.exists()) dirFile.mkdirs()
-            
-            for (asset in assetList) {
-                val subPath = if (path.isEmpty()) asset else "$path/$asset"
-                copyAssetsRecursively(subPath, targetDir)
-            }
-        }
-    }
 
-    private fun copySingleAsset(fileName: String, targetDir: String) {
-        val targetFile = File(targetDir, fileName)
-        if (targetFile.exists() && targetFile.length() > 0) return
-        targetFile.parentFile?.mkdirs()
-        
-        try {
-            assets.open(fileName).use { input ->
-                FileOutputStream(targetFile, false).use { output ->
-                    input.copyTo(output)
-                }
-            }
-        } catch (e: Exception) {
-        }
-    }
 }

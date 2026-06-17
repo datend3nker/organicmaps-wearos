@@ -169,35 +169,15 @@ public class WearProtocol {
     }
 
     public static int getPriority(byte type) {
-        switch (type) {
-            case TYPE_NAV_STATUS:
-            case TYPE_COMMAND:
-            case TYPE_HANDSHAKE:
-                return PRIORITY_HIGH;
-            case TYPE_SEARCH_RESULTS:
-            case TYPE_SEARCH_HISTORY:
-            case TYPE_PREFERENCES:
-            case TYPE_PREFERENCES_UPDATES:
-            case TYPE_TRACK_RECORDING:
-            case TYPE_BOOKMARKS:
-            case TYPE_BOOKMARKS_METADATA:
-            case TYPE_BOOKMARK_RENAME:
-            case TYPE_BOOKMARK_DELETE:
-            case TYPE_BOOKMARK_UPSERT:
-            case TYPE_MAP_DOWNLOAD_PROGRESS:
-            case TYPE_ROUTE_BUILD_PROGRESS:
-            case TYPE_MAP_PHONE_DOWNLOADED:
-                return PRIORITY_MEDIUM;
-            case TYPE_MAP_CHUNK:
-            case TYPE_BOOKMARK_FILE:
-            case TYPE_VIRTUAL_MWM_REQUEST:
-            case TYPE_VIRTUAL_MWM_DATA:
-            case TYPE_VIRTUAL_MWM_MOUNT:
-            case TYPE_MAP_TILE_RESPONSE:
-            case TYPE_MAP_DOWNLOAD_REQUEST:
-                return PRIORITY_LOW;
-            default:
-                return PRIORITY_MEDIUM;
-        }
+        return switch (type) {
+            case TYPE_NAV_STATUS, TYPE_COMMAND, TYPE_HANDSHAKE -> PRIORITY_HIGH;
+            case TYPE_SEARCH_RESULTS, TYPE_SEARCH_HISTORY, TYPE_PREFERENCES, TYPE_PREFERENCES_UPDATES,
+                 TYPE_TRACK_RECORDING, TYPE_BOOKMARKS, TYPE_BOOKMARKS_METADATA, TYPE_BOOKMARK_RENAME,
+                 TYPE_BOOKMARK_DELETE, TYPE_BOOKMARK_UPSERT, TYPE_MAP_DOWNLOAD_PROGRESS,
+                 TYPE_ROUTE_BUILD_PROGRESS, TYPE_MAP_PHONE_DOWNLOADED -> PRIORITY_MEDIUM;
+            case TYPE_MAP_CHUNK, TYPE_BOOKMARK_FILE, TYPE_VIRTUAL_MWM_REQUEST, TYPE_VIRTUAL_MWM_DATA,
+                 TYPE_VIRTUAL_MWM_MOUNT, TYPE_MAP_TILE_RESPONSE, TYPE_MAP_DOWNLOAD_REQUEST -> PRIORITY_LOW;
+            default -> PRIORITY_MEDIUM;
+        };
     }
 }

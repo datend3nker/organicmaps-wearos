@@ -33,7 +33,6 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -62,7 +61,11 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 @Composable
-fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainViewModel: MainViewModel = viewModel()) {
+fun SearchScreen(
+    modifier: Modifier = Modifier,
+    isVisible: Boolean = true,
+    @Suppress("UNUSED_PARAMETER") mainViewModel: MainViewModel? = null
+) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
@@ -327,8 +330,8 @@ fun SearchScreen(modifier: Modifier = Modifier, isVisible: Boolean = true, mainV
                                             avoidFerries = avoidFerries,
                                             avoidUnpaved = avoidUnpaved
                                         ) }
-                                    } catch (e: Exception) {
-                                        Log.e("SearchScreen", "Route planning failed: ${e.message}")
+                                    } catch (_: Exception) {
+                                        Log.e("SearchScreen", "Route planning failed")
                                         NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
                                     }
                                 } else {
@@ -540,14 +543,14 @@ fun PlacePage(
                 // direct "save" flow rather than only the map-centre QuickMenu action (#3).
                 Chip(
                     onClick = {
-                        try {
-                            BookmarkManager.INSTANCE.addNewBookmark(result.lat, result.lon)
-                            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
-                            WatchBookmarkSyncManager.requestSync(context)
-                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmark saved"))
-                        } catch (e: Exception) {
-                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Couldn't save bookmark"))
-                        }
+                            try {
+                                BookmarkManager.INSTANCE.addNewBookmark(result.lat, result.lon)
+                                WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
+                                WatchBookmarkSyncManager.requestSync(context)
+                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmark saved"))
+                            } catch (_: Exception) {
+                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("Couldn't save bookmark"))
+                            }
                     },
                     label = { Text("Save bookmark") },
                     icon = { Icon(Icons.Default.Star, contentDescription = null) },
@@ -675,11 +678,13 @@ fun SearchResultChip(result: SearchResultItem, onClick: () -> Unit) {
     val title = result.name.ifEmpty { result.description }
     val subTitle = if (result.name.isNotEmpty() && result.description != "Dropped Pin" && result.description != "Previous Fix") result.description else ""
     
+    val resources = context.resources
+    val packageName = context.packageName
     val iconRes = remember(result.featureType) {
         val name = result.featureType.lowercase().replace(" ", "_")
-        var id = context.resources.getIdentifier("ic_category_$name", "drawable", context.packageName)
-        if (id == 0) id = context.resources.getIdentifier("ic_bookmark_$name", "drawable", context.packageName)
-        if (id == 0) id = context.resources.getIdentifier("ic_$name", "drawable", context.packageName)
+        var id = resources.getIdentifier("ic_category_$name", "drawable", packageName)
+        if (id == 0) id = resources.getIdentifier("ic_bookmark_$name", "drawable", packageName)
+        if (id == 0) id = resources.getIdentifier("ic_$name", "drawable", packageName)
         id
     }
 

@@ -4,7 +4,7 @@
 extern "C"
 {
 // static void nativeProcessTask(long taskPointer);
-JNIEXPORT void Java_app_organicmaps_sdk_util_concurrency_UiThread_nativeProcessTask(JNIEnv * env, jclass clazz,
+void Java_app_organicmaps_sdk_util_concurrency_UiThread_nativeProcessTask(JNIEnv * env, jclass clazz,
                                                                                     jlong taskPointer)
 {
   android::GuiThread::ProcessTask(taskPointer);

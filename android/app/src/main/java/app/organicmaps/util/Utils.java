@@ -34,7 +34,7 @@ import androidx.annotation.StringRes;
 import androidx.core.app.NavUtils;
 import androidx.core.os.BundleCompat;
 import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentManager;
+
 import app.organicmaps.BuildConfig;
 import app.organicmaps.MwmActivity;
 import app.organicmaps.MwmApplication;
@@ -99,22 +99,22 @@ public class Utils
   public static void showSnackbar(@NonNull View view, @NonNull String message)
   {
     Snackbar snackbar = Snackbar.make(view, message, Snackbar.LENGTH_LONG);
-    setSnackbarMaxLines(snackbar, 3);
+    setSnackbarMaxLines(snackbar);
     snackbar.show();
   }
 
   public static void showSnackbarAbove(@NonNull View view, @NonNull View viewAbove, @NonNull String message)
   {
     Snackbar snackbar = Snackbar.make(view, message, Snackbar.LENGTH_LONG);
-    setSnackbarMaxLines(snackbar, 3);
+    setSnackbarMaxLines(snackbar);
     snackbar.setAnchorView(viewAbove);
     snackbar.show();
   }
 
-  private static void setSnackbarMaxLines(@NonNull final Snackbar snackbar, final int maxLinesCount)
+  private static void setSnackbarMaxLines(@NonNull final Snackbar snackbar)
   {
     TextView snackTextView = snackbar.getView().findViewById(com.google.android.material.R.id.snackbar_text);
-    snackTextView.setMaxLines(maxLinesCount);
+    snackTextView.setMaxLines(3);
   }
 
   public static void showSnackbar(@NonNull Context context, @NonNull View view, int messageResId)
@@ -146,12 +146,6 @@ public class Utils
     if (isIntentSupported(context, intent))
       return intent;
     return null;
-  }
-
-  public static void checkNotNull(Object object)
-  {
-    if (null == object)
-      throw new NullPointerException("Argument here must not be NULL");
   }
 
   public static void copyTextToClipboard(Context context, String text)
@@ -501,9 +495,8 @@ public class Utils
   public static String getDonateUrl(@NonNull Context context)
   {
     final String url = Config.getDonateUrl();
-    // Enable donations by default if not Google or Huawei. Replace organicmaps.app/donate/ with localized page.
-    if ((url.isEmpty() && !BuildConfig.FLAVOR.equals("google") && !BuildConfig.FLAVOR.equals("huawei"))
-        || url.endsWith("organicmaps.app/donate/"))
+    // Enable donations by default. Replace organicmaps.app/donate/ with localized page.
+    if (url.isEmpty() || url.endsWith("organicmaps.app/donate/"))
       return context.getString(R.string.translated_om_site_url) + "donate/";
     return url;
   }

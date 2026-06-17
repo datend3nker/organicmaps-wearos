@@ -5,7 +5,7 @@
 
 extern "C"
 {
-JNIEXPORT jboolean Java_app_organicmaps_sdk_util_Config_nativeHasConfigValue(JNIEnv * env, jclass thiz, jstring name)
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_util_Config_nativeHasConfigValue(JNIEnv * env, jclass thiz, jstring name)
 {
   if (name == nullptr)
     return static_cast<jboolean>(false);
@@ -17,7 +17,7 @@ JNIEXPORT jboolean Java_app_organicmaps_sdk_util_Config_nativeHasConfigValue(JNI
   return settings::Get(key, value);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeDeleteConfigValue(JNIEnv * env, jclass thiz, jstring name)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_util_Config_nativeDeleteConfigValue(JNIEnv * env, jclass thiz, jstring name)
 {
   if (name == nullptr)
     return;
@@ -28,7 +28,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeDeleteConfigValue(JNIE
   settings::Delete(key);
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_util_Config_nativeGetBoolean(JNIEnv * env, jclass thiz, jstring name,
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_util_Config_nativeGetBoolean(JNIEnv * env, jclass thiz, jstring name,
                                                                          jboolean defaultVal)
 {
   if (name == nullptr)
@@ -44,7 +44,7 @@ JNIEXPORT jboolean Java_app_organicmaps_sdk_util_Config_nativeGetBoolean(JNIEnv 
   return defaultVal;
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetBoolean(JNIEnv * env, jclass thiz, jstring name,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_util_Config_nativeSetBoolean(JNIEnv * env, jclass thiz, jstring name,
                                                                      jboolean val)
 {
   if (name == nullptr)
@@ -56,7 +56,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetBoolean(JNIEnv * en
   (void)settings::Set(key, static_cast<bool>(val));
 }
 
-JNIEXPORT jint Java_app_organicmaps_sdk_util_Config_nativeGetInt(JNIEnv * env, jclass thiz, jstring name,
+JNIEXPORT jint JNICALL Java_app_organicmaps_sdk_util_Config_nativeGetInt(JNIEnv * env, jclass thiz, jstring name,
                                                                  jint defaultValue)
 {
   if (name == nullptr)
@@ -72,7 +72,7 @@ JNIEXPORT jint Java_app_organicmaps_sdk_util_Config_nativeGetInt(JNIEnv * env, j
   return defaultValue;
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetInt(JNIEnv * env, jclass thiz, jstring name, jint value)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_util_Config_nativeSetInt(JNIEnv * env, jclass thiz, jstring name, jint value)
 {
   if (name == nullptr)
     return;
@@ -83,7 +83,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetInt(JNIEnv * env, j
   (void)settings::Set(key, static_cast<int32_t>(value));
 }
 
-JNIEXPORT jlong Java_app_organicmaps_sdk_util_Config_nativeGetLong(JNIEnv * env, jclass thiz, jstring name,
+JNIEXPORT jlong JNICALL Java_app_organicmaps_sdk_util_Config_nativeGetLong(JNIEnv * env, jclass thiz, jstring name,
                                                                    jlong defaultValue)
 {
   if (name == nullptr)
@@ -99,7 +99,7 @@ JNIEXPORT jlong Java_app_organicmaps_sdk_util_Config_nativeGetLong(JNIEnv * env,
   return defaultValue;
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetLong(JNIEnv * env, jclass thiz, jstring name, jlong value)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_util_Config_nativeSetLong(JNIEnv * env, jclass thiz, jstring name, jlong value)
 {
   if (name == nullptr)
     return;
@@ -110,7 +110,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetLong(JNIEnv * env, 
   (void)settings::Set(key, static_cast<int64_t>(value));
 }
 
-JNIEXPORT jdouble Java_app_organicmaps_sdk_util_Config_nativeGetDouble(JNIEnv * env, jclass thiz, jstring name,
+JNIEXPORT jdouble JNICALL Java_app_organicmaps_sdk_util_Config_nativeGetDouble(JNIEnv * env, jclass thiz, jstring name,
                                                                        jdouble defaultValue)
 {
   if (name == nullptr)
@@ -126,7 +126,7 @@ JNIEXPORT jdouble Java_app_organicmaps_sdk_util_Config_nativeGetDouble(JNIEnv * 
   return defaultValue;
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetDouble(JNIEnv * env, jclass thiz, jstring name,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_util_Config_nativeSetDouble(JNIEnv * env, jclass thiz, jstring name,
                                                                     jdouble value)
 {
   if (name == nullptr)
@@ -138,7 +138,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetDouble(JNIEnv * env
   (void)settings::Set(key, static_cast<double>(value));
 }
 
-JNIEXPORT jstring Java_app_organicmaps_sdk_util_Config_nativeGetString(JNIEnv * env, jclass thiz, jstring name,
+JNIEXPORT jstring JNICALL Java_app_organicmaps_sdk_util_Config_nativeGetString(JNIEnv * env, jclass thiz, jstring name,
                                                                        jstring defaultValue)
 {
   if (name == nullptr)
@@ -158,7 +158,7 @@ JNIEXPORT jstring Java_app_organicmaps_sdk_util_Config_nativeGetString(JNIEnv * 
   return defaultValue;
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetString(JNIEnv * env, jclass thiz, jstring name,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_util_Config_nativeSetString(JNIEnv * env, jclass thiz, jstring name,
                                                                     jstring value)
 {
   if (name == nullptr || value == nullptr)
@@ -173,25 +173,25 @@ JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetString(JNIEnv * env
   (void)settings::Set(key, val);
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_util_Config_nativeGetLargeFontsSize(JNIEnv * env, jclass thiz)
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_util_Config_nativeGetLargeFontsSize(JNIEnv * env, jclass thiz)
 {
   ::Framework * f = frm();
   return f ? f->LoadLargeFontsSize() : static_cast<jboolean>(false);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetLargeFontsSize(JNIEnv * env, jclass thiz, jboolean value)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_util_Config_nativeSetLargeFontsSize(JNIEnv * env, jclass thiz, jboolean value)
 {
   ::Framework * f = frm();
   if (f) f->SetLargeFontsSize(value);
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_util_Config_nativeGetTransliteration(JNIEnv * env, jclass thiz)
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_util_Config_nativeGetTransliteration(JNIEnv * env, jclass thiz)
 {
   ::Framework * f = frm();
   return f ? f->LoadTransliteration() : static_cast<jboolean>(false);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_util_Config_nativeSetTransliteration(JNIEnv * env, jclass thiz, jboolean value)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_util_Config_nativeSetTransliteration(JNIEnv * env, jclass thiz, jboolean value)
 {
   ::Framework * f = frm();
   if (f)

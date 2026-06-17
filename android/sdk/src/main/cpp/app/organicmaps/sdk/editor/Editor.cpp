@@ -40,9 +40,9 @@ jmethodID g_namesDataSourceConstructorID;
 
 jobject ToJavaName(JNIEnv * env, osm::LocalizedName const & name)
 {
-  jni::TScopedLocalRef jName(env, jni::ToJavaString(env, name.m_name));
-  jni::TScopedLocalRef jLang(env, jni::ToJavaString(env, name.m_lang));
-  jni::TScopedLocalRef jLangName(env, jni::ToJavaString(env, name.m_langName));
+  jni::ScopedLocalRef jName(env, jni::ToJavaString(env, name.m_name));
+  jni::ScopedLocalRef jLang(env, jni::ToJavaString(env, name.m_lang));
+  jni::ScopedLocalRef jLangName(env, jni::ToJavaString(env, name.m_langName));
   return env->NewObject(g_localNameClazz, g_localNameCtor, name.m_code, jName.get(), jLang.get(), jLangName.get());
 }
 
@@ -65,7 +65,7 @@ extern "C"
 {
 using osm::Editor;
 
-JNIEXPORT void Java_app_organicmaps_sdk_editor_Editor_nativeInit(JNIEnv * env, jclass)
+void Java_app_organicmaps_sdk_editor_Editor_nativeInit(JNIEnv * env, jclass)
 {
   g_localNameClazz = jni::GetGlobalClassRef(env, "app/organicmaps/sdk/editor/data/LocalizedName");
   // LocalizedName(int code, @NonNull String name, @NonNull String lang, @NonNull String langName)
@@ -319,7 +319,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_editor_Editor_nativeClearLocalEdits(JNIE
   Editor::Instance().ClearAllLocalEdits();
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_editor_Editor_nativeStartEdit(JNIEnv *, jclass)
+extern "C" void Java_app_organicmaps_sdk_editor_Editor_nativeStartEdit(JNIEnv *, jclass)
 {
   ::Framework * fr = frm();
   if (!fr->HasPlacePageInfo())

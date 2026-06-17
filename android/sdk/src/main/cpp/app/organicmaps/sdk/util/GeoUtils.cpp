@@ -4,7 +4,7 @@
 
 extern "C"
 {
-JNIEXPORT jobject Java_app_organicmaps_sdk_util_GeoUtils_nativeToLatLon(JNIEnv * env, jobject thiz, jdouble mercX,
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_util_GeoUtils_nativeToLatLon(JNIEnv * env, jobject thiz, jdouble mercX,
                                                                         jdouble mercY)
 {
   auto const mercPoint = m2::PointD(static_cast<double>(mercX), static_cast<double>(mercY));

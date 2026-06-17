@@ -19,21 +19,21 @@ class PreferenceHandler : WearMessageHandler {
         val updates = mutableListOf<BaseSettingsSyncManager.SettingUpdate>()
         if (buffer.remaining() < 4) return updates
         val count = buffer.int
-        for (i in 0 until count) {
-            if (buffer.remaining() < 4) break
+        repeat(count) {
+            if (buffer.remaining() < 4) return@repeat
             val keyLen = buffer.int
-            if (buffer.remaining() < keyLen) break
+            if (buffer.remaining() < keyLen) return@repeat
             val kb = ByteArray(keyLen)
             buffer.get(kb)
             val key = String(kb, StandardCharsets.UTF_8)
-            if (buffer.remaining() < 5) break
+            if (buffer.remaining() < 5) return@repeat
             val type = buffer.get()
             val valLen = buffer.int
             // The phone serializes timestamp(8) + version(8) after the value
             // (WearProtocolDataConverter.encodePreferenceUpdates). Both must be read or the
             // buffer desyncs (dropping every setting after the first) and version stays 0,
             // which makes applyRemoteUpdates treat the update as stale and ignore it.
-            if (buffer.remaining() < valLen + 16) break
+            if (buffer.remaining() < valLen + 16) return@repeat
             val vb = ByteArray(valLen)
             buffer.get(vb)
             val value = deserializeValue(type, vb)
@@ -53,7 +53,7 @@ class PreferenceHandler : WearMessageHandler {
                 4.toByte() -> ByteBuffer.wrap(b).long
                 else -> null
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

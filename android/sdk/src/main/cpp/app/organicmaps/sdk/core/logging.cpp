@@ -40,7 +40,7 @@ void AndroidMessage(LogLevel level, SrcPoint const & src, std::string const & s)
 
     if (logMethod)
     {
-      jni::TScopedLocalRef msg(env.get(), jni::ToJavaString(env.get(), out));
+      jni::ScopedLocalRef msg(env.get(), jni::ToJavaString(env.get(), out));
       env->CallStaticVoidMethod(g_loggerClazz, logMethod, pr, NULL, msg.get(), NULL);
       return;
     }

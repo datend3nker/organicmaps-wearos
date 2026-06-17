@@ -7,23 +7,11 @@ import app.organicmaps.sdk.sync.BaseSettingsSyncManager
 import app.organicmaps.wear.ReloadWorldMapsDebouncer
 import app.organicmaps.sdk.sync.WearProtocol
 import app.organicmaps.sdk.sync.WearProtocolDataConverter
-import com.google.android.gms.wearable.DataEvent
-import com.google.android.gms.wearable.DataEventBuffer
-import com.google.android.gms.wearable.DataMapItem
-import com.google.android.gms.wearable.MessageEvent
-import com.google.android.gms.wearable.Node
-import com.google.android.gms.wearable.Wearable
-import com.google.android.gms.wearable.WearableListenerService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.google.android.gms.wearable.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
 import java.io.File
-import java.io.FileOutputStream
+import kotlin.time.Duration.Companion.milliseconds
 
 class WearDataListenerService : WearableListenerService() {
     private val TAG = "WearDataListener"
@@ -61,7 +49,7 @@ class WearDataListenerService : WearableListenerService() {
 
         checkPhoneConnection()
         scope.launch {
-            delay(2000)
+            delay(2000.milliseconds)
             if (!NavigationStateHolder.state.value.isPhoneConnected) {
                 checkPhoneConnection()
             }
@@ -139,7 +127,7 @@ class WearDataListenerService : WearableListenerService() {
                 if (!mReachablePrompted) {
                     mReachablePrompted = true
                     Log.i(TAG, "DEBUG_GMS_PIPELINE: Phone node reachable over GMS, requesting initial sync")
-                    WearCommandService.syncPreferences(this@WearDataListenerService)
+                    WearCommandService.syncPreferences()
                     WearCommandService.requestPreferences(this@WearDataListenerService)
                     WearCommandService.requestBookmarks(this@WearDataListenerService)
                     WearCommandService.requestSearchHistory(this@WearDataListenerService)
@@ -177,10 +165,10 @@ class WearDataListenerService : WearableListenerService() {
         // not here — so a GMS message can't flip the indicator when Bluetooth is selected.
         GmsWearSyncBackend.activePeerId = messageEvent.sourceNodeId
         
+        val payload = if (data.size > 1) data.copyOfRange(1, data.size) else ByteArray(0)
         if (data.isNotEmpty()) {
             val version = data[0]
             if (version == WearProtocol.PROTOCOL_VERSION) {
-                val payload = if (data.size > 1) data.copyOfRange(1, data.size) else ByteArray(0)
                 WearMessageRouter.onMessageReceived(this, messageEvent.path, payload, messageEvent.sourceNodeId, currentLocalId)
             } else {
                 app.organicmaps.sdk.sync.WearLog.e("Protocol version mismatch at ${messageEvent.path}: received=$version, expected=${WearProtocol.PROTOCOL_VERSION}")
@@ -222,10 +210,10 @@ class WearDataListenerService : WearableListenerService() {
                     if (finalFile.exists()) finalFile.delete()
                     tempFile.renameTo(finalFile)
                     
-                    WearMapDownloader.onDownloadCompleted()
+                     WearMapDownloader.onDownloadCompleted()
                     ReloadWorldMapsDebouncer.reload()
-                } catch (e: Exception) {
-                    Log.e(TAG, "DEBUG_GMS_PIPELINE: Failed to pull map $mapId", e)
+                } catch (_: Exception) {
+                    Log.e(TAG, "DEBUG_GMS_PIPELINE: Failed to pull map $mapId")
                     WearMapDownloader.onDownloadCancelled()
                 } finally {
                     channelClient.close(channel)
@@ -278,7 +266,7 @@ class WearDataListenerService : WearableListenerService() {
         }
     }
 
-    private fun handlePreferences(dataMap: com.google.android.gms.wearable.DataMap) {
+    private fun handlePreferences(dataMap: DataMap) {
         val manager = SettingsSyncManager.getInstance(this)
         val updates = mutableListOf<BaseSettingsSyncManager.SettingUpdate>()
         val globalTs = dataMap.getLong("timestamp", 0L)
@@ -291,7 +279,7 @@ class WearDataListenerService : WearableListenerService() {
         manager.applyRemoteUpdates(updates)
     }
 
-    private fun handlePreferenceUpdates(dataMap: com.google.android.gms.wearable.DataMap) {
+    private fun handlePreferenceUpdates(dataMap: DataMap) {
         val manager = SettingsSyncManager.getInstance(this)
         val updates = mutableListOf<BaseSettingsSyncManager.SettingUpdate>()
         for (key in dataMap.keySet()) {
@@ -303,10 +291,12 @@ class WearDataListenerService : WearableListenerService() {
         manager.applyRemoteUpdates(updates)
     }
 
+    /*
     private fun launchOmaps() {
         val intent = Intent(this, Omaps::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         startActivity(intent)
     }
+    */
 }

@@ -6,6 +6,7 @@ import app.organicmaps.sdk.bookmarks.data.BookmarkManager
 import app.organicmaps.sdk.bookmarks.data.BookmarkSharingResult
 import app.organicmaps.sdk.bookmarks.data.KmlFileType
 import app.organicmaps.sdk.sync.BookmarkTombstoneStore
+import androidx.core.content.edit
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileInputStream
@@ -40,29 +41,23 @@ object WatchBookmarkSyncManager {
         val categories = manager.getCategories()
         val prefs = getPrefs(context)
         
-        var anyChanged = false
-        val editor = prefs.edit()
-        
-        for (cat in categories) {
-            val name = cat.name
-            val bCount = cat.bookmarksCount
-            val tCount = cat.tracksCount
-            
-            val lastB = prefs.getInt("last_count_b_$name", -1)
-            val lastT = prefs.getInt("last_count_t_$name", -1)
-            
-            if (bCount != lastB || tCount != lastT) {
-                if (isUserAction) {
-                    editor.putLong("last_local_edit_$name", now)
+        prefs.edit {
+            for (cat in categories) {
+                val name = cat.name
+                val bCount = cat.bookmarksCount
+                val tCount = cat.tracksCount
+                
+                val lastB = prefs.getInt("last_count_b_$name", -1)
+                val lastT = prefs.getInt("last_count_t_$name", -1)
+                
+                if (bCount != lastB || tCount != lastT) {
+                    if (isUserAction) {
+                        putLong("last_local_edit_$name", now)
+                    }
+                    putInt("last_count_b_$name", bCount)
+                    putInt("last_count_t_$name", tCount)
                 }
-                editor.putInt("last_count_b_$name", bCount)
-                editor.putInt("last_count_t_$name", tCount)
-                anyChanged = true
             }
-        }
-        
-        if (anyChanged) {
-            editor.apply()
         }
 
         // Reflect locally added/removed bookmarks in the manager UI immediately. The category list
@@ -125,13 +120,6 @@ object WatchBookmarkSyncManager {
         }
     }
 
-    /**
-     * Respond to the phone's PULL request for a category by exporting it. The phone issues this when
-     * its metadata diff shows the watch has newer bookmarks (e.g. one just added on the watch). The
-     * export completes asynchronously; [sharingListener] then streams the KML/KMZ to the phone, which
-     * union-merges it. Without this the phone's PULL was silently dropped and watch->phone additions
-     * never reached the phone.
-     */
     fun respondToSyncRequest(context: Context, categoryName: String) {
         scope.launch(Dispatchers.Main) {
             val manager = BookmarkManager.INSTANCE
@@ -273,7 +261,7 @@ object WatchBookmarkSyncManager {
         val localCategories = manager.getCategories()
         val prefs = getPrefs(context)
 
-        for (i in 0 until count) {
+        repeat(count) {
             val nameLen = buffer.int
             val nameBytes = ByteArray(nameLen)
             buffer.get(nameBytes)
@@ -281,7 +269,7 @@ object WatchBookmarkSyncManager {
             val remoteBmkCount = buffer.int
             val remoteTrkCount = buffer.int
             val remoteLastEdit = buffer.long
-            val remoteLastSynced = buffer.long
+            buffer.long // remoteLastSynced (unused)
 
             val localLastEdit = prefs.getLong("last_local_edit_$name", 0)
             val localLastSynced = prefs.getLong("last_synced_$name", 0)
@@ -352,7 +340,9 @@ object WatchBookmarkSyncManager {
                             
                             if (isLast) {
                                 withContext(Dispatchers.Main) {
-                                    getPrefs(context).edit().putLong("last_synced_$catName", System.currentTimeMillis()).apply()
+                                    getPrefs(context).edit {
+                                        putLong("last_synced_$catName", System.currentTimeMillis())
+                                    }
                                 }
                             }
                         }

@@ -12,14 +12,14 @@ routing::RoutingOptions::Road makeValue(jint option)
 
 extern "C"
 {
-JNIEXPORT jboolean Java_app_organicmaps_sdk_routing_RoutingOptions_nativeHasOption(JNIEnv *, jclass, jint option)
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_routing_RoutingOptions_nativeHasOption(JNIEnv *, jclass, jint option)
 {
   routing::RoutingOptions routingOptions = routing::RoutingOptions::LoadCarOptionsFromSettings();
   routing::RoutingOptions::Road road = makeValue(option);
   return static_cast<jboolean>(routingOptions.Has(road));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_routing_RoutingOptions_nativeAddOption(JNIEnv *, jclass, jint option)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_routing_RoutingOptions_nativeAddOption(JNIEnv *, jclass, jint option)
 {
   routing::RoutingOptions routingOptions = routing::RoutingOptions::LoadCarOptionsFromSettings();
   routing::RoutingOptions::Road road = makeValue(option);
@@ -27,7 +27,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_routing_RoutingOptions_nativeAddOption(J
   routing::RoutingOptions::SaveCarOptionsToSettings(routingOptions);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_routing_RoutingOptions_nativeRemoveOption(JNIEnv *, jclass, jint option)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_routing_RoutingOptions_nativeRemoveOption(JNIEnv *, jclass, jint option)
 {
   routing::RoutingOptions routingOptions = routing::RoutingOptions::LoadCarOptionsFromSettings();
   routing::RoutingOptions::Road road = makeValue(option);

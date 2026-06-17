@@ -221,7 +221,7 @@ void OnBookmarksSearchResults(search::BookmarksSearchParams::Results results,
 
 extern "C"
 {
-JNIEXPORT void Java_app_organicmaps_sdk_search_SearchEngine_nativeInit(JNIEnv * env, jobject thiz)
+void Java_app_organicmaps_sdk_search_SearchEngine_nativeInit(JNIEnv * env, jobject thiz)
 {
   g_javaListener = env->NewGlobalRef(thiz);
   // public void onResultsUpdate(@NonNull SearchResult[] results, long timestamp)

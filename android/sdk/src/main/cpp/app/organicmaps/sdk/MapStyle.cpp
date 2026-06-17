@@ -6,7 +6,7 @@
 
 extern "C"
 {
-JNIEXPORT void Java_app_organicmaps_sdk_MapStyle_nativeSet(JNIEnv *, jclass, jint mapStyle)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_MapStyle_nativeSet(JNIEnv *, jclass, jint mapStyle)
 {
   if (!g_framework)
     return;
@@ -16,12 +16,12 @@ JNIEXPORT void Java_app_organicmaps_sdk_MapStyle_nativeSet(JNIEnv *, jclass, jin
     g_framework->SetMapStyle(val);
 }
 
-JNIEXPORT jint Java_app_organicmaps_sdk_MapStyle_nativeGet(JNIEnv *, jclass)
+JNIEXPORT jint JNICALL Java_app_organicmaps_sdk_MapStyle_nativeGet(JNIEnv *, jclass)
 {
   return g_framework ? g_framework->GetMapStyle() : 0;
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_MapStyle_nativeMark(JNIEnv *, jclass, jint mapStyle)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_MapStyle_nativeMark(JNIEnv *, jclass, jint mapStyle)
 {
   if (!g_framework)
     return;

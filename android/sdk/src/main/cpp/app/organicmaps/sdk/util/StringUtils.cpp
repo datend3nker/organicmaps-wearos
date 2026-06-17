@@ -20,18 +20,18 @@ jobject MakeJavaPair(JNIEnv * env, std::string const & first, std::string const 
 
 extern "C"
 {
-JNIEXPORT jboolean Java_app_organicmaps_sdk_util_StringUtils_nativeIsHtml(JNIEnv * env, jclass thiz, jstring text)
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeIsHtml(JNIEnv * env, jclass thiz, jstring text)
 {
   return strings::IsHTML(jni::ToNativeString(env, text));
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_util_StringUtils_nativeContainsNormalized(JNIEnv * env, jclass thiz,
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeContainsNormalized(JNIEnv * env, jclass thiz,
                                                                                       jstring str, jstring substr)
 {
   return search::ContainsNormalized(jni::ToNativeString(env, str), jni::ToNativeString(env, substr));
 }
 
-JNIEXPORT jobjectArray Java_app_organicmaps_sdk_util_StringUtils_nativeFilterContainsNormalized(JNIEnv * env,
+JNIEXPORT jobjectArray JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeFilterContainsNormalized(JNIEnv * env,
                                                                                                 jclass thiz,
                                                                                                 jobjectArray src,
                                                                                                 jstring jSubstr)
@@ -50,13 +50,13 @@ JNIEXPORT jobjectArray Java_app_organicmaps_sdk_util_StringUtils_nativeFilterCon
   return jni::ToJavaStringArray(env, filtered);
 }
 
-JNIEXPORT jint Java_app_organicmaps_sdk_util_StringUtils_nativeFormatSpeed(JNIEnv * env, jclass thiz,
+JNIEXPORT jint JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeFormatSpeed(JNIEnv * env, jclass thiz,
                                                                            jdouble metersPerSecond)
 {
   return measurement_utils::FormatSpeed(metersPerSecond, measurement_utils::GetMeasurementUnits());
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_util_StringUtils_nativeFormatSpeedAndUnits(JNIEnv * env, jclass thiz,
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeFormatSpeedAndUnits(JNIEnv * env, jclass thiz,
                                                                                       jdouble metersPerSecond)
 {
   auto const units = measurement_utils::GetMeasurementUnits();
@@ -64,25 +64,25 @@ JNIEXPORT jobject Java_app_organicmaps_sdk_util_StringUtils_nativeFormatSpeedAnd
                       platform::GetLocalizedSpeedUnits(units));
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_util_StringUtils_nativeFormatDistance(JNIEnv * env, jclass,
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeFormatDistance(JNIEnv * env, jclass,
                                                                                  jdouble distanceInMeters)
 {
   return ToJavaDistance(env, platform::Distance::CreateFormatted(distanceInMeters));
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_util_StringUtils_nativeGetLocalizedDistanceUnits(JNIEnv * env, jclass)
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeGetLocalizedDistanceUnits(JNIEnv * env, jclass)
 {
   auto const localizedUnits = platform::GetLocalizedDistanceUnits();
   return MakeJavaPair(env, localizedUnits.m_high, localizedUnits.m_low);
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_util_StringUtils_nativeGetLocalizedAltitudeUnits(JNIEnv * env, jclass)
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeGetLocalizedAltitudeUnits(JNIEnv * env, jclass)
 {
   auto const localizedUnits = platform::GetLocalizedAltitudeUnits();
   return MakeJavaPair(env, localizedUnits.m_high, localizedUnits.m_low);
 }
 
-JNIEXPORT jstring Java_app_organicmaps_sdk_util_StringUtils_nativeGetLocalizedSpeedUnits(JNIEnv * env, jclass)
+JNIEXPORT jstring JNICALL Java_app_organicmaps_sdk_util_StringUtils_nativeGetLocalizedSpeedUnits(JNIEnv * env, jclass)
 {
   return jni::ToJavaString(env, platform::GetLocalizedSpeedUnits());
 }

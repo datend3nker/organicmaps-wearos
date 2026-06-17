@@ -25,7 +25,7 @@ std::string GetAndroidSystemLanguage()
   static jmethodID const getDefaultLocaleId =
       jni::GetStaticMethodID(env, languageClass, "getDefaultLocale", "()Ljava/lang/String;");
 
-  jni::TScopedLocalRef localeRef(env, env->CallStaticObjectMethod(languageClass, getDefaultLocaleId));
+  jni::ScopedLocalRef localeRef(env, env->CallStaticObjectMethod(languageClass, getDefaultLocaleId));
 
   std::string res = jni::ToNativeString(env, (jstring)localeRef.get());
   if (res.empty())

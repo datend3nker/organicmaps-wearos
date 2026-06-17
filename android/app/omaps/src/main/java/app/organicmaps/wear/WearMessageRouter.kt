@@ -3,6 +3,7 @@ package app.organicmaps.wear
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.core.content.edit
 import app.organicmaps.sdk.sync.WearProtocol
 import app.organicmaps.wear.message.WearMessageDispatcher
 import app.organicmaps.wear.presentation.Omaps
@@ -140,8 +141,8 @@ object WearMessageRouter {
                         it.copy(isActive = false, isNavigating = false, isRouteBuilding = false, isRouteBuilt = false)
                     }
                     // Cancel any locally-built route (standalone/local routing) too.
-                    try { app.organicmaps.sdk.routing.RoutingController.get().cancel() } catch (e: Exception) {}
-                    try { app.organicmaps.sdk.Framework.nativeRemoveRouteLine() } catch (e: Exception) {}
+                    try { app.organicmaps.sdk.routing.RoutingController.get().cancel() } catch (_: Exception) {}
+                    try { app.organicmaps.sdk.Framework.nativeRemoveRouteLine() } catch (_: Exception) {}
                 }
                 return
             }
@@ -189,11 +190,11 @@ object WearMessageRouter {
     private fun handleBackendSwitch(context: Context, newBackend: String) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString("pref_wear_os_backend", newBackend).apply()
+            prefs.edit { putString("pref_wear_os_backend", newBackend) }
             WearCommandService.initBackend(context)
             if (newBackend == "BLUETOOTH") {
                 context.startService(Intent(context, BluetoothWearDataListenerService::class.java))
-            } else if (BuildConfig.FLAVOR != "oss") {
+            } else {
                 context.stopService(Intent(context, BluetoothWearDataListenerService::class.java))
             }
         }

@@ -1,6 +1,8 @@
 package app.organicmaps.wear
 
 import android.content.Context
+import android.util.Log
+import android.widget.Toast
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import app.organicmaps.sdk.sync.WearProtocol
 import app.organicmaps.sdk.sync.SyncSettingsRegistry
+import kotlin.time.Duration.Companion.seconds
 
 data class SearchResultItem(
     val name: String,
@@ -30,7 +33,7 @@ data class SearchResultItem(
     val brand: String = "",
     val stars: String = "",
     val distance: String = "",
-    val featureType: String = ""
+    val featureType: String = "",
 )
 
 data class NavigationState(
@@ -115,7 +118,7 @@ data class NavigationState(
 sealed class UiEvent {
     object OpenMap : UiEvent()
     object OpenMapManager : UiEvent()
-    data class ShowToast(val message: String, val duration: Int = android.widget.Toast.LENGTH_SHORT) : UiEvent()
+    data class ShowToast(val message: String, val duration: Int = Toast.LENGTH_SHORT) : UiEvent()
 }
 
 data class NavigationInstructions(
@@ -215,7 +218,7 @@ object NavigationStateHolder {
 
         // LOGGING FOR DEBUGGING MAP UNLOCK
         if (newState.isMapUnlocked != oldState.isMapUnlocked) {
-            android.util.Log.d("NavState", "Map Unlocked transition: ${oldState.isMapUnlocked} -> ${newState.isMapUnlocked}")
+            Log.d("NavState", "Map Unlocked transition: ${oldState.isMapUnlocked} -> ${newState.isMapUnlocked}")
         }
 
         // GRACE PERIOD LOGIC
@@ -223,7 +226,7 @@ object NavigationStateHolder {
             // Navigation trying to stop - start grace period
             if (pendingStopJob == null) {
                 pendingStopJob = scope.launch {
-                    delay(8000) // 8 second grace period for stability
+                    delay(8.seconds) // 8 second grace period for stability
                     _state.value = newState
                     pendingStopJob = null
                 }
@@ -271,10 +274,7 @@ object NavigationStateHolder {
         update(updater(_state.value).copy(lastSettingsInteractionTime = now))
     }
 
-    fun updateSetting(context: Context, key: String, value: Any, updater: (NavigationState) -> NavigationState) {
-        SettingsSyncManager.getInstance(context).onSettingChanged(key, value, true)
-        updateSettings(updater)
-    }
+
 
     fun updateTimestamp(timestamp: Long) {
         lastMessageTimestamp = timestamp

@@ -12,7 +12,9 @@ import java.nio.charset.StandardCharsets
 
 import app.organicmaps.sdk.sync.BaseSettingsSyncManager
 import app.organicmaps.sdk.sync.WearProtocol
+import app.organicmaps.sdk.sync.WearLog
 import app.organicmaps.sdk.sync.WearProtocolDataConverter
+import app.organicmaps.sdk.search.SearchRecents
 
 class BluetoothWearSyncBackend : IWearSyncBackend {
     companion object {
@@ -32,7 +34,7 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
                 val pathBytes = path.toByteArray(StandardCharsets.UTF_8)
                 val totalLen = 4 + pathBytes.size + data.size
                 
-                app.organicmaps.sdk.sync.WearLog.logSent("WATCH", "BLUETOOTH", path, totalLen + 6)
+                WearLog.logSent("WATCH", "BLUETOOTH", path, totalLen + 6)
                 
                 val header = ByteBuffer.allocate(6)
                 header.put(WearProtocol.PROTOCOL_VERSION)
@@ -141,13 +143,13 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
     }
 
     override fun syncSearchHistory(context: Context) {
-        app.organicmaps.sdk.search.SearchRecents.refresh()
-        val size = app.organicmaps.sdk.search.SearchRecents.getSize()
+        SearchRecents.refresh()
+        val size = SearchRecents.getSize()
         if (size == 0) return
 
         val historyList = mutableListOf<String>()
         for (i in 0 until size) {
-            historyList.add(app.organicmaps.sdk.search.SearchRecents.get(i))
+            historyList.add(SearchRecents.get(i))
         }
         val payload = WearProtocolDataConverter.encodeSearchHistory(historyList, 10)
         sendMessage(context, WearProtocol.PATH_SEARCH_HISTORY_SYNC, payload)
@@ -315,7 +317,7 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         val deadline = System.currentTimeMillis() + 3000
         while (System.currentTimeMillis() < deadline) {
             BluetoothWearDataListenerService.activeConnection?.let { if (it.isConnected()) return it }
-            try { Thread.sleep(50) } catch (e: InterruptedException) { return null }
+            try { Thread.sleep(50) } catch (_: InterruptedException) { return null }
         }
         Log.w(TAG, "No shared Bluetooth connection available; dropping send (will retry)")
         return null

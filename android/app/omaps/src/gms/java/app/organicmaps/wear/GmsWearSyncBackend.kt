@@ -2,15 +2,12 @@ package app.organicmaps.wear
 
 import android.content.Context
 import android.util.Log
-import com.google.android.gms.wearable.Wearable
-import com.google.android.gms.wearable.Node
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
+import com.google.android.gms.wearable.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import kotlin.time.Duration.Companion.seconds
 
 import app.organicmaps.sdk.sync.BaseSettingsSyncManager
 import app.organicmaps.sdk.sync.WearProtocol
@@ -93,7 +90,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
         val all = manager.getAllSettings()
         Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: syncPreferences (Full Sync) - Items: ${all.size}")
         
-        val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create(WearProtocol.PATH_PREFERENCES_WATCH)
+        val putDataMapReq = PutDataMapRequest.create(WearProtocol.PATH_PREFERENCES_WATCH)
         val map = putDataMapReq.dataMap
         map.putByte("protocolVersion", WearProtocol.PROTOCOL_VERSION)
         
@@ -120,13 +117,13 @@ class GmsWearSyncBackend : IWearSyncBackend {
         Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: syncPreferenceUpdates (Buffered) - Items: ${updates.size}")
 
         val manager = SettingsSyncManager.getInstance(context)
-        val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create(WearProtocol.PATH_PREFERENCES_UPDATES)
+        val putDataMapReq = PutDataMapRequest.create(WearProtocol.PATH_PREFERENCES_UPDATES)
         val map = putDataMapReq.dataMap
         map.putByte("protocolVersion", WearProtocol.PROTOCOL_VERSION)
         
         for (update in updates) {
             Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: Buffering setting for transmission: ${update.key} = ${update.value}")
-            val item = com.google.android.gms.wearable.DataMap()
+            val item = DataMap()
             putValue(item, "v", update.value)
             item.putLong("t", update.timestamp)
             item.putLong("ver", update.version)
@@ -145,7 +142,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
             .addOnFailureListener { e -> Log.e("GmsWearSync", "DEBUG_GMS_PIPELINE: Failed to putDataItem for buffered updates", e) }
     }
 
-    private fun putValue(map: com.google.android.gms.wearable.DataMap, key: String, value: Any) {
+    private fun putValue(map: DataMap, key: String, value: Any) {
         when (value) {
             is Boolean -> map.putBoolean(key, value)
             is String -> map.putString(key, value)
@@ -169,13 +166,13 @@ class GmsWearSyncBackend : IWearSyncBackend {
             history.add(app.organicmaps.sdk.search.SearchRecents.get(i))
         }
 
-        val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create(WearProtocol.PATH_SEARCH_HISTORY_SYNC)
+        val putDataMapReq = PutDataMapRequest.create(WearProtocol.PATH_SEARCH_HISTORY_SYNC)
         putDataMapReq.dataMap.putByte("protocolVersion", WearProtocol.PROTOCOL_VERSION)
         putDataMapReq.dataMap.putStringArrayList("history", history)
         putDataMapReq.dataMap.putLong("timestamp", System.currentTimeMillis())
         val putDataReq = putDataMapReq.asPutDataRequest()
         putDataReq.setUrgent()
-        com.google.android.gms.wearable.Wearable.getDataClient(context).putDataItem(putDataReq)
+        Wearable.getDataClient(context).putDataItem(putDataReq)
     }
 
     override fun startNavigation(context: Context) {
@@ -235,7 +232,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
     }
 
     override fun sendMapProgress(context: Context, mapId: String, progress: Int) {
-        val putDataMapReq = com.google.android.gms.wearable.PutDataMapRequest.create(WearProtocol.PATH_MAP_DOWNLOAD_PROGRESS)
+        val putDataMapReq = PutDataMapRequest.create(WearProtocol.PATH_MAP_DOWNLOAD_PROGRESS)
         putDataMapReq.dataMap.putByte("protocolVersion", WearProtocol.PROTOCOL_VERSION)
         putDataMapReq.dataMap.putString("countryId", mapId)
         putDataMapReq.dataMap.putInt("progress", progress)
@@ -351,9 +348,9 @@ class GmsWearSyncBackend : IWearSyncBackend {
                         .setComponent(android.content.ComponentName(phonePackage, "app.organicmaps.SplashActivity")),
                     nodes[0].id
                 )
-                android.util.Log.d("GmsWearSync", "Requested phone app launch on ${nodes[0].displayName} (Package: $phonePackage)")
+                Log.d("GmsWearSync", "Requested phone app launch on ${nodes[0].displayName} (Package: $phonePackage)")
             } catch (e: Exception) {
-                android.util.Log.e("GmsWearSync", "Failed to launch phone app", e)
+                Log.e("GmsWearSync", "Failed to launch phone app", e)
             }
         }
     }
@@ -415,7 +412,7 @@ class GmsWearSyncBackend : IWearSyncBackend {
             
             for (node in validTargets) {
                 try {
-                    withTimeoutOrNull(5000L) {
+                    withTimeoutOrNull(5.seconds) {
                         messageClient.sendMessage(node.id, path, versionedData).await()
                     }
                     Log.d("GmsWearSync", "DEBUG_GMS_PIPELINE: Sent message to ${node.displayName} at $path")

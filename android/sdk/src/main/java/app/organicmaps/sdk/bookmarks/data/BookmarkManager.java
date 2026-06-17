@@ -15,11 +15,15 @@ import app.organicmaps.sdk.util.concurrency.UiThread;
 import app.organicmaps.sdk.util.log.Logger;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 @MainThread
 public enum BookmarkManager {
@@ -53,14 +57,14 @@ public enum BookmarkManager {
   // FIFO of merge targets, used as a fallback when the load callback reports a different fileName than
   // the path we passed (OM renames the imported file/category on a name collision). Loads complete in
   // order, so the front entry is the target for the next merge-load callback.
-  private final java.util.ArrayDeque<Long> mPendingMergeOrder = new java.util.ArrayDeque<>();
+  private final ArrayDeque<Long> mPendingMergeOrder = new ArrayDeque<>();
   // Snapshot of category ids taken right before each merge-load, keyed by the loaded path. After the
   // load, the imported category is whatever id is new vs the snapshot — this is how we locate it to
   // merge+delete. (nativeGetCategoryByFileName can't: OM uniquifies the imported category's filename
   // on a name collision, so querying by the source path returns -1 and the duplicate "My PlacesN"
   // survives → category explosion.)
-  private final Map<String, java.util.Set<Long>> mPendingMergeSnapshots = new HashMap<>();
-  private final java.util.ArrayDeque<java.util.Set<Long>> mPendingMergeSnapshotOrder = new java.util.ArrayDeque<>();
+  private final Map<String, Set<Long>> mPendingMergeSnapshots = new HashMap<>();
+  private final ArrayDeque<Set<Long>> mPendingMergeSnapshotOrder = new ArrayDeque<>();
 
   @Nullable
   private OnElevationCurrentPositionChangedListener mOnElevationCurrentPositionChangedListener;
@@ -174,7 +178,7 @@ public enum BookmarkManager {
   {
     // Native passes the source path we loaded as fileName, so the path key resolves the target.
     Long targetCategoryId = mPendingFileMerges.remove(fileName);
-    java.util.Set<Long> snapshot = mPendingMergeSnapshots.remove(fileName);
+    Set<Long> snapshot = mPendingMergeSnapshots.remove(fileName);
     Logger.d(TAG, "onBookmarksFileLoaded: success=" + success + " fileName=" + fileName
         + " pathKeyTarget=" + targetCategoryId + " fifoSize=" + mPendingMergeOrder.size());
     if (targetCategoryId == null && !mPendingMergeOrder.isEmpty())
@@ -209,7 +213,7 @@ public enum BookmarkManager {
         }
       }
       if (!merged)
-        Logger.d(TAG, "onBookmarksFileLoaded: no new category to merge (snapshot=" + (snapshot == null ? "null" : snapshot.size()) + ", target=" + targetCategoryId + ")");
+        Logger.d(TAG, "onBookmarksFileLoaded: no new category to merge (snapshot=" + (snapshot == null ? "0" : snapshot.size()) + ", target=" + targetCategoryId + ")");
     }
     else if (!success && !mPendingMergeOrder.isEmpty())
     {
@@ -222,7 +226,8 @@ public enum BookmarkManager {
     if (isTemporaryFile)
     {
       File tmpFile = new File(fileName);
-      tmpFile.delete();
+      if (!tmpFile.delete())
+        Logger.w(TAG, "Failed to delete temporary bookmarks file: " + fileName);
     }
 
     if (success)
@@ -277,10 +282,9 @@ public enum BookmarkManager {
       mOnElevationActivePointChangedListener.onElevationActivePointChanged();
   }
 
-  @Nullable
-  public Bookmark updateBookmarkPlacePage(long bmkId)
+  public void updateBookmarkPlacePage(long bmkId)
   {
-    return nativeUpdateBookmarkPlacePage(bmkId);
+    nativeUpdateBookmarkPlacePage(bmkId);
   }
 
   public void updateTrackPlacePage()
@@ -340,11 +344,7 @@ public enum BookmarkManager {
     nativeShowBookmarkCategoryOnMap(catId);
   }
 
-  @PredefinedColors.Color
-  public int getLastEditedColor()
-  {
-    return nativeGetLastEditedColor();
-  }
+
 
   @MainThread
   public void loadBookmarksFile(@NonNull String path, boolean isTemporaryFile)
@@ -359,7 +359,7 @@ public enum BookmarkManager {
     Logger.d(TAG, "Loading bookmarks file from: " + path + " for merge into " + targetCategoryId);
     mPendingFileMerges.put(path, targetCategoryId);
     mPendingMergeOrder.addLast(targetCategoryId);
-    java.util.Set<Long> snapshot = currentCategoryIds();
+    Set<Long> snapshot = currentCategoryIds();
     mPendingMergeSnapshots.put(path, snapshot);
     mPendingMergeSnapshotOrder.addLast(snapshot);
     nativeLoadBookmarksFile(path, isTemporaryFile);
@@ -367,23 +367,20 @@ public enum BookmarkManager {
 
   /** Ids of all bookmark categories right now (used to detect the category an import creates). */
   @MainThread
-  private java.util.Set<Long> currentCategoryIds()
+  private Set<Long> currentCategoryIds()
   {
-    java.util.Set<Long> ids = new java.util.HashSet<>();
+    Set<Long> ids = new HashSet<>();
     BookmarkCategory[] cats = nativeGetBookmarkCategories();
-    if (cats != null)
-    {
       for (BookmarkCategory c : cats)
-        ids.add(c.getId());
-    }
-    return ids;
+          ids.add(c.getId());
+      return ids;
   }
 
   static @Nullable String getBookmarksFilenameFromUri(@NonNull ContentResolver resolver, @NonNull Uri uri)
   {
     String filename = null;
     final String scheme = uri.getScheme();
-    if (scheme.equals("content"))
+    if (Objects.equals(scheme, "content"))
     {
       try (Cursor cursor = resolver.query(uri, null, null, null, null))
       {
@@ -441,7 +438,8 @@ public enum BookmarkManager {
     }
 
     // WhatsApp doesn't provide correct mime type and extension for GPX files.
-    if (uri.getHost().contains("com.whatsapp.provider.media"))
+    String host = uri.getHost();
+    if (host != null && host.contains("com.whatsapp.provider.media"))
       return filename + ".gpx";
 
     return null;
@@ -483,37 +481,7 @@ public enum BookmarkManager {
     }
   }
 
-  @WorkerThread
-  @SuppressWarnings("WrongThread")
-  public void importBookmarksFile(@NonNull ContentResolver resolver, @NonNull Uri uri, @NonNull File tempDir, long targetCategoryId)
-  {
-    Logger.i(TAG, "Importing bookmarks from " + uri + " for merge into " + targetCategoryId);
-    try
-    {
-      String filename = getBookmarksFilenameFromUri(resolver, uri);
-      if (filename == null)
-      {
-        Logger.w(TAG, "Could not find a supported file type in " + uri);
-        UiThread.run(() -> {
-          for (BookmarksLoadingListener listener : mListeners)
-            listener.onBookmarksFileUnsupported(uri);
-        });
-        return;
-      }
 
-      final File tempFile = new File(tempDir, filename);
-      StorageUtils.copyFile(resolver, uri, tempFile);
-      UiThread.run(() -> loadBookmarksFile(tempFile.getAbsolutePath(), true, targetCategoryId));
-    }
-    catch (IOException | SecurityException e)
-    {
-      Logger.e(TAG, "Could not download bookmarks file from " + uri, e);
-      UiThread.run(() -> {
-        for (BookmarksLoadingListener listener : mListeners)
-          listener.onBookmarksFileDownloadFailed(uri, e.toString());
-      });
-    }
-  }
 
   @WorkerThread
   public void importBookmarksFiles(@NonNull ContentResolver resolver, @NonNull List<Uri> uris, @NonNull File tempDir)
@@ -629,8 +597,7 @@ public enum BookmarkManager {
     nativeSetElevationActivePoint(trackId, distance, point.getLatitude(), point.getLongitude());
   }
 
-  @Nullable
-  private native Bookmark nativeUpdateBookmarkPlacePage(long bmkId);
+  private native void nativeUpdateBookmarkPlacePage(long bmkId);
 
   private native void nativeUpdateTrackPlacePage();
 
@@ -659,9 +626,6 @@ public enum BookmarkManager {
 
   @Nullable
   private native Bookmark nativeAddBookmarkToLastEditedCategory(double lat, double lon);
-
-  @PredefinedColors.Color
-  private native int nativeGetLastEditedColor();
 
   private static native void nativeLoadBookmarksFile(@NonNull String path, boolean isTemporaryFile);
 
@@ -697,7 +661,7 @@ public enum BookmarkManager {
 
   public static native void nativeRemoveElevationActiveChangedListener();
 
-  private native long nativeGetCategoryByFileName(@NonNull String fileName);
+
 
   private native void nativeMergeCategories(long srcCatId, long dstCatId);
 
@@ -714,7 +678,7 @@ public enum BookmarkManager {
   public interface BookmarksSortingListener
   {
     void onBookmarksSortingCompleted(@NonNull SortedBlock[] sortedBlocks, long timestamp);
-    default void onBookmarksSortingCancelled(long timestamp){};
+    default void onBookmarksSortingCancelled(long timestamp){}
   }
 
   public interface BookmarksSharingListener

@@ -21,10 +21,10 @@ public:
 
   dp::GraphicsContext * GetDrawContext() override;
   dp::GraphicsContext * GetResourcesUploadContext() override;
-  bool IsDrawContextCreated() const override;
-  bool IsUploadContextCreated() const override;
+  bool IsDrawContextCreated() const ;
+  bool IsUploadContextCreated() const ;
   void WaitForInitialization(dp::GraphicsContext * context) override;
-  void SetPresentAvailable(bool available) override;
+  void SetPresentAvailable(bool available) ;
 
   void SetSurface(JNIEnv * env, jobject jsurface);
   void ResetSurface();

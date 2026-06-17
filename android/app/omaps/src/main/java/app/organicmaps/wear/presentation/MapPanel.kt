@@ -54,6 +54,7 @@ import app.organicmaps.wear.WearCommandService
 import app.organicmaps.wear.NavigationIcons
 import app.organicmaps.wear.WearMapDownloader
 import app.organicmaps.wear.VirtualMwmManager
+import app.organicmaps.wear.WatchStorage
 import app.organicmaps.wear.SearchResultItem
 import app.organicmaps.wear.UiEvent
 import app.organicmaps.wear.presentation.search.PlacePage
@@ -75,8 +76,8 @@ import kotlin.time.Duration.Companion.seconds
 @Composable
 fun MapPanel(
     isVisible: Boolean,
-    onSearchClick: () -> Unit,
-    onSettingsClick: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") onSearchClick: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -215,7 +216,7 @@ fun MapPanel(
                 if (data is MapObject) {
                     tappedDestination = SearchResultItem(
                         name = data.title,
-                        description = if (data.subtitle.isNotEmpty()) data.subtitle else "Dropped Pin",
+                        description = data.subtitle.ifEmpty { "Dropped Pin" },
                         lat = data.lat,
                         lon = data.lon,
                         type = 2,
@@ -687,16 +688,16 @@ private fun MapMissingControl(
                                             // Storage guard: only copy the whole region if it fits comfortably;
                                             // otherwise leave it to bounded on-demand streaming.
                                             val regionBytes = withContext(Dispatchers.Default) {
-                                                runCatching { app.organicmaps.sdk.downloader.CountryItem.fill(countryId).totalSize }.getOrDefault(0L)
+                                                runCatching { CountryItem.fill(countryId).totalSize }.getOrDefault(0L)
                                             }
-                                            if (regionBytes > 0 && !app.organicmaps.wear.WatchStorage.fitsComfortably(context, regionBytes)) {
-                                                val free = app.organicmaps.wear.WatchStorage.formatBytes(app.organicmaps.wear.WatchStorage.freeBytes(context))
-                                                val size = app.organicmaps.wear.WatchStorage.formatBytes(regionBytes)
+                                            if (regionBytes > 0 && !WatchStorage.fitsComfortably(context, regionBytes)) {
+                                                val free = WatchStorage.formatBytes(WatchStorage.freeBytes(context))
+                                                val size = WatchStorage.formatBytes(regionBytes)
                                                 NavigationStateHolder.emitEvent(UiEvent.ShowToast(
                                                     "$size won't fit ($free free). Streaming on demand instead.",
                                                     android.widget.Toast.LENGTH_LONG))
                                             } else {
-                                                WearMapDownloader.downloadOrStreamMap(context, countryId!!, "")
+                                                WearMapDownloader.downloadOrStreamMap(context, countryId, "")
                                             }
                                         } else {
                                             Log.w("MapPanel", "DEBUG_WEAR: Sync Local - Could not find country for $clat, $clon. Opening Map Manager.")
@@ -889,7 +890,7 @@ fun QuickMenu(onDismiss: () -> Unit) {
                                 app.organicmaps.wear.WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
                                 app.organicmaps.wear.WatchBookmarkSyncManager.requestSync(context)
                                 NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmark added"))
-                            } catch (e: Exception) {
+                            } catch (_: Exception) {
                                 NavigationStateHolder.emitEvent(UiEvent.ShowToast("Couldn't add bookmark"))
                             }
                         } else {

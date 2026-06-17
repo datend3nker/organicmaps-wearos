@@ -13,13 +13,13 @@ public:
   AndroidOGLContext(EGLDisplay display, EGLSurface surface, EGLConfig config, AndroidOGLContext * contextToShareWith);
   ~AndroidOGLContext();
 
-  void MakeCurrent() override;
-  void DoneCurrent() override;
-  void Present() override;
+  void MakeCurrent() ;
+  void DoneCurrent() ;
+  void Present() ;
   void SetFramebuffer(ref_ptr<dp::BaseFramebuffer> framebuffer) override;
-  void SetRenderingEnabled(bool enabled) override;
-  void SetPresentAvailable(bool available) override;
-  bool Validate() override;
+  void SetRenderingEnabled(bool enabled) ;
+  void SetPresentAvailable(bool available) ;
+  bool Validate() ;
 
   void SetSurface(EGLSurface surface);
   void ResetSurface();

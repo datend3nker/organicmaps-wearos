@@ -164,8 +164,8 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
             }
 
             if (changed) {
-                mainEditor.commit()
-                syncEditor.commit()
+                mainEditor.apply()
+                syncEditor.apply()
                 onSettingsApplied()
             }
         } finally {

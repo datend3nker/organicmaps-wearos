@@ -14,10 +14,7 @@ import java.nio.charset.StandardCharsets;
 
 import app.organicmaps.sdk.routing.RoutingController;
 import app.organicmaps.location.TrackRecordingService;
-import app.organicmaps.sync.BluetoothSyncLayer;
-import app.organicmaps.sync.ISyncLayer;
 import app.organicmaps.sdk.sync.WearProtocol;
-import app.organicmaps.sdk.sync.WearProtocolDataConverter;
 import app.organicmaps.sdk.util.ChecksumUtils;
 
 public class WearMessageRouter {
@@ -60,10 +57,6 @@ public class WearMessageRouter {
 
     private static final java.util.Map<String, Long> sLastMsgTimes = new java.util.HashMap<>();
     private static final java.util.Map<String, Integer> sLastMsgHashes = new java.util.HashMap<>();
-
-    public static void onMessageReceived(@NonNull Context context, @NonNull String path, @Nullable byte[] data, @NonNull String sourceNodeId) {
-        onMessageReceived(context, path, data, sourceNodeId, null);
-    }
 
     public static void onMessageReceived(@NonNull Context context, @NonNull String path, @Nullable byte[] data, @NonNull String sourceNodeId, @Nullable String localNodeId) {
         if (localNodeId != null && localNodeId.equals(sourceNodeId)) {
@@ -187,10 +180,7 @@ public class WearMessageRouter {
             }
             case PATH_SEARCH_HISTORY_REQUEST:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_SEARCH_HISTORY_REQUEST");
-                sMainHandler.post(() -> {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending search history to watch");
-                    ensureFrameworkInitialized(context, () -> WearSyncService.sendSearchHistory(context.getApplicationContext()));
-                });
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> WearSyncService.sendSearchHistory(context.getApplicationContext())));
                 break;
             case PATH_SEARCH_HISTORY:
             case PATH_SEARCH_HISTORY_SYNC:
@@ -254,15 +244,12 @@ public class WearMessageRouter {
                 break;
             case PATH_BOOKMARKS_REQUEST:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARKS_REQUEST");
-                sMainHandler.post(() -> {
-                    Log.i(TAG, "DEBUG_WEAR_PIPELINE: Watch requested bookmark categories - triggering sync");
-                    ensureFrameworkInitialized(context, () -> {
-                        WearSyncService.sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
-                        // Push bookmark metadata (deduped — unchanged metadata is skipped, so the watch's
-                        // periodic requests don't cause a resend storm). Per-connect force is on HANDSHAKE.
-                        WearSyncService.syncBookmarksNow();
-                    });
-                });
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
+                    WearSyncService.sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
+                    // Push bookmark metadata (deduped — unchanged metadata is skipped, so the watch's
+                    // periodic requests don't cause a resend storm). Per-connect force is on HANDSHAKE.
+                    WearSyncService.syncBookmarksNow();
+                }));
                 break;
             case PATH_BOOKMARK_SHOW: {
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_SHOW");
@@ -410,18 +397,15 @@ public class WearMessageRouter {
             }
             case PATH_DOWNLOADED_MAPS_REQUEST:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_DOWNLOADED_MAPS_REQUEST");
-                sMainHandler.post(() -> {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested downloaded maps list");
-                    ensureFrameworkInitialized(context, () -> {
-                        java.util.List<app.organicmaps.sdk.downloader.CountryItem> downloaded = new java.util.ArrayList<>();
-                        app.organicmaps.sdk.downloader.MapManager.nativeListItems(null, 0, 0, false, true, downloaded);
-                        java.util.List<String> ids = new java.util.ArrayList<>();
-                        for (app.organicmaps.sdk.downloader.CountryItem item : downloaded) {
-                            if (item.present) ids.add(item.id);
-                        }
-                        WearSyncService.getSyncLayer().sendDownloadedMaps(context.getApplicationContext(), ids);
-                    });
-                });
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
+                    java.util.List<app.organicmaps.sdk.downloader.CountryItem> downloaded = new java.util.ArrayList<>();
+                    app.organicmaps.sdk.downloader.MapManager.nativeListItems(null, 0, 0, false, true, downloaded);
+                    java.util.List<String> ids = new java.util.ArrayList<>();
+                    for (app.organicmaps.sdk.downloader.CountryItem item : downloaded) {
+                        if (item.present) ids.add(item.id);
+                    }
+                    WearSyncService.getSyncLayer().sendDownloadedMaps(context.getApplicationContext(), ids);
+                }));
                 break;
             case PATH_MAP_DOWNLOAD_REQUEST:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_MAP_DOWNLOAD_REQUEST");
@@ -452,33 +436,31 @@ public class WearMessageRouter {
                 final long requestedOffset = dlOffset;
                 final long requestedChecksum = dlChecksum;
 
-                sMainHandler.post(() -> {
-                    ensureFrameworkInitialized(context, () -> {
-                        long validatedOffset = requestedOffset;
-                        if (validatedOffset > 0) {
-                            try {
-                                java.io.File localFile = WearMapStreamingHelper.findMapFile(context, finalDlMapId);
-                                if (localFile != null && localFile.exists()) {
-                                    long localChecksum = ChecksumUtils.calculateCRC32(localFile, validatedOffset);
-                                    if (localChecksum != requestedChecksum) {
-                                        Log.w(TAG, "Checksum mismatch for " + finalDlMapId + " at offset " + validatedOffset + ". Local: " + localChecksum + ", Remote: " + requestedChecksum + ". Forcing full re-download.");
-                                        validatedOffset = 0;
-                                    } else {
-                                        Log.i(TAG, "Checksum verified for " + finalDlMapId + " at offset " + validatedOffset + ". Resuming...");
-                                    }
-                                } else {
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
+                    long validatedOffset = requestedOffset;
+                    if (validatedOffset > 0) {
+                        try {
+                            java.io.File localFile = WearMapStreamingHelper.findMapFile(context, finalDlMapId);
+                            if (localFile != null && localFile.exists()) {
+                                long localChecksum = ChecksumUtils.calculateCRC32(localFile, validatedOffset);
+                                if (localChecksum != requestedChecksum) {
+                                    Log.w(TAG, "Checksum mismatch for " + finalDlMapId + " at offset " + validatedOffset + ". Local: " + localChecksum + ", Remote: " + requestedChecksum + ". Forcing full re-download.");
                                     validatedOffset = 0;
+                                } else {
+                                    Log.i(TAG, "Checksum verified for " + finalDlMapId + " at offset " + validatedOffset + ". Resuming...");
                                 }
-                            } catch (Exception e) {
-                                Log.e(TAG, "Failed to verify checksum for " + finalDlMapId, e);
+                            } else {
                                 validatedOffset = 0;
                             }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Failed to verify checksum for " + finalDlMapId, e);
+                            validatedOffset = 0;
                         }
+                    }
 
-                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested map streaming: " + finalDlMapId + " from offset: " + validatedOffset);
-                        WearMapStreamingHelper.streamMapToWatch(context, sourceNodeId, finalDlMapId, validatedOffset);
-                    });
-                });
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested map streaming: " + finalDlMapId + " from offset: " + validatedOffset);
+                    WearMapStreamingHelper.streamMapToWatch(context, sourceNodeId, finalDlMapId, validatedOffset);
+                }));
                 break;
             case WearProtocol.PATH_MAP_DOWNLOAD_CANCEL:
                 String cancelMapId = new String(finalPayload, StandardCharsets.UTF_8);
@@ -503,26 +485,24 @@ public class WearMessageRouter {
             case PATH_VIRTUAL_MWM_METADATA_REQUEST: {
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_VIRTUAL_MWM_METADATA_REQUEST");
                 String mwmName = new String(finalPayload, StandardCharsets.UTF_8);
-                sMainHandler.post(() -> {
-                    ensureFrameworkInitialized(context, () -> {
-                        long size = app.organicmaps.sdk.Framework.nativeGetMwmSize(mwmName);
-                        long dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion();
-                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested metadata for: " + mwmName + " size: " + size + " version: " + dataVersion);
-                        if (size > 0) {
-                            int footerSize = (int) Math.min(size, 64 * 1024);
-                            long footerOffset = size - footerSize;
-                            byte[] footerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, footerOffset, footerSize);
-                            
-                            int headerSize = (int) Math.min(size, 16 * 1024);
-                            byte[] headerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, 0, headerSize);
-                            
-                            WearSyncService.getSyncLayer().sendMwmMetadata(context.getApplicationContext(), mwmName, size, headerData, footerData);
-                        } else {
-                            Log.w(TAG, "DEBUG_WEAR_PIPELINE: Map NOT FOUND on phone: " + mwmName + " (Checking storage...)");
-                            WearSyncService.getSyncLayer().sendMapNotFound(context.getApplicationContext(), mwmName);
-                        }
-                    });
-                });
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
+                    long size = app.organicmaps.sdk.Framework.nativeGetMwmSize(mwmName);
+                    long dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion();
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested metadata for: " + mwmName + " size: " + size + " version: " + dataVersion);
+                    if (size > 0) {
+                        int footerSize = (int) Math.min(size, 64 * 1024);
+                        long footerOffset = size - footerSize;
+                        byte[] footerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, footerOffset, footerSize);
+
+                        int headerSize = (int) Math.min(size, 16 * 1024);
+                        byte[] headerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, 0, headerSize);
+
+                        WearSyncService.getSyncLayer().sendMwmMetadata(context.getApplicationContext(), mwmName, size, headerData, footerData);
+                    } else {
+                        Log.w(TAG, "DEBUG_WEAR_PIPELINE: Map NOT FOUND on phone: " + mwmName + " (Checking storage...)");
+                        WearSyncService.getSyncLayer().sendMapNotFound(context.getApplicationContext(), mwmName);
+                    }
+                }));
                 break;
             }
             case PATH_VIRTUAL_MWM_REQUEST: {
@@ -535,19 +515,17 @@ public class WearMessageRouter {
                 long offset = buffer.getLong();
                 int size = buffer.getInt();
 
-                sMainHandler.post(() -> {
-                    ensureFrameworkInitialized(context, () -> {
-                        int safeSize = Math.min(size, 85 * 1024); 
-                        byte[] mwmData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, offset, safeSize);
-                        if (mwmData != null && mwmData.length > 0) {
-                            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending MWM bytes: " + mwmName + " offset: " + offset + " size: " + mwmData.length + " (requested: " + size + ")");
-                            WearSyncService.getSyncLayer().sendMwmBytes(context.getApplicationContext(), mwmName, offset, mwmData);
-                        } else {
-                            long fileSize = app.organicmaps.sdk.Framework.nativeGetMwmSize(mwmName);
-                            Log.w(TAG, "DEBUG_WEAR_PIPELINE: Failed to get MwmBytes for: " + mwmName + " at " + offset + " (MWM file size: " + fileSize + ")");
-                        }
-                    });
-                });
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
+                    int safeSize = Math.min(size, 85 * 1024);
+                    byte[] mwmData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, offset, safeSize);
+                    if (mwmData != null && mwmData.length > 0) {
+                        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending MWM bytes: " + mwmName + " offset: " + offset + " size: " + mwmData.length + " (requested: " + size + ")");
+                        WearSyncService.getSyncLayer().sendMwmBytes(context.getApplicationContext(), mwmName, offset, mwmData);
+                    } else {
+                        long fileSize = app.organicmaps.sdk.Framework.nativeGetMwmSize(mwmName);
+                        Log.w(TAG, "DEBUG_WEAR_PIPELINE: Failed to get MwmBytes for: " + mwmName + " at " + offset + " (MWM file size: " + fileSize + ")");
+                    }
+                }));
                 break;
             }
             case WearProtocol.PATH_PREFERENCES_WATCH:

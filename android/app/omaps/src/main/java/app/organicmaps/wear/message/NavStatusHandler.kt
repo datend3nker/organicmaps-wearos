@@ -192,6 +192,7 @@ class NavStatusHandler : WearMessageHandler {
                 }
             }
             val intent = Intent(context, Omaps::class.java).apply {
+                @Suppress("IntentBuilder")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
             context.startActivity(intent)

@@ -294,7 +294,7 @@ public class EditBookmarkFragment extends BaseMwmDialogFragment implements View.
     String className = ChooseBookmarkCategoryFragment.class.getName();
     final FragmentFactory factory = manager.getFragmentFactory();
     final ChooseBookmarkCategoryFragment frag =
-        (ChooseBookmarkCategoryFragment) factory.instantiate(getContext().getClassLoader(), className);
+        (ChooseBookmarkCategoryFragment) factory.instantiate(requireContext().getClassLoader(), className);
     frag.setArguments(args);
     frag.show(manager, null);
   }

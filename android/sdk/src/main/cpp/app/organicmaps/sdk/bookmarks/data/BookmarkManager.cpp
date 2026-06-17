@@ -232,7 +232,8 @@ void OnCategorySortingResults(long long timestamp,
 
 extern "C"
 {
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeShowBookmarkOnMap(JNIEnv *, jobject,
+JNIEXPORT void JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeShowBookmarkOnMap(JNIEnv *, jobject,
                                                                                                jlong bmkId)
 {
   frm()->ShowBookmark(static_cast<kml::MarkId>(bmkId));
@@ -244,7 +245,8 @@ Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeShowBookmarkCatego
   frm()->ShowBookmarkCategory(static_cast<kml::MarkGroupId>(catId), true /* animated */);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeLoadBookmarks(JNIEnv * env, jclass)
+JNIEXPORT void JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeLoadBookmarks(JNIEnv * env, jclass)
 {
   PrepareClassRefs(env);
   BookmarkManager::AsyncLoadingCallbacks callbacks;
@@ -259,7 +261,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeLoa
   frm()->LoadBookmarks();
 }
 
-JNIEXPORT jlong Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeCreateCategory(JNIEnv * env, jobject,
+JNIEXPORT jlong JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeCreateCategory(JNIEnv * env, jobject,
                                                                                              jstring name)
 {
   auto const categoryId = frm()->GetBookmarkManager().CreateBookmarkCategory(ToNativeString(env, name));
@@ -267,7 +269,7 @@ JNIEXPORT jlong Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeCr
   return static_cast<jlong>(categoryId);
 }
 
-JNIEXPORT jboolean Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeDeleteCategory(JNIEnv *, jobject,
+JNIEXPORT jboolean JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeDeleteCategory(JNIEnv *, jobject,
                                                                                                 jlong catId)
 {
   auto const categoryId = static_cast<kml::MarkGroupId>(catId);
@@ -276,18 +278,18 @@ JNIEXPORT jboolean Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativ
       frm()->GetBookmarkManager().GetEditSession().DeleteBmCategory(categoryId, true /* permanently */));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeDeleteBookmark(JNIEnv *, jobject,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeDeleteBookmark(JNIEnv *, jobject,
                                                                                             jlong bmkId)
 {
   frm()->GetBookmarkManager().GetEditSession().DeleteBookmark(static_cast<kml::MarkId>(bmkId));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeDeleteTrack(JNIEnv *, jobject, jlong trkId)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeDeleteTrack(JNIEnv *, jobject, jlong trkId)
 {
   frm()->GetBookmarkManager().GetEditSession().DeleteTrack(static_cast<kml::TrackId>(trkId));
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeAddBookmarkToLastEditedCategory(
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeAddBookmarkToLastEditedCategory(
     JNIEnv * env, jobject, double lat, double lon)
 {
   if (!frm()->HasPlacePageInfo())
@@ -316,45 +318,41 @@ JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_native
   return CreateMapObject(env, g_framework->GetPlacePageInfo());
 }
 
-JNIEXPORT jlong Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetLastEditedCategory(JNIEnv *, jobject)
+JNIEXPORT jlong JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetLastEditedCategory(JNIEnv *, jobject)
 {
   return static_cast<jlong>(frm()->LastEditedBMCategory());
 }
 
-JNIEXPORT jint Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetLastEditedColor(JNIEnv *, jobject)
-{
-  return static_cast<jint>(kml::kColorIndexMap[E2I(frm()->LastEditedBMColor())]);
-}
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeLoadBookmarksFile(JNIEnv * env, jclass,
+
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeLoadBookmarksFile(JNIEnv * env, jclass,
                                                                                                jstring path,
                                                                                                jboolean isTemporaryFile)
 {
   frm()->AddBookmarksFile(ToNativeString(env, path), isTemporaryFile);
 }
 
-JNIEXPORT jboolean JNICALL
-Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeIsAsyncBookmarksLoadingInProgress(JNIEnv *, jclass)
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeIsAsyncBookmarksLoadingInProgress(JNIEnv * env, jclass clazz)
 {
   return static_cast<jboolean>(frm()->GetBookmarkManager().IsAsyncLoadingInProgress());
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeUpdateBookmarkPlacePage(JNIEnv * env,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeUpdateBookmarkPlacePage(JNIEnv * env,
                                                                                                         jobject,
                                                                                                         jlong bmkId)
 {
   if (!frm()->HasPlacePageInfo())
-    return nullptr;
+    return;
 
   auto & info = g_framework->GetPlacePageInfo();
   auto buildInfo = info.GetBuildInfo();
   buildInfo.m_userMarkId = static_cast<kml::MarkId>(bmkId);
   frm()->UpdatePlacePageInfoForCurrentSelection(buildInfo);
-
-  return CreateMapObject(env, g_framework->GetPlacePageInfo());
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeUpdateTrackPlacePage(JNIEnv * env, jobject)
+JNIEXPORT void JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeUpdateTrackPlacePage(JNIEnv * env, jobject)
 {
   if (!frm()->HasPlacePageInfo())
     return;
@@ -362,7 +360,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeUpd
   frm()->UpdatePlacePageInfoForCurrentSelection();
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkInfo(JNIEnv * env, jobject,
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkInfo(JNIEnv * env, jobject,
                                                                                                 jlong bmkId)
 {
   auto const bookmark = frm()->GetBookmarkManager().GetBookmark(static_cast<kml::MarkId>(bmkId));
@@ -377,7 +375,7 @@ static uint32_t shift(uint32_t v, uint8_t bitCount)
   return v << bitCount;
 }
 
-JNIEXPORT jobject Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetTrack(JNIEnv * env, jobject,
+JNIEXPORT jobject JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetTrack(JNIEnv * env, jobject,
                                                                                          jlong trackId,
                                                                                          jclass trackClazz)
 {
@@ -400,38 +398,38 @@ Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeIsUsedCategoryName
   return static_cast<jboolean>(frm()->GetBookmarkManager().IsUsedCategoryName(ToNativeString(env, name)));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativePrepareForSearch(JNIEnv *, jclass,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativePrepareForSearch(JNIEnv *, jclass,
                                                                                               jlong catId)
 {
   frm()->GetBookmarkManager().PrepareForSearch(static_cast<kml::MarkGroupId>(catId));
 }
 
-JNIEXPORT jboolean JNICALL
-Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeAreAllCategoriesInvisible(JNIEnv *, jclass)
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeAreAllCategoriesInvisible(JNIEnv * env, jclass clazz)
 {
   return static_cast<jboolean>(frm()->GetBookmarkManager().AreAllCategoriesInvisible());
 }
 
-JNIEXPORT jboolean JNICALL
-Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeAreAllCategoriesVisible(JNIEnv *, jclass)
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeAreAllCategoriesVisible(JNIEnv * env, jclass clazz)
 {
   return static_cast<jboolean>(frm()->GetBookmarkManager().AreAllCategoriesVisible());
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeSetAllCategoriesVisibility(
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeSetAllCategoriesVisibility(
     JNIEnv *, jclass, jboolean visible)
 {
   frm()->GetBookmarkManager().SetAllCategoriesVisibility(static_cast<bool>(visible));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativePrepareTrackFileForSharing(
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativePrepareTrackFileForSharing(
     JNIEnv * env, jclass, jlong trackId, jint kmlFileType)
 {
   frm()->GetBookmarkManager().PrepareTrackFileForSharing(static_cast<kml::TrackId>(trackId),
                                                          &OnPreparedFileForSharing, static_cast<KmlFileType>(kmlFileType));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativePrepareFileForSharing(JNIEnv * env, jclass,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativePrepareFileForSharing(JNIEnv * env, jclass,
                                                                                                    jlongArray catIds,
                                                                                                    jint kmlFileType)
 {
@@ -443,14 +441,14 @@ JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativePre
                                                     &OnPreparedFileForSharing, static_cast<KmlFileType>(kmlFileType));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeSetNotificationsEnabled(JNIEnv *, jclass,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeSetNotificationsEnabled(JNIEnv *, jclass,
                                                                                                      jboolean enabled)
 {
   frm()->GetBookmarkManager().SetNotificationsEnabled(static_cast<bool>(enabled));
 }
 
-JNIEXPORT jboolean JNICALL
-Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeAreNotificationsEnabled(JNIEnv *, jclass)
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeAreNotificationsEnabled(JNIEnv * env, jclass clazz)
 {
   return static_cast<jboolean>(frm()->GetBookmarkManager().AreNotificationsEnabled());
 }
@@ -461,8 +459,8 @@ Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkCategor
   return ToJavaBookmarkCategory(env, static_cast<kml::MarkGroupId>(id));
 }
 
-JNIEXPORT jobjectArray JNICALL
-Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkCategories(JNIEnv * env, jobject)
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkCategories(JNIEnv * env, jobject obj)
 {
   auto const & bm = frm()->GetBookmarkManager();
   auto const & ids = bm.GetSortedBmGroupIdList();
@@ -470,8 +468,8 @@ Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkCategor
   return ToJavaBookmarkCategories(env, ids);
 }
 
-JNIEXPORT jint JNICALL
-Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkCategoriesCount(JNIEnv * env, jobject)
+extern "C" JNIEXPORT jint JNICALL
+Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkCategoriesCount(JNIEnv * env, jobject obj)
 {
   auto const & bm = frm()->GetBookmarkManager();
   auto const count = bm.GetBmGroupsCount();
@@ -479,7 +477,7 @@ Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetBookmarkCategor
   return static_cast<jint>(count);
 }
 
-JNIEXPORT jobjectArray Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetChildrenCategories(
+JNIEXPORT jobjectArray JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetChildrenCategories(
     JNIEnv * env, jobject, jlong parentId)
 {
   auto const & bm = frm()->GetBookmarkManager();
@@ -488,7 +486,7 @@ JNIEXPORT jobjectArray Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_n
   return ToJavaBookmarkCategories(env, ids);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetSortedCategory(
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetSortedCategory(
     JNIEnv * env, jobject, jlong catId, jint sortingType, jboolean hasMyPosition, jdouble lat, jdouble lon,
     jlong timestamp)
 {
@@ -522,7 +520,7 @@ Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeRemoveElevationCur
   frm()->GetBookmarkManager().SetElevationMyPositionChangedCallback(nullptr);
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeSetElevationActivePoint(
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeSetElevationActivePoint(
     JNIEnv *, jclass, jlong trackId, jdouble distanceInMeters, jdouble latitude, jdouble longitude)
 {
   auto & bm = frm()->GetBookmarkManager();
@@ -542,17 +540,13 @@ Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeRemoveElevationAct
   frm()->GetBookmarkManager().SetElevationActivePointChangedCallback(nullptr);
 }
 
-JNIEXPORT jboolean JNICALL
-Java_app_organicmaps_sdk_widget_placepage_PlacePageButtonFactory_nativeHasRecentlyDeletedBookmark(JNIEnv *, jclass)
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_organicmaps_sdk_widget_placepage_PlacePageButtonFactory_nativeHasRecentlyDeletedBookmark(JNIEnv * env, jclass clazz)
 {
   return frm()->GetBookmarkManager().HasRecentlyDeletedBookmark();
 }
 
-JNIEXPORT jlong JNICALL
-Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetCategoryByFileName(JNIEnv * env, jobject, jstring fileName)
-{
-  return (jlong)frm()->GetBookmarkManager().GetCategoryByFileName(jni::ToNativeString(env, fileName));
-}
+
 
 JNIEXPORT void JNICALL
 Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeMergeCategories(JNIEnv * env, jobject, jlong srcCatId, jlong dstCatId)

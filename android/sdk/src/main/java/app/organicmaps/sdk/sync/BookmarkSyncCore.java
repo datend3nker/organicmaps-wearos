@@ -15,7 +15,6 @@ import app.organicmaps.sdk.bookmarks.data.Icon;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -227,7 +226,6 @@ public final class BookmarkSyncCore
     SharedPreferences prefs = lww(c);
     SharedPreferences.Editor editor = prefs.edit();
     long now = System.currentTimeMillis();
-    java.util.HashSet<String> live = new java.util.HashSet<>();
 
     for (BookmarkCategory cat : mgr.getCategories())
     {
@@ -242,8 +240,6 @@ public final class BookmarkSyncCore
         String name = info.getName();
         int hash = contentHash(name, icon.getColor(), icon.getType(), info.getDescription());
         String key = BookmarkTombstoneStore.identityKey(cat.getName(), name, info.getLat(), info.getLon());
-        live.add(key);
-        live.add(HASH_PREFIX + key);
         if (prefs.getInt(HASH_PREFIX + key, Integer.MIN_VALUE) != hash)
         {
           editor.putLong(key, now);

@@ -5,8 +5,8 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
+import android.widget.Toast
 import com.google.android.gms.wearable.Wearable
-import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
 import java.io.File
@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import app.organicmaps.sdk.util.MapIdUtils
+import app.organicmaps.sdk.Framework
+import app.organicmaps.sdk.settings.StoragePathManager
+import kotlin.time.Duration.Companion.seconds
 
 object WearMapDownloader {
     private const val TAG = "WearMapDownloader"
@@ -42,7 +45,7 @@ object WearMapDownloader {
             _downloadState.value = DownloadState.STREAMING_FROM_PHONE
         }
         _currentMap.value?.let { 
-            WearNotificationManager.updateSyncNotification(WearApplication.instance, it, progress, true)
+            WearNotificationManager.updateSyncNotification(WearApplication.instance, it, progress, isStreaming = true)
         }
     }
 
@@ -53,15 +56,15 @@ object WearMapDownloader {
         _downloadProgress.value = 0f
         lastProgressTime = System.currentTimeMillis()
         startWatchdog()
-        WearNotificationManager.updateSyncNotification(WearApplication.instance, normalizedMapId, 0f, true)
+        WearNotificationManager.updateSyncNotification(WearApplication.instance, normalizedMapId, 0f, isStreaming = true)
     }
 
     private fun startWatchdog() {
         watchdogJob?.cancel()
-        watchdogJob = kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+        watchdogJob = CoroutineScope(Dispatchers.Main).launch {
             while (_downloadState.value == DownloadState.STREAMING_FROM_PHONE) {
-                delay(10000)
-                if (System.currentTimeMillis() - lastProgressTime > 60000) {
+                delay(10.seconds)
+                if ((System.currentTimeMillis() - lastProgressTime) > 60000) {
                     Log.e(TAG, "DEBUG_WEAR_PIPELINE: Map streaming STALLED for 60s, marking as FAILED")
                     _downloadState.value = DownloadState.FAILED
                     break
@@ -101,7 +104,7 @@ object WearMapDownloader {
                         putExtra("mapId", mapId)
                     }
                     context.startService(intent)
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     Log.d(TAG, "Bluetooth listener not notified of cancel (GMS mode?)")
                 }
             }
@@ -127,7 +130,7 @@ object WearMapDownloader {
             "Map '$normalizedMapId' not on phone — open Map Manager to download it via internet"
         else
             "Map '$normalizedMapId' not on phone, and the watch has no internet connection"
-        NavigationStateHolder.emitEvent(UiEvent.ShowToast(msg, android.widget.Toast.LENGTH_LONG))
+        NavigationStateHolder.emitEvent(UiEvent.ShowToast(msg, Toast.LENGTH_LONG))
 
         if (wasStreamingThis) {
             _downloadState.value = DownloadState.FAILED
@@ -138,20 +141,18 @@ object WearMapDownloader {
     suspend fun downloadOrStreamMap(context: Context, mapId: String, downloadUrl: String = "", forceInternet: Boolean = false) {
         (context.applicationContext as WearApplication).waitForInitializationSuspend()
         currentDownloadJob?.cancel()
-        currentDownloadJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+        currentDownloadJob = currentCoroutineContext()[Job]
 
         val normalizedMapId = MapIdUtils.normalize(mapId)!!
         _currentMap.value = normalizedMapId
         NavigationStateHolder.update { it.copy(missingMapId = null) }
         
-        val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
+        val dataVersion = Framework.nativeGetDataVersion()
         // The download CDN uses underscores in URLs; everywhere else the map id
         // must keep its original spaces.
         val urlMapId = normalizedMapId.replace(" ", "_")
-        val finalUrl = if (downloadUrl.isEmpty()) {
+        val finalUrl = downloadUrl.ifEmpty {
             "https://direct.organicmaps.app/$dataVersion/$urlMapId.mwm"
-        } else {
-            downloadUrl
         }
 
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
@@ -197,8 +198,8 @@ object WearMapDownloader {
             connection.connect()
 
             val fileLength = connection.contentLength
-            val storagePath = app.organicmaps.sdk.settings.StoragePathManager.findMapsStorage(context)
-            val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
+            val storagePath = StoragePathManager.findMapsStorage(context)
+            val dataVersion = Framework.nativeGetDataVersion()
             val versionedPath = File(storagePath, dataVersion.toString())
             if (!versionedPath.exists()) versionedPath.mkdirs()
             
@@ -208,7 +209,7 @@ object WearMapDownloader {
                     val data = ByteArray(4096)
                     var total: Long = 0
                     while (true) {
-                        kotlinx.coroutines.yield()
+                        yield()
                         val count = input.read(data)
                         if (count == -1) break
                         total += count.toLong()
@@ -216,7 +217,7 @@ object WearMapDownloader {
                             val progress = total.toFloat() / fileLength.toFloat()
                             _downloadProgress.value = progress
                             _currentMap.value?.let { 
-                                WearNotificationManager.updateSyncNotification(context, it, progress, false)
+                                WearNotificationManager.updateSyncNotification(context, it, progress, isStreaming = false)
                             }
                         }
                         output.write(data, 0, count)
@@ -229,7 +230,7 @@ object WearMapDownloader {
             currentDownloadJob = null
             WearNotificationManager.hideSyncNotification(context)
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException || e.cause is kotlinx.coroutines.CancellationException) {
+            if (e is CancellationException || e.cause is CancellationException) {
                 _downloadState.value = DownloadState.CANCELLED
                 throw e
             }
@@ -250,7 +251,7 @@ object WearMapDownloader {
 
         if (currentBackend == "GMS") {
             Log.d(TAG, "Checking GMS availability before streaming...")
-            val nodes = withTimeoutOrNull(10000L) {
+            val nodes = withTimeoutOrNull(10.seconds) {
                 try {
                     Wearable.getNodeClient(context).connectedNodes.await()
                 } catch (e: Exception) {

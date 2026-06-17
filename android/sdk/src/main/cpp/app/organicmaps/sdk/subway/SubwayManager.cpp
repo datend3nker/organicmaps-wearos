@@ -15,7 +15,7 @@ static void TransitSchemeStateChanged(TransitReadManager::TransitSchemeState sta
                       static_cast<jint>(state));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_maplayer_subway_SubwayManager_nativeAddListener(JNIEnv * env, jclass clazz,
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_maplayer_subway_SubwayManager_nativeAddListener(JNIEnv * env, jclass clazz,
                                                                                         jobject listener)
 {
   if (g_framework)
@@ -25,7 +25,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_maplayer_subway_SubwayManager_nativeAddL
   }
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_maplayer_subway_SubwayManager_nativeRemoveListener(JNIEnv * env, jclass clazz)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_maplayer_subway_SubwayManager_nativeRemoveListener(JNIEnv * env, jclass clazz)
 {
   if (g_framework)
     g_framework->SetTransitSchemeListener(TransitReadManager::TransitStateChangedFn());

@@ -32,7 +32,7 @@ public:
       env->SetByteArrayRegion(postBody.get(), 0, postBodySize, reinterpret_cast<jbyte const *>(pb.c_str()));
     }
 
-    jni::TScopedLocalRef jUrl(env, jni::ToJavaString(env, url.c_str()));
+    jni::ScopedLocalRef jUrl(env, jni::ToJavaString(env, url.c_str()));
     jni::TScopedLocalRef localSelf(
         env, env->NewObject(klass, initMethodId, reinterpret_cast<jlong>(&cb), jUrl.get(), static_cast<jlong>(beg),
                             static_cast<jlong>(end), static_cast<jlong>(expectedFileSize), postBody.get()));
