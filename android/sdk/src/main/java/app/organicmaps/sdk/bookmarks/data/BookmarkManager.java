@@ -50,6 +50,17 @@ public enum BookmarkManager {
   private final List<BookmarksSharingListener> mSharingListeners = new ArrayList<>();
 
   private final Map<String, Long> mPendingFileMerges = new HashMap<>();
+  // FIFO of merge targets, used as a fallback when the load callback reports a different fileName than
+  // the path we passed (OM renames the imported file/category on a name collision). Loads complete in
+  // order, so the front entry is the target for the next merge-load callback.
+  private final java.util.ArrayDeque<Long> mPendingMergeOrder = new java.util.ArrayDeque<>();
+  // Snapshot of category ids taken right before each merge-load, keyed by the loaded path. After the
+  // load, the imported category is whatever id is new vs the snapshot — this is how we locate it to
+  // merge+delete. (nativeGetCategoryByFileName can't: OM uniquifies the imported category's filename
+  // on a name collision, so querying by the source path returns -1 and the duplicate "My PlacesN"
+  // survives → category explosion.)
+  private final Map<String, java.util.Set<Long>> mPendingMergeSnapshots = new HashMap<>();
+  private final java.util.ArrayDeque<java.util.Set<Long>> mPendingMergeSnapshotOrder = new java.util.ArrayDeque<>();
 
   @Nullable
   private OnElevationCurrentPositionChangedListener mOnElevationCurrentPositionChangedListener;
@@ -161,16 +172,43 @@ public enum BookmarkManager {
   @MainThread
   private void onBookmarksFileLoaded(boolean success, @NonNull String fileName, boolean isTemporaryFile)
   {
+    // Native passes the source path we loaded as fileName, so the path key resolves the target.
     Long targetCategoryId = mPendingFileMerges.remove(fileName);
+    java.util.Set<Long> snapshot = mPendingMergeSnapshots.remove(fileName);
+    if (targetCategoryId == null && !mPendingMergeOrder.isEmpty())
+    {
+      // Path key missed (shouldn't normally happen) — fall back to FIFO order; loads complete in
+      // submission order, so the front entries belong to this callback.
+      targetCategoryId = mPendingMergeOrder.peekFirst();
+      snapshot = mPendingMergeSnapshotOrder.peekFirst();
+    }
     if (success && targetCategoryId != null)
     {
-      long newCategoryId = nativeGetCategoryByFileName(fileName);
-      if (newCategoryId != -1)
+      mPendingMergeOrder.remove(targetCategoryId);
+      mPendingMergeSnapshotOrder.remove(snapshot);
+      // The imported category is whichever id is new vs the pre-load snapshot. Merge it into the
+      // intended target and delete the leftover, so a name collision never leaves a "My PlacesN"
+      // duplicate (category explosion). nativeGetCategoryByFileName can't find it — the import was
+      // renamed on collision.
+      if (snapshot != null)
       {
-        Logger.d(TAG, "Merging category " + newCategoryId + " into " + targetCategoryId);
-        nativeMergeCategories(newCategoryId, targetCategoryId);
-        nativeDeleteCategory(newCategoryId);
+        for (BookmarkCategory c : nativeGetBookmarkCategories())
+        {
+          long id = c.getId();
+          if (id != targetCategoryId && !snapshot.contains(id))
+          {
+            Logger.d(TAG, "Merging imported category " + id + " (" + c.getName() + ") into " + targetCategoryId);
+            nativeMergeCategories(id, targetCategoryId);
+            nativeDeleteCategory(id);
+            break;
+          }
+        }
       }
+    }
+    else if (!success && !mPendingMergeOrder.isEmpty())
+    {
+      mPendingMergeOrder.pollFirst(); // failed load — drop its target so the FIFO stays aligned
+      mPendingMergeSnapshotOrder.pollFirst();
     }
 
     // Android could create temporary file with bookmarks in some cases (KML/KMZ file is a blob
@@ -283,6 +321,11 @@ public enum BookmarkManager {
 
   public void showBookmarkOnMap(long bmkId)
   {
+    // Guard against an id that does not exist in this engine instance (e.g. a bookmark id sent from
+    // the watch, whose ids differ from the phone's). nativeShowBookmarkOnMap -> Framework::ShowBookmark
+    // dereferences the mark without a null check and aborts natively on a bad id.
+    if (nativeGetBookmarkInfo(bmkId) == null)
+      return;
     nativeShowBookmarkOnMap(bmkId);
   }
 
@@ -309,7 +352,25 @@ public enum BookmarkManager {
   {
     Logger.d(TAG, "Loading bookmarks file from: " + path + " for merge into " + targetCategoryId);
     mPendingFileMerges.put(path, targetCategoryId);
+    mPendingMergeOrder.addLast(targetCategoryId);
+    java.util.Set<Long> snapshot = currentCategoryIds();
+    mPendingMergeSnapshots.put(path, snapshot);
+    mPendingMergeSnapshotOrder.addLast(snapshot);
     nativeLoadBookmarksFile(path, isTemporaryFile);
+  }
+
+  /** Ids of all bookmark categories right now (used to detect the category an import creates). */
+  @MainThread
+  private java.util.Set<Long> currentCategoryIds()
+  {
+    java.util.Set<Long> ids = new java.util.HashSet<>();
+    BookmarkCategory[] cats = nativeGetBookmarkCategories();
+    if (cats != null)
+    {
+      for (BookmarkCategory c : cats)
+        ids.add(c.getId());
+    }
+    return ids;
   }
 
   static @Nullable String getBookmarksFilenameFromUri(@NonNull ContentResolver resolver, @NonNull Uri uri)

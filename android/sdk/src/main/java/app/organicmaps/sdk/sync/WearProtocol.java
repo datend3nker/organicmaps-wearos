@@ -34,10 +34,12 @@ public class WearProtocol {
     public static final String PATH_BOOKMARK_FILE = "/bookmark/file";
     public static final String PATH_BOOKMARK_RENAME = "/bookmark/rename";
     public static final String PATH_BOOKMARK_DELETE = "/bookmark/delete";
+    public static final String PATH_BOOKMARK_TOMBSTONE = "/bookmark/tombstone";
     public static final String PATH_BOOKMARK_SHOW = "/bookmark/show";
     public static final String PATH_BOOKMARK_UPDATE = "/bookmark/update";
     public static final String PATH_BOOKMARK_VISIBLE_TOGGLE = "/bookmark/visible/toggle";
     public static final String PATH_BOOKMARK_SYNC_REQUEST = "/bookmark/sync/request";
+    public static final String PATH_BOOKMARK_CATEGORY_CREATE = "/bookmark/category/create";
     public static final String PATH_MAP_TILE_RESPONSE = "/map/tile/response";
     public static final String PATH_MAP_DOWNLOAD_REQUEST = "/map/download/request";
     public static final String PATH_MAP_DOWNLOAD_PROGRESS = "/map/download/progress";
@@ -102,6 +104,8 @@ public class WearProtocol {
     public static final byte TYPE_MAP_PHONE_DOWNLOADED = 20;
     public static final byte TYPE_HANDSHAKE = 21;
     public static final byte TYPE_BOOKMARKS_METADATA = 22;
+    public static final byte TYPE_BOOKMARK_TOMBSTONE = 23;
+    public static final byte TYPE_BOOKMARK_CATEGORY_CREATE = 24;
 
     // Highest valid message type id. The Bluetooth framing layer uses this as a desync sanity
     // bound when parsing headers; keep it >= the largest TYPE_* above (with a little headroom).
@@ -134,6 +138,8 @@ public class WearProtocol {
         register(PATH_BOOKMARK_FILE, TYPE_BOOKMARK_FILE);
         register(PATH_BOOKMARK_RENAME, TYPE_BOOKMARK_RENAME);
         register(PATH_BOOKMARK_DELETE, TYPE_BOOKMARK_DELETE);
+        register(PATH_BOOKMARK_TOMBSTONE, TYPE_BOOKMARK_TOMBSTONE);
+        register(PATH_BOOKMARK_CATEGORY_CREATE, TYPE_BOOKMARK_CATEGORY_CREATE);
         register(PATH_MAP_PHONE_DOWNLOADED, TYPE_MAP_PHONE_DOWNLOADED);
         register(PATH_VIRTUAL_MWM_REQUEST, TYPE_VIRTUAL_MWM_REQUEST);
         register(PATH_VIRTUAL_MWM_DATA, TYPE_VIRTUAL_MWM_DATA);

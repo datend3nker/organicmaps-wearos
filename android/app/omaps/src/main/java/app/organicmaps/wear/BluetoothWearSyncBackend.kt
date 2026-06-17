@@ -1,17 +1,14 @@
 package app.organicmaps.wear
 
-import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.content.Intent
 import android.util.Log
-import app.organicmaps.sdk.sync.BluetoothSyncConnection
 import app.organicmaps.sdk.sync.SyncConnection
-import app.organicmaps.sdk.sync.TcpSyncConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
-import java.util.UUID
 
 import app.organicmaps.sdk.sync.BaseSettingsSyncManager
 import app.organicmaps.sdk.sync.WearProtocol
@@ -20,10 +17,7 @@ import app.organicmaps.sdk.sync.WearProtocolDataConverter
 class BluetoothWearSyncBackend : IWearSyncBackend {
     companion object {
         private const val TAG = "BluetoothBackend"
-        private val OM_WEAR_UUID = UUID.fromString("6d617073-7765-6172-6f73-73796e633130")
     }
-
-    private var activeConnection: SyncConnection? = null
 
     private fun sendMessage(context: Context, path: String, data: ByteArray, type: Byte = WearProtocol.TYPE_COMMAND) {
         val appContext = context.applicationContext
@@ -228,19 +222,24 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_DELETE, name.toByteArray(StandardCharsets.UTF_8))
     }
 
+    override fun createBookmarkCategory(context: Context, name: String) {
+        sendMessage(context, WearProtocol.PATH_BOOKMARK_CATEGORY_CREATE, name.toByteArray(StandardCharsets.UTF_8))
+    }
+
     override fun showBookmarkOnPhone(context: Context, bmkId: Long) {
         val buffer = ByteBuffer.allocate(8)
         buffer.putLong(bmkId)
         sendMessage(context, WearProtocol.PATH_BOOKMARK_SHOW, buffer.array())
     }
 
-    override fun updateBookmarkOnPhone(context: Context, bmkId: Long, name: String, color: Int) {
+    override fun updateBookmarkOnPhone(context: Context, bmkId: Long, name: String, color: Int, categoryId: Long) {
         val nameBytes = name.toByteArray(StandardCharsets.UTF_8)
-        val buffer = ByteBuffer.allocate(8 + 4 + nameBytes.size + 4)
+        val buffer = ByteBuffer.allocate(8 + 4 + nameBytes.size + 4 + 8)
         buffer.putLong(bmkId)
         buffer.putInt(nameBytes.size)
         buffer.put(nameBytes)
         buffer.putInt(color)
+        buffer.putLong(categoryId)
         sendMessage(context, WearProtocol.PATH_BOOKMARK_UPDATE, buffer.array())
     }
 
@@ -257,6 +256,10 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
 
     override fun sendBookmarksMetadata(context: Context, payload: ByteArray) {
         sendMessage(context, WearProtocol.PATH_BOOKMARKS_METADATA, payload, WearProtocol.TYPE_BOOKMARKS_METADATA)
+    }
+
+    override fun sendBookmarkTombstone(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_BOOKMARK_TOMBSTONE, payload, WearProtocol.TYPE_BOOKMARK_TOMBSTONE)
     }
 
     override fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) {
@@ -283,72 +286,39 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
     }
 
     override fun checkConnection(context: Context, callback: (Boolean, String?) -> Unit) {
-        val conn = activeConnection ?: BluetoothWearDataListenerService.activeConnection
-        val isConnected = conn?.isConnected() ?: false
+        val isConnected = BluetoothWearDataListenerService.activeConnection?.isConnected() ?: false
         callback(isConnected, if (isConnected) "Bluetooth Device" else null)
     }
 
+    /**
+     * Returns the single shared connection owned by [BluetoothWearDataListenerService] (which runs
+     * the read loop). The sender deliberately NEVER opens its own socket: a socket created here has
+     * no reader, so every phone→watch reply on it would be lost, and a second client socket makes
+     * the phone server juggle two connections — the startup EOF/reconnect churn. Instead we ensure
+     * the listener service is running and briefly wait for it to establish the shared connection.
+     */
     private fun getOrConnectConnection(context: Context): SyncConnection? {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                if (!(android.os.Build.PRODUCT.contains("sdk") || android.os.Build.PRODUCT.contains("vbox"))) {
-                    Log.e(TAG, "BLUETOOTH_CONNECT permission missing")
-                    return null
-                }
-            }
+        BluetoothWearDataListenerService.activeConnection?.let { if (it.isConnected()) return it }
+
+        // Make sure the listener service (the sole connector) is up so it establishes + reads.
+        try {
+            context.startService(Intent(context, BluetoothWearDataListenerService::class.java))
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not start Bluetooth listener service: ${e.message}")
         }
 
-        synchronized(this) {
-            if (activeConnection?.isConnected() == true) return activeConnection
-            
-            val fromService = BluetoothWearDataListenerService.activeConnection
-            if (fromService?.isConnected() == true) {
-                activeConnection = fromService
-                return fromService
-            }
-
-            val isEmulator = android.os.Build.PRODUCT.contains("sdk") || android.os.Build.PRODUCT.contains("vbox")
-            if (isEmulator) {
-                try {
-                    Log.d(TAG, "Connecting to phone via TCP (Emulator)...")
-                    val socket = java.net.Socket("10.0.2.2", 5610)
-                    val connection = TcpSyncConnection(socket)
-                    activeConnection = connection
-                    return connection
-                } catch (e: Exception) {
-                    Log.d(TAG, "TCP connection failed: ${e.message}")
-                    Log.i(TAG, "EMULATOR TIP: To connect Watch emulator to Phone emulator, run: adb forward tcp:5610 tcp:5610")
-                }
-            }
-
-            val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val adapter = bluetoothManager?.adapter ?: return null
-            if (!adapter.isEnabled) return null
-            
-            try {
-                val pairedDevices = adapter.bondedDevices ?: return null
-                for (device in pairedDevices) {
-                    val socket = device.createRfcommSocketToServiceRecord(OM_WEAR_UUID)
-                    try {
-                        socket.connect()
-                        val connection = BluetoothSyncConnection(socket)
-                        activeConnection = connection
-                        return connection
-                    } catch (ignored: Exception) {
-                        try { socket.close() } catch (e: Exception) {}
-                    }
-                }
-            } catch (e: SecurityException) {
-                Log.e(TAG, "Bluetooth permission missing", e)
-            }
-            return null
+        // Wait briefly for the shared connection to come up; drop (and rely on retry) if it doesn't.
+        val deadline = System.currentTimeMillis() + 3000
+        while (System.currentTimeMillis() < deadline) {
+            BluetoothWearDataListenerService.activeConnection?.let { if (it.isConnected()) return it }
+            try { Thread.sleep(50) } catch (e: InterruptedException) { return null }
         }
+        Log.w(TAG, "No shared Bluetooth connection available; dropping send (will retry)")
+        return null
     }
 
     private fun closeConnection() {
-        synchronized(this) {
-            try { activeConnection?.close() } catch (ignored: Exception) {}
-            activeConnection = null
-        }
+        // Close the single shared connection; the listener service's read loop will then reconnect.
+        BluetoothWearDataListenerService.dropConnection()
     }
 }

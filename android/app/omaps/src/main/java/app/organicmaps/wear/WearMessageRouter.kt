@@ -123,12 +123,26 @@ object WearMessageRouter {
                 
                 // On handshake, always request fresh preferences
                 prefRequestDebouncer.request(context)
+                // Also push our bookmark metadata so the phone reconciles to a full mirror on connect.
+                WatchBookmarkSyncManager.requestSync(context)
                 return
             }
             WearProtocol.PATH_NAVIGATION_START -> {
                 val currentState = NavigationStateHolder.state.value
                 NavigationStateHolder.update(currentState.copy(isActive = true, isMapUnlockedBeforeNav = currentState.isMapUnlocked, isMapUnlocked = false))
                 launchOmaps(context)
+                return
+            }
+            WearProtocol.PATH_NAVIGATION_STOP -> {
+                Log.d(TAG, "Navigation stop received from phone")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    NavigationStateHolder.update {
+                        it.copy(isActive = false, isNavigating = false, isRouteBuilding = false, isRouteBuilt = false)
+                    }
+                    // Cancel any locally-built route (standalone/local routing) too.
+                    try { app.organicmaps.sdk.routing.RoutingController.get().cancel() } catch (e: Exception) {}
+                    try { app.organicmaps.sdk.Framework.nativeRemoveRouteLine() } catch (e: Exception) {}
+                }
                 return
             }
             WearProtocol.PATH_MAP_DOWNLOAD_NOT_FOUND -> {
@@ -155,6 +169,19 @@ object WearMessageRouter {
             }
             WearProtocol.PATH_BOOKMARKS_METADATA -> {
                 WatchBookmarkSyncManager.handleIncomingMetadata(context, payload)
+                return
+            }
+            WearProtocol.PATH_BOOKMARK_SYNC_REQUEST -> {
+                // The phone asks the watch to PUSH a category (it detected the watch is newer). This
+                // path isn't registered in PATH_TO_TYPE, so without this case it would fall through to
+                // getMessageType() -> TYPE_COMMAND and be silently dropped, breaking watch->phone
+                // bookmark propagation. Prepare the named category for sharing; the registered
+                // sharingListener then streams the file to the phone.
+                WatchBookmarkSyncManager.respondToSyncRequest(context, String(payload))
+                return
+            }
+            WearProtocol.PATH_BOOKMARK_TOMBSTONE -> {
+                WatchBookmarkSyncManager.applyIncomingTombstone(context, payload)
                 return
             }
         }

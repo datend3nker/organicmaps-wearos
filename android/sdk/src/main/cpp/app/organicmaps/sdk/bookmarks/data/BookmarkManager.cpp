@@ -16,7 +16,10 @@
 #include "base/macros.hpp"
 #include "base/string_utils.hpp"
 
+#include <cmath>
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 using namespace jni;
@@ -554,24 +557,100 @@ Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeGetCategoryByFileN
 JNIEXPORT void JNICALL
 Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeMergeCategories(JNIEnv * env, jobject, jlong srcCatId, jlong dstCatId)
 {
+  // Union-merge src into dst with de-duplication so repeated syncs are idempotent
+  // (otherwise every sync re-moves the whole category and doubles its contents).
+  // Bookmark identity = preferred name + position (rounded to ~1m in Mercator);
+  // on a collision the newer timestamp wins (Last-Write-Wins).
   auto srcId = static_cast<kml::MarkGroupId>(srcCatId);
   auto dstId = static_cast<kml::MarkGroupId>(dstCatId);
   auto & bm = frm()->GetBookmarkManager();
+
+  // ~1.1m at the equator: enough to treat "the same pin" as identical while keeping
+  // genuinely distinct nearby bookmarks separate.
+  auto const quantize = [](m2::PointD const & p) -> std::pair<int64_t, int64_t> {
+    double const kInvStep = 1e5;
+    return {static_cast<int64_t>(std::llround(p.x * kInvStep)),
+            static_cast<int64_t>(std::llround(p.y * kInvStep))};
+  };
+
+  struct BookmarkKey
+  {
+    std::string name;
+    int64_t x;
+    int64_t y;
+    bool operator==(BookmarkKey const & o) const { return x == o.x && y == o.y && name == o.name; }
+  };
+  struct BookmarkKeyHash
+  {
+    size_t operator()(BookmarkKey const & k) const
+    {
+      return std::hash<std::string>()(k.name) ^ (std::hash<int64_t>()(k.x) * 31) ^ (std::hash<int64_t>()(k.y) * 131);
+    }
+  };
+
+  // Index existing dst bookmarks so we can detect duplicates coming from src.
+  std::unordered_map<BookmarkKey, std::pair<kml::MarkId, kml::Timestamp>, BookmarkKeyHash> dstIndex;
+  for (auto markId : bm.GetUserMarkIds(dstId))
+  {
+    if (!BookmarkManager::IsBookmark(markId))
+      continue;
+    auto const * bmk = bm.GetBookmark(markId);
+    if (bmk == nullptr)
+      continue;
+    auto const q = quantize(bmk->GetPivot());
+    dstIndex[{bmk->GetPreferredName(), q.first, q.second}] = {markId, bmk->GetTimeStamp()};
+  }
+
+  // Snapshot dst track names so we don't duplicate tracks on re-sync.
+  std::unordered_set<std::string> dstTrackNames;
+  for (auto trackId : bm.GetTrackIds(dstId))
+  {
+    auto const * trk = bm.GetTrack(trackId);
+    if (trk != nullptr)
+      dstTrackNames.insert(trk->GetName());
+  }
+
   auto es = bm.GetEditSession();
 
   auto const & markIds = bm.GetUserMarkIds(srcId);
   std::vector<kml::MarkId> marks(markIds.begin(), markIds.end());
   for (auto markId : marks)
   {
-    if (BookmarkManager::IsBookmark(markId))
+    if (!BookmarkManager::IsBookmark(markId))
+      continue;
+    auto const * bmk = bm.GetBookmark(markId);
+    if (bmk == nullptr)
+      continue;
+
+    auto const q = quantize(bmk->GetPivot());
+    BookmarkKey key{bmk->GetPreferredName(), q.first, q.second};
+    auto const it = dstIndex.find(key);
+    if (it == dstIndex.end())
+    {
+      // Unique pin: bring it into dst.
       es.MoveBookmark(markId, srcId, dstId);
+      dstIndex[key] = {markId, bmk->GetTimeStamp()};
+    }
+    else if (bmk->GetTimeStamp() > it->second.second)
+    {
+      // Same pin edited more recently on the src side: replace the dst copy (LWW).
+      es.DeleteBookmark(it->second.first);
+      es.MoveBookmark(markId, srcId, dstId);
+      dstIndex[key] = {markId, bmk->GetTimeStamp()};
+    }
+    // else: dst copy is same-or-newer — leave it; the src copy is discarded with the temp category.
   }
 
   auto const & trackIds = bm.GetTrackIds(srcId);
   std::vector<kml::TrackId> tracks(trackIds.begin(), trackIds.end());
   for (auto trackId : tracks)
   {
+    auto const * trk = bm.GetTrack(trackId);
+    if (trk != nullptr && dstTrackNames.count(trk->GetName()) != 0)
+      continue;  // already present in dst — skip to avoid duplicate tracks.
     es.MoveTrack(trackId, srcId, dstId);
+    if (trk != nullptr)
+      dstTrackNames.insert(trk->GetName());
   }
 }
 

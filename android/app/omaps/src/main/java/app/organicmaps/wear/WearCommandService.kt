@@ -70,8 +70,28 @@ object WearCommandService {
 
     fun stopNavigation(context: Context) = getBackend(context).stopNavigation(context)
 
+    // Watchdog so the search spinner never hangs forever: cleared on results-end / fresh search,
+    // fired if neither the local engine nor the phone produces a result in time.
+    private val searchWatchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val searchWatchdogRunnable = Runnable {
+        if (NavigationStateHolder.state.value.isSearching) {
+            Log.w(TAG, "DEBUG_WEAR_SEARCH: search timed out; clearing spinner")
+            NavigationStateHolder.update { it.copy(isSearching = false) }
+        }
+    }
+
+    private fun armSearchWatchdog() {
+        searchWatchdogHandler.removeCallbacks(searchWatchdogRunnable)
+        searchWatchdogHandler.postDelayed(searchWatchdogRunnable, 12000)
+    }
+
+    fun cancelSearchWatchdog() {
+        searchWatchdogHandler.removeCallbacks(searchWatchdogRunnable)
+    }
+
     fun search(context: Context, query: String) {
         val navState = NavigationStateHolder.state.value
+        armSearchWatchdog()
         app.organicmaps.sdk.sync.WearLog.logState("WATCH", "UI Search Request: '$query'. Standalone=${navState.standaloneMode}, Connected=${navState.isPhoneConnected}")
         
         ensureSearchInitialized(context)
@@ -90,10 +110,16 @@ object WearCommandService {
             
             SearchEngine.INSTANCE.initialize()
             val success = SearchEngine.INSTANCE.search(
-                context, query, false, System.nanoTime(), 
+                context, query, false, System.nanoTime(),
                 hasLocation, lat, lon
             )
             Log.d(TAG, "DEBUG_WEAR_SEARCH: SearchEngine.search returned $success")
+            if (!success) {
+                // The engine refused to start the query (e.g. busy/empty) — no onResultsEnd will
+                // ever fire, so clear the spinner now instead of hanging.
+                cancelSearchWatchdog()
+                NavigationStateHolder.update { it.copy(isSearching = false) }
+            }
         } else {
             app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Requesting phone search at ${navState.lat}, ${navState.lon}")
             getBackend(context).search(context, query, navState.lat, navState.lon)
@@ -121,6 +147,7 @@ object WearCommandService {
 
             override fun onResultsEnd(timestamp: Long) {
                 app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Local results END")
+                cancelSearchWatchdog()
                 NavigationStateHolder.update { it.copy(isSearching = false) }
             }
         })
@@ -256,12 +283,29 @@ object WearCommandService {
         }
     }
 
-    fun updateBookmark(context: Context, bmkId: Long, name: String, color: Int) {
+    fun updateBookmark(context: Context, bmkId: Long, name: String, color: Int, categoryId: Long = -1) {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || navState.watchLocalMode) {
-            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)?.update(name, null, "")
+            val info = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
+            info?.update(name, null, "")
+            if (categoryId != -1L && info != null && info.categoryId != categoryId) {
+                info.changeCategory(categoryId)
+            }
+            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
+            WatchBookmarkSyncManager.requestSync(context)
         } else {
-            getBackend(context).updateBookmarkOnPhone(context, bmkId, name, color)
+            getBackend(context).updateBookmarkOnPhone(context, bmkId, name, color, categoryId)
+        }
+    }
+
+    fun createBookmarkCategory(context: Context, name: String) {
+        val navState = NavigationStateHolder.state.value
+        if (navState.standaloneMode || navState.watchLocalMode) {
+            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.createCategory(name)
+            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
+            WatchBookmarkSyncManager.requestSync(context)
+        } else {
+            getBackend(context).createBookmarkCategory(context, name)
         }
     }
 
@@ -276,11 +320,28 @@ object WearCommandService {
     }
 
     fun renameBookmarkCategory(context: Context, oldName: String, newName: String) {
-        getBackend(context).renameBookmarkCategory(context, oldName, newName)
+        val navState = NavigationStateHolder.state.value
+        if (navState.standaloneMode || navState.watchLocalMode) {
+            val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
+            manager.getCategories().find { it.name.equals(oldName, ignoreCase = true) }?.name = newName
+            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
+            WatchBookmarkSyncManager.requestSync(context)
+        } else {
+            getBackend(context).renameBookmarkCategory(context, oldName, newName)
+        }
     }
 
     fun deleteBookmarkCategory(context: Context, name: String) {
-        getBackend(context).deleteBookmarkCategory(context, name)
+        val navState = NavigationStateHolder.state.value
+        if (navState.standaloneMode || navState.watchLocalMode) {
+            val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
+            val category = manager.getCategories().find { it.name.equals(name, ignoreCase = true) }
+            category?.let { manager.deleteCategory(it.id) }
+            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
+            WatchBookmarkSyncManager.requestSync(context)
+        } else {
+            getBackend(context).deleteBookmarkCategory(context, name)
+        }
     }
 
     fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean, merge: Boolean = false) {
@@ -289,6 +350,10 @@ object WearCommandService {
 
     fun sendBookmarksMetadata(context: Context, payload: ByteArray) {
         getBackend(context).sendBookmarksMetadata(context, payload)
+    }
+
+    fun sendBookmarkTombstone(context: Context, payload: ByteArray) {
+        getBackend(context).sendBookmarkTombstone(context, payload)
     }
 
     fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) = getBackend(context).requestMwmBytes(context, mwmName, offset, size)

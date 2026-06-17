@@ -44,22 +44,32 @@ class BookmarkFileHandler(
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Chunk for $categoryName. Header bytes (hex): $hexStr")
             }
 
-            val fileName = categoryName.replace("[\\\\/:*?\"<>|]", "_") + ".kml"
+            val safeName = categoryName.replace("[\\\\/:*?\"<>|]", "_")
+            val tmpFile = File(context.cacheDir, "$safeName.part")
             val fos = bookmarkOutputStreams.getOrPut(categoryName) {
-                val file = File(context.cacheDir, fileName + ".tmp")
-                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Starting new bookmark file reception: $fileName")
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Starting new bookmark file reception: $safeName")
                 WearMapDownloader.setStreamingMap("Bookmarks: $categoryName")
-                FileOutputStream(file)
+                FileOutputStream(tmpFile)
             }
             fos.write(data)
             if (isLast) {
                 fos.close()
                 bookmarkOutputStreams.remove(categoryName)
-                val tmpFile = File(context.cacheDir, fileName + ".tmp")
+
+                // The sender exports via prepareCategoriesForSharing, which ALWAYS zips the KML into
+                // a KMZ. OM's loader picks the parser by file extension, so a ZIP saved as ".kml"
+                // fails to parse and the import never sticks (causing a re-sync storm). Sniff the
+                // magic and use ".kmz" for ZIP payloads so OM unzips and imports correctly.
+                val isZip = tmpFile.inputStream().use { input ->
+                    val sig = ByteArray(4)
+                    input.read(sig) == 4 && sig[0] == 0x50.toByte() && sig[1] == 0x4B.toByte() &&
+                        sig[2] == 0x03.toByte() && sig[3] == 0x04.toByte()
+                }
+                val fileName = safeName + if (isZip) ".kmz" else ".kml"
                 val finalFile = File(context.cacheDir, fileName)
-                
-                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Finalizing bookmark file: $fileName (Total size: ${tmpFile.length()} bytes)")
-                
+
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Finalizing bookmark file: $fileName (zip=$isZip, Total size: ${tmpFile.length()} bytes)")
+
                 if (finalFile.exists()) finalFile.delete()
                 val renamed = tmpFile.renameTo(finalFile)
                 if (!renamed) {
@@ -92,11 +102,10 @@ class BookmarkFileHandler(
                         
                         app.organicmaps.wear.WatchBookmarkSyncManager.isApplyingRemoteUpdate = true
                         try {
-                            if (existingByName != null && !shouldMerge) {
-                                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Deleting existing category '$categoryName' (ID: ${existingByName.id}) before importing update")
-                                manager.deleteCategory(existingByName.id)
-                                manager.loadBookmarksFile(finalFile.absolutePath, true)
-                            } else if (existingByName != null) {
+                            if (existingByName != null) {
+                                // Background sync is always a non-destructive union-merge: the native
+                                // merge de-dups by name+position and resolves same-pin edits by timestamp
+                                // (LWW), so importing never drops bookmarks made on this watch offline.
                                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Merging update into existing category '$categoryName' (ID: ${existingByName.id})")
                                 manager.loadBookmarksFile(finalFile.absolutePath, true, existingByName.id)
                             } else if (finalFile.exists()) {

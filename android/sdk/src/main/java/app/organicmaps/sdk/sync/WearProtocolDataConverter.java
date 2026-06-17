@@ -16,9 +16,12 @@ public class WearProtocolDataConverter {
     public static byte[] encodeNavigationStatus(@NonNull Context context, boolean isNavigating, @Nullable RoutingInfo info, @Nullable Location location, float[] routeLats, float[] routeLons) {
         byte[] streetBytes = (info != null && info.nextStreet != null) ? info.nextStreet.getBytes(StandardCharsets.UTF_8) : new byte[0];
         byte[] distBytes = (info != null && info.distToTurn != null) ? info.distToTurn.toString(context).getBytes(StandardCharsets.UTF_8) : new byte[0];
-        
+        // Total remaining distance (distToTarget) and ETA (totalTimeInSeconds) feed the watch Stats screen.
+        byte[] targetBytes = (info != null && info.distToTarget != null) ? info.distToTarget.toString(context).getBytes(StandardCharsets.UTF_8) : new byte[0];
+        int etaSeconds = (info != null) ? info.totalTimeInSeconds : 0;
+
         int routePoints = (routeLats != null) ? routeLats.length : 0;
-        ByteBuffer buffer = ByteBuffer.allocate(64 + streetBytes.length + distBytes.length + (routePoints * 4 * 2));
+        ByteBuffer buffer = ByteBuffer.allocate(80 + streetBytes.length + distBytes.length + targetBytes.length + (routePoints * 4 * 2));
         
         buffer.put((byte) (isNavigating ? 1 : 0));
         buffer.put((byte) (info != null ? info.carDirection.ordinal() : 0));
@@ -37,9 +40,12 @@ public class WearProtocolDataConverter {
         buffer.putInt(routePoints);
         buffer.putInt(streetBytes.length);
         buffer.putInt(distBytes.length);
+        buffer.putInt(targetBytes.length);
+        buffer.putInt(etaSeconds);
         buffer.put(streetBytes);
         buffer.put(distBytes);
-        
+        buffer.put(targetBytes);
+
         if (routePoints > 0) {
             for (float lat : routeLats) buffer.putFloat(lat);
             for (float lon : routeLons) buffer.putFloat(lon);

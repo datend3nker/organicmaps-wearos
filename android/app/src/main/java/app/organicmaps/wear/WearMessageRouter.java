@@ -41,6 +41,7 @@ public class WearMessageRouter {
     private static final String PATH_BOOKMARK_UPDATE = WearProtocol.PATH_BOOKMARK_UPDATE;
     private static final String PATH_BOOKMARK_RENAME = WearProtocol.PATH_BOOKMARK_RENAME;
     private static final String PATH_BOOKMARK_DELETE = WearProtocol.PATH_BOOKMARK_DELETE;
+    private static final String PATH_BOOKMARK_CATEGORY_CREATE = WearProtocol.PATH_BOOKMARK_CATEGORY_CREATE;
     private static final String PATH_MAP_DOWNLOAD_REQUEST = WearProtocol.PATH_MAP_DOWNLOAD_REQUEST;
     private static final String PATH_DOWNLOADED_MAPS_REQUEST = WearProtocol.PATH_MAP_PHONE_DOWNLOADED_REQUEST;
     private static final String PATH_VIRTUAL_MWM_REQUEST = WearProtocol.PATH_VIRTUAL_MWM_REQUEST;
@@ -96,6 +97,10 @@ public class WearMessageRouter {
         switch (path) {
             case PATH_HANDSHAKE:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handshake received");
+                // Force a bookmark-metadata push once per connect so both sides reconcile to a full
+                // mirror. (Self-guards on framework readiness.)
+                sMainHandler.post(WearSyncService::syncBookmarksMetadataForced);
+                break;
             case PATH_STOP_NAVIGATION:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_STOP_NAVIGATION");
                 sMainHandler.post(() -> {
@@ -253,6 +258,9 @@ public class WearMessageRouter {
                     Log.i(TAG, "DEBUG_WEAR_PIPELINE: Watch requested bookmark categories - triggering sync");
                     ensureFrameworkInitialized(context, () -> {
                         WearSyncService.sendBookmarkCategories(context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories());
+                        // Push bookmark metadata (deduped — unchanged metadata is skipped, so the watch's
+                        // periodic requests don't cause a resend storm). Per-connect force is on HANDSHAKE.
+                        WearSyncService.syncBookmarksNow();
                     });
                 });
                 break;
@@ -279,14 +287,32 @@ public class WearMessageRouter {
                 updateBuf.get(nameB);
                 String name = new String(nameB, StandardCharsets.UTF_8);
                 int color = updateBuf.getInt();
+                long newCategoryId = updateBuf.hasRemaining() ? updateBuf.getLong() : -1;
+
                 sMainHandler.post(() -> {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to update bookmark: " + updateBmkId + " name: " + name + " color: " + color);
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to update bookmark: " + updateBmkId + " name: " + name + " color: " + color + " categoryId: " + newCategoryId);
                     WearSyncService.setApplyingRemoteUpdate(true);
                     try {
                         app.organicmaps.sdk.bookmarks.data.BookmarkInfo info = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getBookmarkInfo(updateBmkId);
                         if (info != null) {
                             info.update(name, new app.organicmaps.sdk.bookmarks.data.Icon(color, 0), "");
+                            if (newCategoryId != -1 && newCategoryId != info.getCategoryId()) {
+                                info.changeCategory(newCategoryId);
+                            }
                         }
+                    } finally {
+                        WearSyncService.setApplyingRemoteUpdate(false);
+                    }
+                });
+                break;
+            }
+            case PATH_BOOKMARK_CATEGORY_CREATE: {
+                String name = new String(finalPayload, StandardCharsets.UTF_8);
+                sMainHandler.post(() -> {
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to create category: " + name);
+                    WearSyncService.setApplyingRemoteUpdate(true);
+                    try {
+                        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.createCategory(name);
                     } finally {
                         WearSyncService.setApplyingRemoteUpdate(false);
                     }
@@ -320,7 +346,11 @@ public class WearMessageRouter {
                     ensureFrameworkInitialized(context, () -> {
                         for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
                             if (cat.getName().equals(syncCatName)) {
-                                WearSyncService.setSilentSyncInProgress(true);
+                                // Register the id so the sharing listener pushes the export to the
+                                // watch. setSilentSyncInProgress(true) is a no-op under the ID-based
+                                // logic, which left this path silent=false → file dropped → watch
+                                // re-requests forever (prepare/save storm).
+                                WearSyncService.markSilentSync(cat.getId());
                                 app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.prepareCategoriesForSharing(
                                         new long[]{cat.getId()}, app.organicmaps.sdk.bookmarks.data.KmlFileType.Text);
                                 return;
@@ -537,6 +567,9 @@ public class WearMessageRouter {
                 break;
             case PATH_BOOKMARK_FILE:
                 sMainHandler.post(() -> WearSyncService.handleIncomingBookmarkFile(context, finalPayload));
+                break;
+            case WearProtocol.PATH_BOOKMARK_TOMBSTONE:
+                WearSyncService.applyIncomingTombstone(context, finalPayload);
                 break;
             case PATH_BACKEND_SWITCH: {
                 String newBackend = new String(finalPayload, StandardCharsets.UTF_8);

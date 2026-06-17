@@ -18,6 +18,7 @@ import app.organicmaps.sdk.util.log.Logger;
 import app.organicmaps.util.SharingUtils;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public enum BookmarksSharingHelper
@@ -29,14 +30,19 @@ public enum BookmarksSharingHelper
   @Nullable
   private AlertDialog mProgressDialog;
 
+  @Nullable
+  private long[] mRequestedCategoryIds;
+
   public void prepareBookmarkCategoryForSharing(@NonNull Activity context, long catId, KmlFileType kmlFileType)
   {
+    mRequestedCategoryIds = new long[] {catId};
     showProgressDialog(context);
     BookmarkManager.INSTANCE.prepareCategoriesForSharing(new long[] {catId}, kmlFileType);
   }
 
   public void prepareTrackForSharing(@NonNull Activity context, long trackId, KmlFileType kmlFileType)
   {
+    mRequestedCategoryIds = new long[] {-2}; // Special marker for track sharing
     showProgressDialog(context);
     BookmarkManager.INSTANCE.prepareTrackForSharing(trackId, kmlFileType);
   }
@@ -57,8 +63,32 @@ public enum BookmarksSharingHelper
                                        @NonNull ActivityResultLauncher<SharingUtils.SharingIntent> launcher,
                                        @NonNull BookmarkSharingResult result)
   {
+    boolean isExpected = false;
+    long[] resultIds = result.getCategoriesIds();
+    
+    if (mRequestedCategoryIds != null)
+    {
+      if (mRequestedCategoryIds.length == 1 && mRequestedCategoryIds[0] == -2)
+      {
+        // Waiting for track, resultIds for tracks might be empty or null
+        isExpected = (resultIds == null || resultIds.length == 0);
+      }
+      else
+      {
+        isExpected = Arrays.equals(resultIds, mRequestedCategoryIds);
+      }
+    }
+
+    if (!isExpected)
+    {
+      Logger.d(TAG, "Ignoring prepared file for sharing (likely background sync). resultIds=" + Arrays.toString(resultIds) + ", requestedIds=" + Arrays.toString(mRequestedCategoryIds));
+      return;
+    }
+
     if (mProgressDialog != null && mProgressDialog.isShowing())
       mProgressDialog.dismiss();
+    mProgressDialog = null;
+    mRequestedCategoryIds = null;
 
     switch (result.getCode())
     {
@@ -93,6 +123,7 @@ public enum BookmarksSharingHelper
     long[] categoryIds = new long[categories.size()];
     for (int i = 0; i < categories.size(); i++)
       categoryIds[i] = categories.get(i).getId();
+    mRequestedCategoryIds = categoryIds;
     BookmarkManager.INSTANCE.prepareCategoriesForSharing(categoryIds, KmlFileType.Text);
   }
 }

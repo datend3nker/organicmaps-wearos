@@ -8,7 +8,9 @@ import app.organicmaps.sdk.routing.RoutingInfo;
 import app.organicmaps.sdk.search.SearchResult;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import app.organicmaps.sync.BluetoothSyncLayer;
 import app.organicmaps.sync.ISyncLayer;
@@ -18,7 +20,7 @@ public class WearSyncService {
     private static final List<ISyncLayer.MessageListener> sListeners = new ArrayList<>();
     private static boolean sListenersRegistered = false;
     private static final android.os.Handler sHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-    private static boolean sIsSilentSyncInProgress = false;
+    private static final Set<Long> sSilentSyncCategoryIds = new HashSet<>();
     private static boolean sIsApplyingRemoteUpdate = false;
 
     private static final Runnable sSyncPrefsRunnable = () -> {
@@ -43,17 +45,22 @@ public class WearSyncService {
     private static long sLastRemoteAppliedTime = 0;
 
     private static final app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksSharingListener sSharingListener = (result) -> {
-        android.util.Log.d("WearSync", "onPreparedFileForSharing: " + result.getCode() + " path: " + result.getSharingPath());
+        long[] catIds = result.getCategoriesIds();
+        boolean isSilent;
+        long targetCatId = (catIds != null && catIds.length > 0) ? catIds[0] : -1;
+
+        synchronized (sSilentSyncCategoryIds) {
+            isSilent = sSilentSyncCategoryIds.contains(targetCatId);
+        }
+
+        android.util.Log.d("WearSync", "onPreparedFileForSharing: " + result.getCode() + " silent=" + isSilent + " catId=" + targetCatId);
+        
         if (result.getCode() == app.organicmaps.sdk.bookmarks.data.BookmarkSharingResult.SUCCESS) {
+            if (targetCatId == -1) return;
             String path = result.getSharingPath();
-            long[] catIds = result.getCategoriesIds();
-            if (catIds == null || catIds.length == 0) {
-                android.util.Log.w("WearSync", "No category IDs in sharing result");
-                return;
-            }
-            long catId = catIds[0];
-            app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategoryById(catId);
-            String catName = cat != null ? cat.getName() : "sync_" + catId;
+
+            app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategoryById(targetCatId);
+            String catName = cat != null ? cat.getName() : "sync_" + targetCatId;
 
             java.io.File file = new java.io.File(path);
             long length = file.length();
@@ -71,11 +78,23 @@ public class WearSyncService {
                     // Report progress back to watch so UI can show it
                     int progress = (int) (sent * 100 / length);
                     getSyncLayer().sendMapProgress(app.organicmaps.MwmApplication.sInstance, "Bookmarks: " + catName, progress);
+
+                    if (isLast && isSilent) {
+                        synchronized (sSilentSyncCategoryIds) {
+                            sSilentSyncCategoryIds.remove(targetCatId);
+                        }
+                    }
                 }
             } catch (java.io.IOException e) {
                 android.util.Log.e("WearSync", "Failed to send bookmark file", e);
+                synchronized (sSilentSyncCategoryIds) {
+                    sSilentSyncCategoryIds.remove(targetCatId);
+                }
             }
         } else {
+            synchronized (sSilentSyncCategoryIds) {
+                sSilentSyncCategoryIds.remove(targetCatId);
+            }
             android.util.Log.w("WearSync", "Bookmark preparation failed with code: " + result.getCode());
         }
     };
@@ -268,11 +287,17 @@ public class WearSyncService {
     }
 
     public static boolean isSilentSyncInProgress() {
-        return sIsSilentSyncInProgress;
+        synchronized (sSilentSyncCategoryIds) {
+            return !sSilentSyncCategoryIds.isEmpty();
+        }
     }
 
     public static void setSilentSyncInProgress(boolean inProgress) {
-        sIsSilentSyncInProgress = inProgress;
+        if (!inProgress) {
+            synchronized (sSilentSyncCategoryIds) {
+                sSilentSyncCategoryIds.clear();
+            }
+        }
     }
 
     public static void setApplyingRemoteUpdate(boolean applying) {
@@ -293,6 +318,14 @@ public class WearSyncService {
     }
 
     public static void handleIncomingBookmarkFile(Context context, byte[] payload) {
+        // Stub for OSS
+    }
+
+    public static void applyIncomingTombstone(Context context, byte[] payload) {
+        // Stub for OSS
+    }
+
+    public static void syncBookmarksMetadataForced() {
         // Stub for OSS
     }
 

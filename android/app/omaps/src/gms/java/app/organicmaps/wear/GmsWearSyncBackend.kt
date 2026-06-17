@@ -275,19 +275,24 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_DELETE, name.toByteArray(StandardCharsets.UTF_8))
     }
 
+    override fun createBookmarkCategory(context: Context, name: String) {
+        sendMessage(context, WearProtocol.PATH_BOOKMARK_CATEGORY_CREATE, name.toByteArray(StandardCharsets.UTF_8))
+    }
+
     override fun showBookmarkOnPhone(context: Context, bmkId: Long) {
         val buffer = ByteBuffer.allocate(8)
         buffer.putLong(bmkId)
         sendMessage(context, WearProtocol.PATH_BOOKMARK_SHOW, buffer.array())
     }
 
-    override fun updateBookmarkOnPhone(context: Context, bmkId: Long, name: String, color: Int) {
+    override fun updateBookmarkOnPhone(context: Context, bmkId: Long, name: String, color: Int, categoryId: Long) {
         val nameBytes = name.toByteArray(StandardCharsets.UTF_8)
-        val buffer = ByteBuffer.allocate(8 + 4 + nameBytes.size + 4)
+        val buffer = ByteBuffer.allocate(8 + 4 + nameBytes.size + 4 + 8)
         buffer.putLong(bmkId)
         buffer.putInt(nameBytes.size)
         buffer.put(nameBytes)
         buffer.putInt(color)
+        buffer.putLong(categoryId)
         sendMessage(context, WearProtocol.PATH_BOOKMARK_UPDATE, buffer.array())
     }
 
@@ -304,6 +309,10 @@ class GmsWearSyncBackend : IWearSyncBackend {
 
     override fun sendBookmarksMetadata(context: Context, payload: ByteArray) {
         sendMessage(context, WearProtocol.PATH_BOOKMARKS_METADATA, payload)
+    }
+
+    override fun sendBookmarkTombstone(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_BOOKMARK_TOMBSTONE, payload)
     }
 
     override fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) {

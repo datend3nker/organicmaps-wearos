@@ -154,9 +154,6 @@ public class BookmarkCategoriesFragment extends BaseMwmRecyclerFragment<Bookmark
   @Override
   public void onPreparedFileForSharing(@NonNull BookmarkSharingResult result)
   {
-    if (WearSyncService.isSilentSyncInProgress()) {
-        return;
-    }
     BookmarksSharingHelper.INSTANCE.onPreparedFileForSharing(requireActivity(), shareLauncher, result);
   }
 

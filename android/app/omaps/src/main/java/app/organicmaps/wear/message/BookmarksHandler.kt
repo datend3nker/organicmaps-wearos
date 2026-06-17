@@ -54,7 +54,13 @@ class BookmarksHandler : WearMessageHandler {
                     oldCat?.isSyncing ?: false
                 }
 
-                categories.add(BookmarkCategoryItem(id, name, isVisible, bmkCount, trkCount, isSyncing, lastModified = timestamp))
+                // Show the larger of the phone's count and the watch's local count so neither
+                // direction is hidden: a bookmark added on the watch (phone still reports 0) stays
+                // visible instead of being overwritten back to 0, and phone-only bookmarks not yet
+                // imported on the watch still show (and drive the sync + detail "syncing" state).
+                val displayBmk = maxOf(bmkCount, localCat?.bookmarksCount ?: 0)
+                val displayTrk = maxOf(trkCount, localCat?.tracksCount ?: 0)
+                categories.add(BookmarkCategoryItem(id, name, isVisible, displayBmk, displayTrk, isSyncing, lastModified = timestamp))
             }
             
             if (categories != currentState.bookmarkCategories) {
