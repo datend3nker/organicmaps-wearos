@@ -389,6 +389,11 @@ public class WearSyncService {
         // A union-merge never removes, so per-bookmark deletions must be propagated as tombstones.
         detectBookmarkDeletions(context);
 
+        // Bump per-identity LWW timestamps for any content change (add/rename/recolor/re-describe) so
+        // edits — not just adds — propagate to the watch on the next push.
+        app.organicmaps.sdk.sync.BookmarkSyncCore.stampLocalChange(
+            context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE);
+
         android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_state", Context.MODE_PRIVATE);
         List<app.organicmaps.sdk.bookmarks.data.BookmarkCategory> categories = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories();
         

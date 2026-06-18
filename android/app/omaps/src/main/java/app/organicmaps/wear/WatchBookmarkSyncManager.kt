@@ -6,6 +6,7 @@ import app.organicmaps.sdk.bookmarks.data.BookmarkManager
 import app.organicmaps.sdk.bookmarks.data.BookmarkSharingResult
 import app.organicmaps.sdk.bookmarks.data.KmlFileType
 import app.organicmaps.sdk.sync.BookmarkTombstoneStore
+import app.organicmaps.sdk.sync.BookmarkSyncCore
 import androidx.core.content.edit
 import kotlinx.coroutines.*
 import java.io.File
@@ -36,9 +37,15 @@ object WatchBookmarkSyncManager {
 
         if (isApplyingRemoteUpdate && isUserAction) return
 
+        // Bump per-identity LWW timestamps for any content change (add/rename/recolor/re-describe) so
+        // edits — not just adds — propagate to the phone on the next push.
+        if (isUserAction) {
+            BookmarkSyncCore.stampLocalChange(context, BookmarkManager.INSTANCE)
+        }
+
         val now = System.currentTimeMillis()
         val manager = BookmarkManager.INSTANCE
-        val categories = manager.getCategories()
+        val categories = manager.categories
         val prefs = getPrefs(context)
         
         prefs.edit {
@@ -50,7 +57,7 @@ object WatchBookmarkSyncManager {
                 val lastB = prefs.getInt("last_count_b_$name", -1)
                 val lastT = prefs.getInt("last_count_t_$name", -1)
                 
-                if (bCount != lastB || tCount != lastT) {
+                if (bCount != lastB || (tCount != lastT)) {
                     if (isUserAction) {
                         putLong("last_local_edit_$name", now)
                     }
@@ -71,7 +78,7 @@ object WatchBookmarkSyncManager {
                     cat.id, cat.name, cat.isVisible, cat.bookmarksCount, cat.tracksCount,
                     isSyncing = existing?.isSyncing ?: false,
                     remoteId = existing?.remoteId ?: 0L,
-                    lastModified = existing?.lastModified ?: 0L
+                    lastModified = existing?.lastModified ?: 0L,
                 )
                 val idx = merged.indexOfFirst { it.name.equals(cat.name, ignoreCase = true) }
                 if (idx != -1) merged[idx] = item else merged.add(item)
@@ -94,8 +101,10 @@ object WatchBookmarkSyncManager {
     private fun pushUpsertBatch(context: Context) {
         scope.launch(Dispatchers.Main) {
             try {
-                val payload = app.organicmaps.sdk.sync.BookmarkSyncCore.buildUpsertBatch(
-                    context, BookmarkManager.INSTANCE)
+                val payload = BookmarkSyncCore.buildUpsertBatch(
+                    context,
+                    BookmarkManager.INSTANCE,
+                )
                 WearCommandService.sendBookmarkUpsert(context, payload)
             } catch (e: Exception) {
                 Log.w(TAG, "pushUpsertBatch failed: ${e.message}")
@@ -108,8 +117,11 @@ object WatchBookmarkSyncManager {
         scope.launch(Dispatchers.Main) {
             isApplyingRemoteUpdate = true
             try {
-                app.organicmaps.sdk.sync.BookmarkSyncCore.applyUpsertBatch(
-                    context, BookmarkManager.INSTANCE, payload)
+                BookmarkSyncCore.applyUpsertBatch(
+                    context,
+                    BookmarkManager.INSTANCE,
+                    payload,
+                )
             } catch (e: Exception) {
                 Log.w(TAG, "handleIncomingUpsert failed: ${e.message}")
             } finally {
@@ -120,10 +132,10 @@ object WatchBookmarkSyncManager {
         }
     }
 
-    fun respondToSyncRequest(context: Context, categoryName: String) {
+    fun respondToSyncRequest(categoryName: String) {
         scope.launch(Dispatchers.Main) {
             val manager = BookmarkManager.INSTANCE
-            val cat = manager.getCategories().find { it.name.equals(categoryName, ignoreCase = true) }
+            val cat = manager.categories.find { it.name.equals(categoryName, ignoreCase = true) }
             if (cat == null) {
                 Log.w(TAG, "Phone requested sync for unknown category: $categoryName")
                 return@launch
@@ -143,26 +155,27 @@ object WatchBookmarkSyncManager {
         try {
             val manager = BookmarkManager.INSTANCE
             val snap = context.getSharedPreferences(SNAP_PREFS, Context.MODE_PRIVATE)
-            val editor = snap.edit()
             val now = System.currentTimeMillis()
-            for (cat in manager.getCategories()) {
-                val current = BookmarkTombstoneStore.currentIdentities(manager, cat)
-                val key = "snap_${cat.name}"
-                val previous = snap.getStringSet(key, null)
-                if (previous != null && isUserAction) {
-                    for (gone in previous - current) {
-                        BookmarkTombstoneStore.record(context, gone, now)
-                        BookmarkTombstoneStore.encodeFromKey(gone, now)?.let {
-                            Log.d(TAG, "Bookmark deleted locally → tombstone $gone")
-                            WearCommandService.sendBookmarkTombstone(context, it)
+            snap.edit {
+                for (cat in manager.categories) {
+                    val current = BookmarkTombstoneStore.currentIdentities(manager, cat)
+                    val key = "snap_${cat.name}"
+                    val previous = snap.getStringSet(key, null)
+                    if (previous != null && isUserAction) {
+                        for (gone in (previous - current)) {
+                            BookmarkTombstoneStore.record(context, gone, now)
+                            BookmarkTombstoneStore.encodeFromKey(gone, now)?.let {
+                                Log.d(TAG, "Bookmark deleted locally → tombstone $gone")
+                                WearCommandService.sendBookmarkTombstone(context, it)
+                            }
+                        }
+                        for (added in (current - previous)) {
+                            BookmarkTombstoneStore.clear(context, added)
                         }
                     }
-                    for (added in current - previous)
-                        BookmarkTombstoneStore.clear(context, added)
+                    putStringSet(key, current)
                 }
-                editor.putStringSet(key, current)
             }
-            editor.apply()
         } catch (e: Exception) {
             Log.w(TAG, "detectBookmarkDeletions failed: ${e.message}")
         }
@@ -189,7 +202,7 @@ object WatchBookmarkSyncManager {
             isApplyingRemoteUpdate = true
             try {
                 var removed = 0
-                for (cat in manager.getCategories())
+                for (cat in manager.categories)
                     removed += BookmarkTombstoneStore.applyToCategory(context, manager, cat)
                 if (removed > 0) Log.d(TAG, "Purged $removed resurrected bookmark(s) after merge")
             } finally {
@@ -206,7 +219,7 @@ object WatchBookmarkSyncManager {
         BookmarkTombstoneStore.record(context, parsed.key(), parsed.ts)
         scope.launch(Dispatchers.Main) {
             val manager = BookmarkManager.INSTANCE
-            val cat = manager.getCategories().find { it.name.equals(parsed.categoryName, ignoreCase = true) } ?: return@launch
+            val cat = manager.categories.find { it.name.equals(parsed.categoryName, ignoreCase = true) } ?: return@launch
             isApplyingRemoteUpdate = true
             try {
                 BookmarkTombstoneStore.applyToCategory(context, manager, cat)
@@ -222,32 +235,6 @@ object WatchBookmarkSyncManager {
         pendingMerges.add(categoryName)
     }
 
-    private fun sendMetadata(context: Context) {
-        val manager = BookmarkManager.INSTANCE
-        val categories = manager.getCategories()
-        val prefs = getPrefs(context)
-        
-        val buffer = ByteBuffer.allocate(4 + categories.size * 256) 
-        buffer.putInt(categories.size)
-        
-        for (cat in categories) {
-            val nameBytes = cat.name.toByteArray(StandardCharsets.UTF_8)
-            buffer.putInt(nameBytes.size)
-            buffer.put(nameBytes)
-            buffer.putInt(cat.bookmarksCount)
-            buffer.putInt(cat.tracksCount)
-            buffer.putLong(prefs.getLong("last_local_edit_${cat.name}", 0))
-            buffer.putLong(prefs.getLong("last_synced_${cat.name}", 0))
-        }
-        
-        val payload = ByteArray(buffer.position())
-        buffer.flip()
-        buffer.get(payload)
-        
-        Log.d(TAG, "Sending bookmarks metadata to phone. Categories: ${categories.size}")
-        WearCommandService.sendBookmarksMetadata(context, payload)
-    }
-
     fun handleIncomingMetadata(context: Context, payload: ByteArray) {
         val buffer = ByteBuffer.wrap(payload)
         if (buffer.remaining() < 4) return
@@ -258,7 +245,7 @@ object WatchBookmarkSyncManager {
         // so run the whole reconcile on Main — otherwise nativeGetBookmarkCategories aborts (SIGABRT).
         scope.launch(Dispatchers.Main) {
         val manager = BookmarkManager.INSTANCE
-        val localCategories = manager.getCategories()
+        val localCategories = manager.categories
         val prefs = getPrefs(context)
 
         repeat(count) {
@@ -278,7 +265,7 @@ object WatchBookmarkSyncManager {
             val localChanged = localLastEdit > localLastSynced
             val remoteChanged = remoteLastEdit > localLastSynced
             val countsDiffer = cat != null &&
-                (remoteBmkCount != cat.bookmarksCount || remoteTrkCount != cat.tracksCount)
+                (remoteBmkCount != cat.bookmarksCount || (remoteTrkCount != cat.tracksCount))
             val neverSynced = localLastSynced == 0L
 
             // Full-mirror reconcile: both devices must converge to the same set.
@@ -296,7 +283,7 @@ object WatchBookmarkSyncManager {
                 Log.d(TAG, "Bookmark reconcile PULL: $name")
                 WearCommandService.syncCategory(context, name)
             }
-            if (doPush && cat != null && (cat.bookmarksCount > 0 || cat.tracksCount > 0)) {
+            if (doPush && cat != null && (cat.bookmarksCount > 0 || (cat.tracksCount > 0))) {
                 Log.d(TAG, "Bookmark reconcile PUSH: $name")
                 pendingMerges.add(name)
                 // already on Main (see launch above) — safe to call the thread-checked native export.
@@ -310,7 +297,7 @@ object WatchBookmarkSyncManager {
         if (result.code == BookmarkSharingResult.SUCCESS) {
             val path = result.sharingPath
             val catIds = result.categoriesIds
-            if (catIds == null || catIds.isEmpty()) return@BookmarksSharingListener
+            if (catIds == null || (catIds.isEmpty())) return@BookmarksSharingListener
             
             val manager = BookmarkManager.INSTANCE
             val cat = manager.getCategoryById(catIds[0]) ?: return@BookmarksSharingListener
