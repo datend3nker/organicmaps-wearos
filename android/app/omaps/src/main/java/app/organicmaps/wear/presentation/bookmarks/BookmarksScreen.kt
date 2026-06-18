@@ -285,7 +285,10 @@ fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
                     },
                     label = { Text(bookmark.name, maxLines = 1) },
                     secondaryLabel = {
-                        Text(bookmark.address, maxLines = 1, style = MaterialTheme.typography.caption3)
+                        val sub = bookmark.description.ifBlank {
+                            "%.5f, %.5f".format(bookmark.lat, bookmark.lon)
+                        }
+                        Text(sub, maxLines = 1, style = MaterialTheme.typography.caption3)
                     },
                     icon = {
                         Box(
