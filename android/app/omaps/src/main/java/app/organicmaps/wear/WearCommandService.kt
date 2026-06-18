@@ -269,7 +269,19 @@ object WearCommandService {
         }
     }
     fun requestBookmarks(context: Context) = getBackend(context).requestBookmarks(context)
-    fun toggleBookmarkCategory(context: Context, categoryName: String) = getBackend(context).toggleBookmarkCategory(context, categoryName)
+    fun toggleBookmarkCategory(context: Context, categoryName: String) {
+        // Apply on the watch's own native DB first so visibility flips even when the phone transport
+        // is unreachable, then forward to the phone (best-effort) when actually connected.
+        val cat = BookmarkManager.INSTANCE.getCategories().find { it.name.equals(categoryName, ignoreCase = true) }
+        cat?.toggleVisibility()
+        NavigationStateHolder.update { current ->
+            current.copy(bookmarkCategories = current.bookmarkCategories.map {
+                if (it.name.equals(categoryName, ignoreCase = true)) it.copy(isVisible = cat?.isVisible ?: !it.isVisible) else it
+            })
+        }
+        if (!NavigationStateHolder.state.value.isEffectivelyStandalone)
+            getBackend(context).toggleBookmarkCategory(context, categoryName)
+    }
     fun showBookmark(context: Context, bmkId: Long) {
         val navState = NavigationStateHolder.state.value
         val effectivelyStandalone = navState.isEffectivelyStandalone
@@ -291,29 +303,31 @@ object WearCommandService {
     }
 
     fun updateBookmark(context: Context, bmkId: Long, name: String, color: Int, categoryId: Long = -1) {
-        val navState = NavigationStateHolder.state.value
-        if (navState.standaloneMode || navState.watchLocalMode) {
-            val info = BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
-            info?.update(name, null, "")
-            if (categoryId != -1L && info != null && info.categoryId != categoryId) {
-                info.changeCategory(categoryId)
-            }
-            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
-            WatchBookmarkSyncManager.requestSync(context)
-        } else {
-            getBackend(context).updateBookmarkOnPhone(context, bmkId, name, color, categoryId)
+        // Apply locally first so the edit sticks even when the phone is unreachable, then forward to
+        // the phone when connected so it propagates there too.
+        val info = BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
+        info?.update(name, null, "")
+        if (categoryId != -1L && info != null && info.categoryId != categoryId) {
+            info.changeCategory(categoryId)
         }
+        WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
+        if (NavigationStateHolder.state.value.isEffectivelyStandalone)
+            WatchBookmarkSyncManager.requestSync(context)
+        else
+            getBackend(context).updateBookmarkOnPhone(context, bmkId, name, color, categoryId)
     }
 
     fun createBookmarkCategory(context: Context, name: String) {
-        val navState = NavigationStateHolder.state.value
-        if (navState.standaloneMode || navState.watchLocalMode) {
-            BookmarkManager.INSTANCE.createCategory(name)
-            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
+        // Skip if a same-named category already exists — OM uniquifies a collision into "nameN",
+        // which is the category-explosion symptom we must avoid.
+        val manager = BookmarkManager.INSTANCE
+        if (manager.getCategories().none { it.name.equals(name, ignoreCase = true) })
+            manager.createCategory(name)
+        WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
+        if (NavigationStateHolder.state.value.isEffectivelyStandalone)
             WatchBookmarkSyncManager.requestSync(context)
-        } else {
+        else
             getBackend(context).createBookmarkCategory(context, name)
-        }
     }
 
     fun syncCategory(context: Context, categoryName: String) {
@@ -327,28 +341,32 @@ object WearCommandService {
     }
 
     fun renameBookmarkCategory(context: Context, oldName: String, newName: String) {
-        val navState = NavigationStateHolder.state.value
-        if (navState.standaloneMode || navState.watchLocalMode) {
-            val manager = BookmarkManager.INSTANCE
-            manager.getCategories().find { it.name.equals(oldName, ignoreCase = true) }?.name = newName
-            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
-            WatchBookmarkSyncManager.requestSync(context)
-        } else {
-            getBackend(context).renameBookmarkCategory(context, oldName, newName)
+        // Rename the watch's own category first (visible immediately), remap the UI entry, then
+        // forward to the phone when connected.
+        val manager = BookmarkManager.INSTANCE
+        manager.getCategories().find { it.name.equals(oldName, ignoreCase = true) }?.name = newName
+        NavigationStateHolder.update { current ->
+            current.copy(bookmarkCategories = current.bookmarkCategories.map {
+                if (it.name.equals(oldName, ignoreCase = true)) it.copy(name = newName) else it
+            }.distinctBy { it.name })
         }
+        if (NavigationStateHolder.state.value.isEffectivelyStandalone)
+            WatchBookmarkSyncManager.requestSync(context)
+        else
+            getBackend(context).renameBookmarkCategory(context, oldName, newName)
     }
 
     fun deleteBookmarkCategory(context: Context, name: String) {
-        val navState = NavigationStateHolder.state.value
-        if (navState.standaloneMode || navState.watchLocalMode) {
-            val manager = BookmarkManager.INSTANCE
-            val category = manager.getCategories().find { it.name.equals(name, ignoreCase = true) }
-            category?.let { manager.deleteCategory(it.id) }
-            WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
-            WatchBookmarkSyncManager.requestSync(context)
-        } else {
-            getBackend(context).deleteBookmarkCategory(context, name)
+        val manager = BookmarkManager.INSTANCE
+        manager.getCategories().find { it.name.equals(name, ignoreCase = true) }?.let { manager.deleteCategory(it.id) }
+        NavigationStateHolder.update { current ->
+            current.copy(bookmarkCategories = current.bookmarkCategories.filterNot { it.name.equals(name, ignoreCase = true) })
         }
+        WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
+        if (NavigationStateHolder.state.value.isEffectivelyStandalone)
+            WatchBookmarkSyncManager.requestSync(context)
+        else
+            getBackend(context).deleteBookmarkCategory(context, name)
     }
 
     fun sendBookmarkFile(context: Context, categoryName: String, data: ByteArray, isLast: Boolean, merge: Boolean = false) {

@@ -65,7 +65,7 @@ extern "C"
 {
 using osm::Editor;
 
-void Java_app_organicmaps_sdk_editor_Editor_nativeInit(JNIEnv * env, jclass)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_editor_Editor_nativeInit(JNIEnv * env, jclass)
 {
   g_localNameClazz = jni::GetGlobalClassRef(env, "app/organicmaps/sdk/editor/data/LocalizedName");
   // LocalizedName(int code, @NonNull String name, @NonNull String lang, @NonNull String langName)
@@ -319,7 +319,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_editor_Editor_nativeClearLocalEdits(JNIE
   Editor::Instance().ClearAllLocalEdits();
 }
 
-extern "C" void Java_app_organicmaps_sdk_editor_Editor_nativeStartEdit(JNIEnv *, jclass)
+extern "C" JNIEXPORT void JNICALL Java_app_organicmaps_sdk_editor_Editor_nativeStartEdit(JNIEnv *, jclass)
 {
   ::Framework * fr = frm();
   if (!fr->HasPlacePageInfo())

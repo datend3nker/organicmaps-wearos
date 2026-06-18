@@ -45,6 +45,21 @@ void GuiThread::ProcessTask(jlong task)
     // the data is available.
     LOG(LWARNING, ("GuiThread task failed:", e.Msg()));
   }
+  catch (std::exception & e)
+  {
+    // Defensive: any other C++ exception must not unwind across the JNI boundary either.
+    LOG(LWARNING, ("GuiThread task failed (std::exception):", e.what()));
+  }
+
+  // The failed task may have called back into Java (e.g. to request streamed data) and left a
+  // pending Java exception set in the env. If nativeProcessTask returns with one still pending, the
+  // JNI method epilogue (GenericJniMethodEnd) dereferences a stale reference and SIGSEGVs. Clear it.
+  JNIEnv * env = jni::GetEnv();
+  if (env != nullptr && env->ExceptionCheck())
+  {
+    env->ExceptionDescribe();
+    env->ExceptionClear();
+  }
 }
 
 base::TaskLoop::PushResult GuiThread::Push(Task && task)

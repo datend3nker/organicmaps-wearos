@@ -28,6 +28,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import android.widget.Toast
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.*
@@ -37,11 +38,13 @@ import app.organicmaps.sdk.Framework
 import app.organicmaps.sdk.Map
 import app.organicmaps.sdk.MapView
 import app.organicmaps.sdk.PlacePageActivationListener
+import app.organicmaps.sdk.bookmarks.data.BookmarkManager
 import app.organicmaps.sdk.bookmarks.data.MapObject
 import app.organicmaps.sdk.bookmarks.data.Metadata
 import app.organicmaps.sdk.downloader.MapManager
 import app.organicmaps.sdk.downloader.CountryItem
 import app.organicmaps.sdk.location.LocationState
+import app.organicmaps.sdk.location.SensorListener
 import app.organicmaps.sdk.widget.placepage.PlacePageData
 import app.organicmaps.sdk.routing.RoutingController
 import app.organicmaps.sdk.Router
@@ -56,6 +59,7 @@ import app.organicmaps.wear.WearMapDownloader
 import app.organicmaps.wear.VirtualMwmManager
 import app.organicmaps.wear.WatchStorage
 import app.organicmaps.wear.SearchResultItem
+import app.organicmaps.wear.WatchBookmarkSyncManager
 import app.organicmaps.wear.UiEvent
 import app.organicmaps.wear.presentation.search.PlacePage
 
@@ -119,17 +123,10 @@ fun MapPanel(
         }
     }
 
-    // Feed the device compass to the native engine so FOLLOW_AND_ROTATE actually rotates the map
-    // (phone does this via SensorHelper; the watch never wired it). Active only while the map is
-    // visible and not ambient, to spare the sensor/battery.
     DisposableEffect(isVisible, isAmbient, hApp.isFullyInitialized) {
         if (!isVisible || isAmbient || !hApp.isFullyInitialized) return@DisposableEffect onDispose {}
         val sensors = hApp.organicMaps.sensorHelper
-        val listener = object : app.organicmaps.sdk.location.SensorListener {
-            override fun onCompassUpdated(north: Double) {
-                Map.onCompassUpdated(north, false)
-            }
-        }
+        val listener = SensorListener { north -> Map.onCompassUpdated(north, false) }
         sensors.addListener(listener)
         sensors.start()
         onDispose {
@@ -180,7 +177,7 @@ fun MapPanel(
                     MapManager.nativeGetDownloadedCount() > 0
                 }
             }
-            delay(5000)
+            delay(5.seconds)
         }
     }
 
@@ -695,7 +692,8 @@ private fun MapMissingControl(
                                                 val size = WatchStorage.formatBytes(regionBytes)
                                                 NavigationStateHolder.emitEvent(UiEvent.ShowToast(
                                                     "$size won't fit ($free free). Streaming on demand instead.",
-                                                    android.widget.Toast.LENGTH_LONG))
+                                                    Toast.LENGTH_LONG,
+                                                ))
                                             } else {
                                                 WearMapDownloader.downloadOrStreamMap(context, countryId, "")
                                             }
@@ -737,7 +735,7 @@ private fun PlacePageOverlay(
                     val state = NavigationStateHolder.state.value
                     if (state.standaloneMode || (!state.isPhoneConnected && state.watchLocalMode)) {
                         if (hApp.isFullyInitialized && !Framework.nativeIsDownloadedMapAtLocation(tappedDestination.lat, tappedDestination.lon)) {
-                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map not downloaded for destination", android.widget.Toast.LENGTH_LONG))
+                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map not downloaded for destination", Toast.LENGTH_LONG))
                             return@launch
                         }
                         try {
@@ -753,14 +751,10 @@ private fun PlacePageOverlay(
                                 lastRouteError = 0
                             ) }
                             val locationHelper = hApp.organicMaps.locationHelper
-                            val myPos = locationHelper.myPosition
-                            val savedPos = locationHelper.savedLocation
                             
-                            val startPoint: MapObject? = if (myPos != null) {
-                                myPos
-                            } else if (savedPos != null) {
-                                MapObject.createMapObject(MapObject.MY_POSITION, "My Location", "", savedPos.getLatitude(), savedPos.getLongitude())
-                            } else {
+                            val startPoint: MapObject? = locationHelper.myPosition ?: locationHelper.savedLocation?.let { savedPos ->
+                                MapObject.createMapObject(MapObject.MY_POSITION, "My Location", "", savedPos.latitude, savedPos.longitude)
+                            } ?: run {
                                 val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
                                 val lastLat = prefs.getFloat("last_known_lat", 0f).toDouble()
                                 val lastLon = prefs.getFloat("last_known_lon", 0f).toDouble()
@@ -773,19 +767,19 @@ private fun PlacePageOverlay(
 
                             if (startPoint == null) { 
                                 Log.e("MapPanel", "No GPS position for routing")
-                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("No GPS position for routing", android.widget.Toast.LENGTH_LONG))
+                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("No GPS position for routing", Toast.LENGTH_LONG))
                                 NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
                                 return@launch 
                             }
                             val destination = MapObject.createMapObject(MapObject.POI, tappedDestination.name, tappedDestination.description, tappedDestination.lat, tappedDestination.lon)
                             val router = when (routerType) { 0 -> Router.Vehicle; 1 -> Router.Pedestrian; 2 -> Router.Bicycle; else -> Router.Transit }
                             val controller = RoutingController.get()
-                            controller.prepare(startPoint!!, destination, router)
+                            controller.prepare(startPoint, destination, router)
                             controller.checkAndBuildRoute()
                             NavigationStateHolder.update { it.copy(distToTurn = "", nextStreet = "", distToTarget = "", eta = 0, completionPercent = 0.0, turnLat = 0.0, turnLon = 0.0, avoidTolls = avoidTolls, avoidMotorways = avoidMotorways, avoidFerries = avoidFerries, avoidUnpaved = avoidUnpaved) }
                         } catch (e: Exception) {
                             Log.e("MapPanel", "Route planning failed: ${e.message}")
-                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Routing failed: ${e.message}", android.widget.Toast.LENGTH_LONG))
+                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Routing failed: ${e.message}", Toast.LENGTH_LONG))
                             NavigationStateHolder.update { it.copy(isRouteBuilding = false) }
                         }
                     } else {
@@ -886,9 +880,9 @@ fun QuickMenu(onDismiss: () -> Unit) {
                         val center = Framework.nativeGetScreenRectCenter()
                         if (center != null && center.size == 2) {
                             try {
-                                app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addNewBookmark(center[0], center[1])
-                                app.organicmaps.wear.WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
-                                app.organicmaps.wear.WatchBookmarkSyncManager.requestSync(context)
+                                BookmarkManager.INSTANCE.addNewBookmark(center[0], center[1])
+                                WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
+                                WatchBookmarkSyncManager.requestSync(context)
                                 NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmark added"))
                             } catch (_: Exception) {
                                 NavigationStateHolder.emitEvent(UiEvent.ShowToast("Couldn't add bookmark"))
@@ -940,7 +934,7 @@ fun QuickMenu(onDismiss: () -> Unit) {
     }
 }
 
-private fun maybeRequestMount(context: android.content.Context, countryId: String?, trigger: String) {
+private fun maybeRequestMount(context: Context, countryId: String?, trigger: String) {
     if (!countryId.isNullOrEmpty() &&
         MapManager.nativeGetStatus(countryId) != CountryItem.STATUS_DONE &&
         !VirtualMwmManager.isMounted(countryId) &&

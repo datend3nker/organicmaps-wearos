@@ -163,7 +163,7 @@ TimeTableSet NativeTimetableSet(JNIEnv * env, jobjectArray jTimetables)
 
 extern "C"
 {
-void Java_app_organicmaps_sdk_editor_OpeningHours_nativeInit(JNIEnv * env, jclass clazz)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_editor_OpeningHours_nativeInit(JNIEnv * env, jclass clazz)
 {
   g_clazzHoursMinutes = jni::GetGlobalClassRef(env, "app/organicmaps/sdk/editor/data/HoursMinutes");
   // Java signature : HoursMinutes(@IntRange(from = 0, to = 24) long hours, @IntRange(from = 0, to = 60) long minutes)

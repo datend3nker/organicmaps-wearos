@@ -6,7 +6,9 @@ import android.util.Log
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import app.organicmaps.sdk.sync.WearLog
 import kotlinx.coroutines.*
+import kotlin.time.Duration.Companion.seconds
 
 class HeartbeatManager(private val context: Context) {
     private var lastReceivedTime = 0L
@@ -20,10 +22,10 @@ class HeartbeatManager(private val context: Context) {
         if (job?.isActive == true) return
         
         job = ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.Default) {
-            delay(3000)
+            delay(3.seconds)
             while (isActive) {
                 if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                    delay(10000)
+                    delay(10.seconds)
                     continue
                 }
 
@@ -36,7 +38,7 @@ class HeartbeatManager(private val context: Context) {
                     if (currentState.isPhoneConnected) {
                         NavigationStateHolder.update(currentState.copy(isPhoneConnected = false))
                     }
-                    delay(60000)
+                    delay(1.seconds * 60)
                     continue
                 }
 
@@ -47,16 +49,16 @@ class HeartbeatManager(private val context: Context) {
 
                     val effectivePingInterval = if (isConnected) 10000L else currentPingBackoffMs
                     
-                    if (idleMs > effectivePingInterval && sinceSentMs > effectivePingInterval) {
+                    if (idleMs > effectivePingInterval && (sinceSentMs > effectivePingInterval)) {
                         if (!isConnected && !currentState.watchLocalMode && !currentState.standaloneMode) {
                             if (now - lastLaunchRequestTime > currentPingBackoffMs.coerceAtLeast(30000L)) {
-                                app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Heartbeat Backoff (${currentPingBackoffMs}ms): Trying to wake up phone app")
+                                WearLog.logState("WATCH", "Heartbeat Backoff (${currentPingBackoffMs}ms): Trying to wake up phone app")
                                 lastLaunchRequestTime = now
                                 WearCommandService.launchPhoneApp(context)
                             }
                         }
 
-                        app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Heartbeat (Connected=$isConnected, Interval=${effectivePingInterval}ms) - sending ping")
+                        WearLog.logState("WATCH", "Heartbeat (Connected=$isConnected, Interval=${effectivePingInterval}ms) - sending ping")
                         WearCommandService.sendPing(context)
                         lastSentTime = SystemClock.elapsedRealtime()
                         
@@ -67,7 +69,7 @@ class HeartbeatManager(private val context: Context) {
 
                     // Authority for disconnection
                     if (idleMs > 45000 && isConnected) {
-                        app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Phone connection timeout ($idleMs ms since last message) - marking as disconnected")
+                        WearLog.logState("WATCH", "Phone connection timeout ($idleMs ms since last message) - marking as disconnected")
                         var newState = currentState.copy(isPhoneConnected = false)
                         
                         if (!newState.watchLocalMode && !newState.standaloneMode) {
@@ -80,7 +82,7 @@ class HeartbeatManager(private val context: Context) {
                     Log.e("HeartbeatManager", "Error in heartbeat loop", e)
                 }
 
-                delay(if (NavigationStateHolder.state.value.isPhoneConnected) 10000L else 15000L)
+                delay(if (NavigationStateHolder.state.value.isPhoneConnected) 10.seconds else 15.seconds)
             }
         }
     }
@@ -96,7 +98,7 @@ class HeartbeatManager(private val context: Context) {
         currentPingBackoffMs = 15000L
         val currentState = NavigationStateHolder.state.value
         if (!currentState.isPhoneConnected || currentState.isConnecting) {
-            app.organicmaps.sdk.sync.WearLog.logState("WATCH", "Marking isPhoneConnected = true")
+            WearLog.logState("WATCH", "Marking isPhoneConnected = true")
             NavigationStateHolder.update(currentState.copy(isPhoneConnected = true, isConnecting = false))
             
             // Reconnected! Trigger Handshake

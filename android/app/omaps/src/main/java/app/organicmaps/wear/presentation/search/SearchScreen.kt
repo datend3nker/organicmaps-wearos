@@ -1,9 +1,11 @@
 package app.organicmaps.wear.presentation.search
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.speech.RecognizerIntent
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -27,9 +29,9 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -114,7 +116,7 @@ fun SearchScreen(
     val voiceLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
+        if (result.resultCode == Activity.RESULT_OK) {
             val results = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
             val spokenText = results?.firstOrNull() ?: ""
             if (spokenText.isNotEmpty()) {
@@ -230,7 +232,7 @@ fun SearchScreen(
                                 "Type or use voice to search",
                                 modifier = Modifier.padding(top = 20.dp),
                                 style = MaterialTheme.typography.caption2,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -398,11 +400,11 @@ fun PlacePage(
             contentPadding = PaddingValues(top = 28.dp, bottom = 28.dp, start = 10.dp, end = 10.dp)
         ) {
             item {
-                Text(result.name.ifEmpty { "Dropped Pin" }, style = MaterialTheme.typography.title3, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text(result.name.ifEmpty { "Dropped Pin" }, style = MaterialTheme.typography.title3, textAlign = TextAlign.Center)
             }
-            if (result.description.isNotEmpty() && result.description != "POI" && result.description != "Dropped Pin" && result.description != "Previous Fix") {
+            if (result.description.isNotEmpty() && (result.description != "POI") && (result.description != "Dropped Pin") && (result.description != "Previous Fix")) {
                 item {
-                    Text(result.description, style = MaterialTheme.typography.caption2, textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = Color(0xFF00E5FF))
+                    Text(result.description, style = MaterialTheme.typography.caption2, textAlign = TextAlign.Center, color = Color(0xFF00E5FF))
                 }
             }
 
@@ -444,7 +446,7 @@ fun PlacePage(
                         result.cuisine,
                         style = MaterialTheme.typography.caption2,
                         color = Color.LightGray,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
@@ -462,7 +464,7 @@ fun PlacePage(
 
             if (result.brand.isNotEmpty() || result.operator.isNotEmpty()) {
                 item {
-                    val text = listOf(result.brand, result.operator).filter { it.isNotEmpty() }.joinToString(" - ")
+                    val text = listOf(result.brand, result.operator).asSequence().filter { it.isNotEmpty() }.joinToString(" - ")
                     Text(text, style = MaterialTheme.typography.caption2, color = Color.Gray)
                 }
             }
@@ -484,7 +486,7 @@ fun PlacePage(
                         result.openingHours, 
                         style = MaterialTheme.typography.caption2, 
                         color = Color.LightGray,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 8.dp)
                     )
                 }
@@ -507,7 +509,7 @@ fun PlacePage(
                         result.address, 
                         style = MaterialTheme.typography.caption2, 
                         color = Color.Gray, 
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 8.dp)
                     )
                 }
@@ -619,7 +621,7 @@ fun ModeSelectionScreen(
     ) {
         item {
             val displayName = result.name.ifEmpty { result.description }
-            Text(displayName, style = MaterialTheme.typography.title3, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(displayName, style = MaterialTheme.typography.title3, maxLines = 1, textAlign = TextAlign.Center)
         }
         
         item {
@@ -690,7 +692,7 @@ fun SearchResultChip(result: SearchResultItem, onClick: () -> Unit) {
 
     val navState by NavigationStateHolder.state.collectAsState()
     
-    var downloadStatus by remember { mutableStateOf(CountryItem.STATUS_DONE) }
+    var downloadStatus by remember { mutableIntStateOf(CountryItem.STATUS_DONE) }
     
     LaunchedEffect(result.lat, result.lon, navState.watchLocalMode) {
         if (!navState.watchLocalMode) {

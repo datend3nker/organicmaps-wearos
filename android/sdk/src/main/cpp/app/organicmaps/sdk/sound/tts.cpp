@@ -6,7 +6,8 @@
 
 extern "C"
 {
-void Java_app_organicmaps_sdk_sound_TtsPlayer_nativeEnableTurnNotifications(JNIEnv *, jclass, jboolean enable)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_sound_TtsPlayer_nativeEnableTurnNotifications(JNIEnv *, jclass,
+                                                                                              jboolean enable)
 {
   return frm()->GetRoutingManager().EnableTurnNotifications(static_cast<bool>(enable));
 }

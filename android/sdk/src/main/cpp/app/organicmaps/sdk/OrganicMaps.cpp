@@ -9,31 +9,28 @@
 extern "C"
 {
 // static void nativeSetSettingsDir(String settingsPath);
-void Java_app_organicmaps_sdk_OrganicMaps_nativeSetSettingsDir(JNIEnv * env, jclass clazz,
-                                                                         jstring settingsPath)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_OrganicMaps_nativeSetSettingsDir(JNIEnv * env, jclass clazz,
+                                                                                 jstring settingsPath)
 {
   android::Platform::Instance().SetSettingsDir(jni::ToNativeString(env, settingsPath));
 }
 
 // static void nativeInitPlatform(Context context, String apkPath, String storagePath, String privatePath, String
 // tmpPath, String flavorName, String buildType, boolean isTablet);
-void Java_app_organicmaps_sdk_OrganicMaps_nativeInitPlatform(JNIEnv * env, jclass clazz, jobject context,
-                                                                       jstring apkPath, jstring writablePath,
-                                                                       jstring privatePath, jstring tmpPath,
-                                                                       jstring flavorName, jstring buildType,
-                                                                       jboolean isTablet)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_OrganicMaps_nativeInitPlatform(
+    JNIEnv * env, jclass clazz, jobject context, jstring apkPath, jstring writablePath, jstring privatePath,
+    jstring tmpPath, jstring flavorName, jstring buildType, jboolean isTablet)
 {
   android::Platform::Instance().Initialize(env, context, apkPath, writablePath, privatePath, tmpPath, flavorName,
                                            buildType, isTablet);
 }
 
 // static void nativeInitFramework(@NonNull Runnable onComplete);
-void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv * env, jclass clazz, jobject onComplete)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv * env, jclass clazz,
+                                                                                jobject onComplete)
 {
   if (!df::VisualParams::Instance().IsInited())
-  {
     df::VisualParams::Init(1.0, 512);
-  }
 
   if (!g_framework)
   {
@@ -52,14 +49,14 @@ void Java_app_organicmaps_sdk_OrganicMaps_nativeInitFramework(JNIEnv * env, jcla
 }
 
 // static void nativeAddLocalization(String name, String value);
-void Java_app_organicmaps_sdk_OrganicMaps_nativeAddLocalization(JNIEnv * env, jclass clazz, jstring name,
-                                                                          jstring value)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_OrganicMaps_nativeAddLocalization(JNIEnv * env, jclass clazz,
+                                                                                  jstring name, jstring value)
 {
   if (g_framework)
     g_framework->AddString(jni::ToNativeString(env, name), jni::ToNativeString(env, value));
 }
 
-void Java_app_organicmaps_sdk_OrganicMaps_nativeOnTransit(JNIEnv *, jclass, jboolean foreground)
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_OrganicMaps_nativeOnTransit(JNIEnv *, jclass, jboolean foreground)
 {
   if (!g_framework)
     return;
