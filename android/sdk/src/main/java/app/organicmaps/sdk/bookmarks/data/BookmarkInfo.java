@@ -24,8 +24,8 @@ public class BookmarkInfo
   private final double mMerX;
   private final double mMerY;
   private final double mScale;
-  @NonNull
-  private final String mAddress;
+  @Nullable
+  private String mAddress; // lazy: computed on first getAddress() call to avoid MWM reads at construction
   @NonNull
   private final ParcelablePointD mLatLonPoint;
 
@@ -40,7 +40,6 @@ public class BookmarkInfo
     mMerX = ll.x;
     mMerY = ll.y;
     mScale = Bookmark.nativeGetScale(mBookmarkId);
-    mAddress = Bookmark.nativeGetAddress(mBookmarkId);
     mLatLonPoint = GeoUtils.toLatLon(mMerX, mMerY);
   }
 
@@ -101,6 +100,8 @@ public class BookmarkInfo
   @NonNull
   public String getAddress()
   {
+    if (mAddress == null)
+      mAddress = Bookmark.nativeGetAddress(mBookmarkId);
     return mAddress;
   }
 

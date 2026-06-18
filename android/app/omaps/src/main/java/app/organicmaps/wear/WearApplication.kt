@@ -146,7 +146,6 @@ class WearApplication : Application() {
         WearNotificationManager.createNotificationChannel(this)
 
         // Initialize Bookmark Sync
-        BookmarkManager.INSTANCE.addSharingListener(WatchBookmarkSyncManager.sharingListener)
         BookmarkManager.INSTANCE.addCategoriesUpdatesListener {
             WatchBookmarkSyncManager.onLocalBookmarksChanged(this)
         }

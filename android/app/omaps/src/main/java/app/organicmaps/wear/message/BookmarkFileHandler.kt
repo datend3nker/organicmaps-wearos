@@ -124,21 +124,10 @@ class BookmarkFileHandler(
                         }
                         
                         NavigationStateHolder.update { current ->
-                             val oldCatForTimestamp = current.bookmarkCategories.find { it.name.equals(categoryName, ignoreCase = true) }
-                             val timestampToPersist = oldCatForTimestamp?.lastModified ?: 0L
-                             if (timestampToPersist > 0) {
-                                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Persisting sync timestamp for $categoryName: $timestampToPersist")
-                                 context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
-                                     .edit().putLong(categoryName, timestampToPersist).apply()
-                             }
-
                              val updatedCats = manager.getCategories().map { cat ->
-                                 val oldCat = current.bookmarkCategories.find { it.name.equals(cat.name, ignoreCase = true) }
                                  BookmarkCategoryItem(
                                      cat.id, cat.name, cat.isVisible, cat.bookmarksCount, cat.tracksCount,
                                      isSyncing = false,
-                                     remoteId = oldCat?.remoteId ?: 0L,
-                                     lastModified = oldCat?.lastModified ?: 0L
                                  )
                              }
                              

@@ -162,8 +162,6 @@ data class BookmarkCategoryItem(
     val bookmarksCount: Int,
     val tracksCount: Int,
     val isSyncing: Boolean = false,
-    val remoteId: Long = 0L,
-    val lastModified: Long = 0L
 )
 
 object NavigationStateHolder {

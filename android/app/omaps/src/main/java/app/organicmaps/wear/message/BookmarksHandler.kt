@@ -26,9 +26,6 @@ class BookmarksHandler : WearMessageHandler {
             } else {
                 emptyList()
             }
-            val syncNeeded = mutableListOf<String>()
-            val syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE)
-
             repeat(count) {
                 val id = buffer.long
                 val nameLen = buffer.int
@@ -38,21 +35,13 @@ class BookmarksHandler : WearMessageHandler {
                 val isVisible = buffer.get().toInt() == 1
                 val bmkCount = buffer.int
                 val trkCount = buffer.int
-                val timestamp = if (buffer.remaining() >= 8) buffer.long else 0L
-                val lastSynced = syncPrefs.getLong(name, 0L)
-                
-                Log.d("BookmarksHandler", "DEBUG_BOOKMARKS_PIPELINE:   - Category: '$name' (ID: $id, Bookmarks: $bmkCount, Timestamp: $timestamp, LastSynced: $lastSynced)")
+                if (buffer.remaining() >= 8) buffer.long // reserved timestamp field, unused
+
+                Log.d("BookmarksHandler", "DEBUG_BOOKMARKS_PIPELINE:   - Category: '$name' (ID: $id, Bookmarks: $bmkCount)")
 
                 val localCat = localCategories.find { it.name.equals(name, ignoreCase = true) }
-                val needsSync = localCat == null || (timestamp > 0 && timestamp > lastSynced)
-                
                 val oldCat = currentState.bookmarkCategories.find { it.name == name }
-                val isSyncing = if (isInitialized && needsSync) {
-                    syncNeeded.add(name)
-                    true
-                } else {
-                    oldCat?.isSyncing ?: false
-                }
+                val isSyncing = oldCat?.isSyncing ?: false
 
                 // Show the larger of the phone's count and the watch's local count so neither
                 // direction is hidden: a bookmark added on the watch (phone still reports 0) stays
@@ -60,18 +49,14 @@ class BookmarksHandler : WearMessageHandler {
                 // imported on the watch still show (and drive the sync + detail "syncing" state).
                 val displayBmk = maxOf(bmkCount, localCat?.bookmarksCount ?: 0)
                 val displayTrk = maxOf(trkCount, localCat?.tracksCount ?: 0)
-                categories.add(BookmarkCategoryItem(id, name, isVisible, displayBmk, displayTrk, isSyncing, lastModified = timestamp))
+                categories.add(BookmarkCategoryItem(id, name, isVisible, displayBmk, displayTrk, isSyncing))
             }
-            
+
             if (categories != currentState.bookmarkCategories) {
                 Log.d("BookmarksHandler", "DEBUG_BOOKMARKS_PIPELINE: Updating state with ${categories.size} categories")
                 NavigationStateHolder.update(currentState.copy(
                     bookmarkCategories = categories
                 ))
-            }
-
-            if (syncNeeded.isNotEmpty() && !currentState.standaloneMode && currentState.isPhoneConnected) {
-                syncNeeded.forEach { app.organicmaps.wear.WearCommandService.syncCategory(context, it) }
             }
         }
     }
