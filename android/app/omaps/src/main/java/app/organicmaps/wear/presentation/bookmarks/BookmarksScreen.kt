@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
 import app.organicmaps.wear.BookmarkCategoryItem
 import app.organicmaps.wear.NavigationStateHolder
+import app.organicmaps.wear.UiEvent
 import app.organicmaps.wear.WearCommandService
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -386,6 +387,19 @@ fun BookmarkEditScreen(bookmark: app.organicmaps.sdk.bookmarks.data.BookmarkInfo
             )
         }
         
+        item {
+            Chip(
+                onClick = {
+                    app.organicmaps.sdk.Framework.nativeZoomToPoint(bookmark.lat, bookmark.lon, 17, true)
+                    NavigationStateHolder.emitEvent(UiEvent.OpenMap)
+                    NavigationStateHolder.update { it.copy(isMapUnlocked = false) }
+                },
+                label = { Text("Show on Watch") },
+                icon = { Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                colors = ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         item {
             Chip(
                 onClick = { WearCommandService.showBookmark(context, bookmark.bookmarkId) },

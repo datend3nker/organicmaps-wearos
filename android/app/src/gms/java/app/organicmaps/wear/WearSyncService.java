@@ -573,6 +573,10 @@ public class WearSyncService {
         syncBookmarksNow();
     }
 
+    public static void sendHandshakeToWatch(@NonNull Context context) {
+        getSyncLayer().sendHandshake(context);
+    }
+
     public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
         getSyncLayer().sendMapRequestToWatch(context, countryId);
     }

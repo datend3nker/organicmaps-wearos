@@ -7,7 +7,6 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import app.organicmaps.sdk.bookmarks.data.Bookmark;
 import app.organicmaps.sdk.bookmarks.data.BookmarkCategory;
 import app.organicmaps.sdk.bookmarks.data.BookmarkInfo;
 import app.organicmaps.sdk.bookmarks.data.BookmarkManager;
@@ -187,7 +186,8 @@ public final class BookmarkSyncCore
 
       if (existingId == -1)
       {
-        if (createBookmark(mgr, cat, name, lat, lon, color, type, desc))
+        boolean ok = createBookmark(mgr, cat, name, lat, lon, color, type, desc);
+        if (ok)
         {
           created++;
           editor.putLong(key, ts);
@@ -304,17 +304,8 @@ public final class BookmarkSyncCore
     {
       BookmarkCategory cat = findCategory(mgr, catName);
       long catId = (cat != null) ? cat.getId() : mgr.createCategory(catName);
-
-      // addNewBookmark drops the pin into the last-edited category; move it to the target and set
-      // all params (name, color, icon type, description).
-      Bookmark bmk = mgr.addNewBookmark(lat, lon);
-      if (bmk == null)
-        return false;
-      long bmkId = bmk.getBookmarkId();
-      if (bmk.getCategoryId() != catId)
-        bmk.setCategoryId(catId);
-      new BookmarkInfo(catId, bmkId).update(name, new Icon(color, type), desc);
-      return true;
+      long bmkId = mgr.createBookmarkInCategory(catId, name, lat, lon, color, type, desc);
+      return bmkId != -1;
     }
     catch (Exception e)
     {

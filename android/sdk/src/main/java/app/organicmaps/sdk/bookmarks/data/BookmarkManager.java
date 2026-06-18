@@ -329,6 +329,13 @@ public enum BookmarkManager {
     return nativeCreateCategory(name);
   }
 
+  /** Create a bookmark directly in a category by id (no place page required). Returns bookmark id or -1. */
+  public long createBookmarkInCategory(long catId, @NonNull String name,
+      double lat, double lon, int color, int iconType, @NonNull String desc)
+  {
+    return nativeCreateBookmarkInCategory(catId, name, lat, lon, color, iconType, desc);
+  }
+
   public void showBookmarkOnMap(long bmkId)
   {
     // Guard against an id that does not exist in this engine instance (e.g. a bookmark id sent from
@@ -626,6 +633,9 @@ public enum BookmarkManager {
 
   @Nullable
   private native Bookmark nativeAddBookmarkToLastEditedCategory(double lat, double lon);
+
+  private native long nativeCreateBookmarkInCategory(long catId, @NonNull String name,
+      double lat, double lon, int color, int iconType, @NonNull String desc);
 
   private static native void nativeLoadBookmarksFile(@NonNull String path, boolean isTemporaryFile);
 

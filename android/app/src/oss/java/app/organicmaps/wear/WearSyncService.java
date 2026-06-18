@@ -192,6 +192,10 @@ public class WearSyncService {
         getSyncLayer().removeMessageListener(listener);
     }
 
+    public static void sendHandshakeToWatch(@NonNull Context context) {
+        getSyncLayer().sendHandshake(context);
+    }
+
     public static void sendMapRequestToWatch(@NonNull Context context, @NonNull String countryId) {
         getSyncLayer().sendMapRequestToWatch(context, countryId);
     }

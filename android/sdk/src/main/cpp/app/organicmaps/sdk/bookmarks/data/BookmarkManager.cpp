@@ -323,6 +323,21 @@ JNIEXPORT jlong JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_
   return static_cast<jlong>(frm()->LastEditedBMCategory());
 }
 
+JNIEXPORT jlong JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeCreateBookmarkInCategory(
+    JNIEnv * env, jobject, jlong catId, jstring name, jdouble lat, jdouble lon,
+    jint color, jint iconType, jstring desc)
+{
+  BookmarkManager & bmMng = frm()->GetBookmarkManager();
+  kml::BookmarkData bmData;
+  kml::SetDefaultStr(bmData.m_customName, jni::ToNativeString(env, name));
+  kml::SetDefaultStr(bmData.m_description, jni::ToNativeString(env, desc));
+  bmData.m_color.m_predefinedColor = kml::kOrderedPredefinedColors[color];
+  bmData.m_icon = static_cast<kml::BookmarkIcon>(iconType);
+  bmData.m_point = mercator::FromLatLon(lat, lon);
+  auto const * bm = bmMng.GetEditSession().CreateBookmark(std::move(bmData), static_cast<kml::MarkGroupId>(catId));
+  return bm != nullptr ? static_cast<jlong>(bm->GetId()) : -1;
+}
+
 
 
 JNIEXPORT void JNICALL Java_app_organicmaps_sdk_bookmarks_data_BookmarkManager_nativeLoadBookmarksFile(JNIEnv * env, jclass,

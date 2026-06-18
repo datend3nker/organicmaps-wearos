@@ -90,6 +90,8 @@ public class WearMessageRouter {
         switch (path) {
             case PATH_HANDSHAKE:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handshake received");
+                // Echo a handshake back so the watch triggers requestSync() (pushes its bookmarks).
+                sMainHandler.post(() -> WearSyncService.sendHandshakeToWatch(context));
                 // Force a bookmark-metadata push once per connect so both sides reconcile to a full
                 // mirror. (Self-guards on framework readiness.)
                 sMainHandler.post(WearSyncService::syncBookmarksMetadataForced);

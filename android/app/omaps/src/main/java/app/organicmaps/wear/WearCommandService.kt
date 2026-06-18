@@ -338,6 +338,17 @@ object WearCommandService {
             current.copy(bookmarkCategories = updated)
         }
         getBackend(context).syncCategory(context, categoryName)
+        // Safety valve: reset isSyncing if KMZ file never arrives (e.g. phone has 0 bookmarks).
+        CoroutineScope(Dispatchers.Main).launch {
+            delay(30_000)
+            NavigationStateHolder.update { current ->
+                current.copy(bookmarkCategories = current.bookmarkCategories.map {
+                    if (it.name.equals(categoryName, ignoreCase = true) && it.isSyncing)
+                        it.copy(isSyncing = false)
+                    else it
+                })
+            }
+        }
     }
 
     fun renameBookmarkCategory(context: Context, oldName: String, newName: String) {
