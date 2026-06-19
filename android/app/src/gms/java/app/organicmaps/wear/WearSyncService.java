@@ -245,7 +245,11 @@ public class WearSyncService {
             app.organicmaps.sdk.bookmarks.data.BookmarkManager manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE;
             sIsApplyingRemoteUpdate = true;
             try {
-                for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : manager.getCategories()) {
+                // Snapshot the categories: applyToCategory deletes bookmarks, and the native delete
+                // fires a categories-changed notification that rebuilds the live getCategories() view —
+                // iterating it directly throws ConcurrentModificationException.
+                for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat :
+                        new java.util.ArrayList<>(manager.getCategories())) {
                     if (cat.getName().equalsIgnoreCase(parsed.categoryName))
                         app.organicmaps.sdk.sync.BookmarkTombstoneStore.applyToCategory(context, manager, cat);
                 }
@@ -271,7 +275,9 @@ public class WearSyncService {
                     sIsApplyingRemoteUpdate = true;
                     try {
                         int removed = 0;
-                        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : manager.getCategories())
+                        // Snapshot — applyToCategory deletes, mutating the live getCategories() view.
+                        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat :
+                                new java.util.ArrayList<>(manager.getCategories()))
                             removed += app.organicmaps.sdk.sync.BookmarkTombstoneStore.applyToCategory(context, manager, cat);
                         if (removed > 0)
                             Log.d("WearSync", "Purged " + removed + " resurrected bookmark(s) after merge");
@@ -475,6 +481,42 @@ public class WearSyncService {
         return app.organicmaps.MwmApplication.sInstance.getOrganicMaps().arePlatformAndCoreInitialized();
     }
 
+    /**
+     * Push the phone's current set of fully-downloaded map ids to the watch. Called both on the
+     * watch's explicit request and (via {@link #sStorageCallback}) whenever a download completes, so
+     * the watch's "on phone" state and its streaming retry no longer wait for the next poll.
+     */
+    public static void pushDownloadedMaps(@Nullable Context context) {
+        if (context == null || !isFrameworkReady()) return;
+        java.util.List<app.organicmaps.sdk.downloader.CountryItem> downloaded = new java.util.ArrayList<>();
+        app.organicmaps.sdk.downloader.MapManager.nativeListItems(null, 0, 0, false, true, downloaded);
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        for (app.organicmaps.sdk.downloader.CountryItem item : downloaded)
+            if (item.present) ids.add(item.id);
+        getSyncLayer().sendDownloadedMaps(context.getApplicationContext(), ids);
+    }
+
+    /**
+     * Notifies the watch the moment a map finishes downloading on the phone. Without this the phone
+     * only sent its downloaded-maps list on request, so a map downloaded after the watch gave up
+     * (and latched missingMapId / a 60s metadata-failure backoff) never reached the watch — the map
+     * view stayed blank until a slow retry.
+     */
+    private static final app.organicmaps.sdk.downloader.MapManager.StorageCallback sStorageCallback =
+        new app.organicmaps.sdk.downloader.MapManager.StorageCallback() {
+            @Override
+            public void onStatusChanged(java.util.List<app.organicmaps.sdk.downloader.MapManager.StorageCallbackData> data) {
+                for (app.organicmaps.sdk.downloader.MapManager.StorageCallbackData d : data) {
+                    if (d.newStatus == app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
+                        pushDownloadedMaps(app.organicmaps.MwmApplication.sInstance);
+                        return;
+                    }
+                }
+            }
+            @Override
+            public void onProgress(String countryId, long localSize, long remoteSize) {}
+        };
+
     public static synchronized void initSyncLayer(@Nullable Context context) {
         String backend = "GMS";
         if (context != null) {
@@ -500,6 +542,7 @@ public class WearSyncService {
             app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addLoadingListener(sBookmarkLoadingListener);
             androidx.preference.PreferenceManager.getDefaultSharedPreferences(context).registerOnSharedPreferenceChangeListener(sPrefsListener);
             app.organicmaps.MwmApplication.sInstance.getOrganicMaps().getLocationHelper().addListener(sLocationListener);
+            app.organicmaps.sdk.downloader.MapManager.nativeSubscribe(sStorageCallback);
             sListenersRegistered = true;
         }
 

@@ -72,18 +72,25 @@ class WearDataListenerService : WearableListenerService() {
         checkPhoneConnection()
     }
 
-    private var lastCheckTime = 0L
-    // True once we've prompted a reachable phone node for an initial sync; reset when unreachable.
-    // Decouples "node reachable" prompting from the actual app-connected state.
-    @Volatile private var mReachablePrompted = false
+    // These guards MUST be process-scoped, not per-instance: GMS tears down and recreates this
+    // WearableListenerService on essentially every delivered message (~every 2s here), so per-instance
+    // state reset each recreation, defeating both the 5s throttle and the once-per-reachability guard
+    // and re-firing the full initial-sync burst every cycle (the "sync storm"). Companion state
+    // survives recreation, so the burst fires once per genuine reachability transition.
+    companion object {
+        @Volatile private var sLastCheckTime = 0L
+        // True once we've prompted a reachable phone node for an initial sync; reset when unreachable.
+        // Decouples "node reachable" prompting from the actual app-connected state.
+        @Volatile private var sReachablePrompted = false
+    }
 
     private fun checkPhoneConnection() {
         val now = System.currentTimeMillis()
-        if (now - lastCheckTime < 5000) {
+        if (now - sLastCheckTime < 5000) {
             Log.d(TAG, "DEBUG_GMS: checkPhoneConnection skipped (throttled)")
             return
         }
-        lastCheckTime = now
+        sLastCheckTime = now
         Log.d(TAG, "DEBUG_GMS: checkPhoneConnection checking for organic_maps_phone_app")
         
         // Diagnostic
@@ -124,8 +131,8 @@ class WearDataListenerService : WearableListenerService() {
                 // "GMS shows connected while phone is on Bluetooth" bug). The app connection is set by
                 // WearMessageRouter only when a real app message/pong arrives on the selected backend.
                 // Prompt the phone once per reachability transition to elicit such a response.
-                if (!mReachablePrompted) {
-                    mReachablePrompted = true
+                if (!sReachablePrompted) {
+                    sReachablePrompted = true
                     Log.i(TAG, "DEBUG_GMS_PIPELINE: Phone node reachable over GMS, requesting initial sync")
                     WearCommandService.syncPreferences()
                     WearCommandService.requestPreferences(this@WearDataListenerService)
@@ -139,7 +146,7 @@ class WearDataListenerService : WearableListenerService() {
                     }
                 }
             } else {
-                mReachablePrompted = false
+                sReachablePrompted = false
                 Log.d(TAG, "DEBUG_GMS_PIPELINE: No phone node reachable (capability or physical)")
             }
         }
@@ -248,6 +255,8 @@ class WearDataListenerService : WearableListenerService() {
                     WearProtocol.PATH_MAP_PHONE_DOWNLOADED -> {
                         val ids = dataMap.getStringArrayList("mapIds")?.toSet() ?: emptySet()
                         NavigationStateHolder.update { it.copy(phoneDownloadedMaps = ids) }
+                        // Clear streaming back-off / missing latch for a freshly-downloaded map.
+                        VirtualMwmManager.onPhoneMapsAvailable(ids)
                     }
                     WearProtocol.PATH_MAP_DOWNLOAD_PROGRESS -> {
                         val countryId = dataMap.getString("countryId") ?: continue

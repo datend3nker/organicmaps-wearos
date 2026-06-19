@@ -552,7 +552,23 @@ object VirtualMwmManager {
     fun shouldRequestMetadata(mwmNameWithExt: String): Boolean {
         val mwmName = MapIdUtils.normalize(mwmNameWithExt)!!
         val lastFailure = metadataFailures[mwmName] ?: return true
-        return System.currentTimeMillis() - lastFailure > 60000 
+        return System.currentTimeMillis() - lastFailure > 60000
+    }
+
+    /**
+     * The phone just reported the set of maps it now has downloaded. Drop the streaming back-off for
+     * any of them and un-latch missingMapId if it's now present, so the periodic mount loop re-requests
+     * metadata on its next tick (≤5s) instead of waiting out the 60s failure window. Without this a map
+     * downloaded on the phone after the watch gave up would never stream until the back-off expired.
+     */
+    fun onPhoneMapsAvailable(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        val normalized = ids.mapNotNull { MapIdUtils.normalize(it) }.toSet()
+        for (id in normalized) metadataFailures.remove(id)
+        val missing = NavigationStateHolder.state.value.missingMapId
+        if (missing != null && MapIdUtils.normalize(missing) in normalized) {
+            NavigationStateHolder.update { it.copy(missingMapId = null) }
+        }
     }
 
     /**

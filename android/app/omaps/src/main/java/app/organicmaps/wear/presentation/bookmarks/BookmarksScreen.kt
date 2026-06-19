@@ -85,7 +85,7 @@ fun BookmarksScreen(isVisible: Boolean) {
                 onClick = {
                     app.organicmaps.wear.WatchBookmarkSyncManager.requestSync(context)
                 },
-                label = { Text(if (isAnySyncing) "Syncing..." else "Sync with Phone") },
+                label = { Text(if (isAnySyncing) "Syncing..." else "Push to Phone") },
                 icon = {
                     Icon(
                         imageVector = Icons.Default.Sync,
@@ -215,7 +215,12 @@ fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
             syncRequested = true
             val navState = NavigationStateHolder.state.value
             if (!navState.standaloneMode && navState.isPhoneConnected) {
-                WearCommandService.syncCategory(context, category.name)
+                // Pull via the per-bookmark upsert path (phone answers PATH_BOOKMARKS_REQUEST with
+                // syncBookmarksNow). The old syncCategory → KMZ export → loadBookmarksFile import
+                // uniquified colliding category names ("My Places" → "My Places1" …) and was the
+                // source of the duplicate-category explosion. Upsert creates into the found-by-name
+                // category, so no uniquify, no cascade.
+                WearCommandService.requestBookmarks(context)
             }
         }
     }

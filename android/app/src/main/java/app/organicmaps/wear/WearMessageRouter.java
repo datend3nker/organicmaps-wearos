@@ -328,25 +328,13 @@ public class WearMessageRouter {
                 });
                 break;
             case PATH_BOOKMARK_SYNC_REQUEST:
-                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_SYNC_REQUEST");
-                String syncCatName = new String(finalPayload, StandardCharsets.UTF_8);
-                sMainHandler.post(() -> {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested sync for cat: " + syncCatName);
-                    ensureFrameworkInitialized(context, () -> {
-                        for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
-                            if (cat.getName().equals(syncCatName)) {
-                                // Register the id so the sharing listener pushes the export to the
-                                // watch. setSilentSyncInProgress(true) is a no-op under the ID-based
-                                // logic, which left this path silent=false → file dropped → watch
-                                // re-requests forever (prepare/save storm).
-                                WearSyncService.markSilentSync(cat.getId());
-                                app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.prepareCategoriesForSharing(
-                                        new long[]{cat.getId()}, app.organicmaps.sdk.bookmarks.data.KmlFileType.Text);
-                                return;
-                            }
-                        }
-                    });
-                });
+                // Legacy KMZ per-category pull. The KMZ export → watch loadBookmarksFile import
+                // uniquified colliding category names ("My Places" → "My Places1" …) and was the
+                // root cause of the duplicate-category explosion. Superseded by the per-bookmark
+                // upsert path: answer with syncBookmarksNow (whole pool, found-by-name, no uniquify).
+                // Kept as an alias so older watch builds that still send this path keep working.
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: PATH_BOOKMARK_SYNC_REQUEST (legacy) → upsert push");
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, WearSyncService::syncBookmarksNow));
                 break;
             case PATH_BOOKMARK_RENAME: {
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_RENAME");
@@ -549,7 +537,10 @@ public class WearMessageRouter {
                 // Legacy category-grained KMZ reconcile — replaced by per-bookmark upsert sync. Ignore.
                 break;
             case PATH_BOOKMARK_FILE:
-                sMainHandler.post(() -> WearSyncService.handleIncomingBookmarkFile(context, finalPayload));
+                // Legacy KMZ import: loadBookmarksFile uniquified colliding category names
+                // ("My Places" → "My Places1" …) → duplicate-category explosion. Disabled.
+                // Bookmarks sync per-bookmark via PATH_BOOKMARK_UPSERT (no file import).
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: PATH_BOOKMARK_FILE ignored (legacy KMZ import disabled)");
                 break;
             case WearProtocol.PATH_BOOKMARK_TOMBSTONE:
                 WearSyncService.applyIncomingTombstone(context, finalPayload);

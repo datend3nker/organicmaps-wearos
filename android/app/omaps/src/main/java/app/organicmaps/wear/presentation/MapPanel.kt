@@ -158,14 +158,21 @@ fun MapPanel(
     // only fires on viewport changes, so a stationary watch (or a lost mount/metadata
     // message) would otherwise never mount the map under the viewport.
     LaunchedEffect(isVisible, hApp.isFullyInitialized, connectionStatus) {
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: mount-loop gate: isVisible=$isVisible fullyInit=${hApp.isFullyInitialized} " +
+                "phoneConnected=${connectionStatus.isPhoneConnected} watchLocal=${connectionStatus.watchLocalMode}")
         if (!isVisible || !hApp.isFullyInitialized || !connectionStatus.isPhoneConnected || connectionStatus.watchLocalMode) {
+            Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: mount-loop NOT started (gate failed)")
             return@LaunchedEffect
         }
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: mount-loop started")
         while (true) {
             val center = Framework.nativeGetScreenRectCenter()
             if (center != null && center.size == 2) {
                 val countryId = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(center[0], center[1]) }
+                Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: periodic tick center=[${center[0]},${center[1]}] country=$countryId")
                 maybeRequestMount(context, countryId, "Periodic")
+            } else {
+                Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: periodic tick - no screen center (center=$center)")
             }
             // Re-evaluate map availability: a virtual mount can register a map at any
             // time, and the one-shot check above would leave the overlay stale.
@@ -942,5 +949,10 @@ private fun maybeRequestMount(context: Context, countryId: String?, trigger: Str
     ) {
         Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger MWM mount request: $countryId")
         WearCommandService.requestMwmMetadata(context, countryId)
+    } else if (countryId.isNullOrEmpty()) {
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger skip — nativeFindCountry returned null/empty")
+    } else {
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger skip $countryId — status=${MapManager.nativeGetStatus(countryId)} " +
+                "mounted=${VirtualMwmManager.isMounted(countryId)} shouldReq=${VirtualMwmManager.shouldRequestMetadata(countryId)}")
     }
 }

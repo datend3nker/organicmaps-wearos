@@ -21,5 +21,8 @@ class DownloadedMapsHandler : WearMessageHandler {
             maps.add(String(b, StandardCharsets.UTF_8))
         }
         NavigationStateHolder.update { it.copy(phoneDownloadedMaps = maps) }
+        // A map may have just finished downloading on the phone — clear any streaming back-off / missing
+        // latch so the watch re-requests it immediately instead of waiting out the 60s window.
+        app.organicmaps.wear.VirtualMwmManager.onPhoneMapsAvailable(maps)
     }
 }

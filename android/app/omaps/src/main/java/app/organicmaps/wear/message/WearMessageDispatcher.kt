@@ -3,7 +3,6 @@ package app.organicmaps.wear.message
 import android.content.Context
 import android.util.Log
 import app.organicmaps.sdk.sync.WearProtocol
-import app.organicmaps.wear.SyncStateManager
 import java.nio.ByteBuffer
 
 class WearMessageDispatcher {
@@ -24,7 +23,9 @@ class WearMessageDispatcher {
         WearProtocol.TYPE_BOOKMARKS to BookmarksHandler(),
         WearProtocol.TYPE_COMMAND to CommandHandler(),
         WearProtocol.TYPE_MAP_CHUNK to MapChunkHandler(),
-        WearProtocol.TYPE_BOOKMARK_FILE to BookmarkFileHandler(SyncStateManager.bookmarkOutputStreams),
+        // TYPE_BOOKMARK_FILE (legacy KMZ import) intentionally NOT registered: loadBookmarksFile
+        // uniquified colliding category names ("My Places" → "My Places1" …) → duplicate-category
+        // explosion. Bookmarks now sync per-bookmark via TYPE_BOOKMARK_UPSERT (no file import).
         WearProtocol.TYPE_MAP_PHONE_DOWNLOADED to DownloadedMapsHandler(),
         WearProtocol.TYPE_BOOKMARK_RENAME to BookmarkRenameHandler(),
         WearProtocol.TYPE_BOOKMARK_DELETE to BookmarkDeleteHandler(),

@@ -303,18 +303,21 @@ object WearCommandService {
     }
 
     fun updateBookmark(context: Context, bmkId: Long, name: String, color: Int, categoryId: Long = -1) {
-        // Apply locally first so the edit sticks even when the phone is unreachable, then forward to
-        // the phone when connected so it propagates there too.
+        // Apply locally first so the edit sticks even when the phone is unreachable.
         val info = BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
-        info?.update(name, null, "")
+        // Preserve the existing description — update("", …) would wipe it on a rename/recolor.
+        info?.update(name, app.organicmaps.sdk.bookmarks.data.Icon(color, info.icon.type), info.description)
         if (categoryId != -1L && info != null && info.categoryId != categoryId) {
             info.changeCategory(categoryId)
         }
+        // Propagate through the content-addressed channel (tombstone the old identity + upsert the new
+        // one), NOT the legacy PATH_BOOKMARK_UPDATE: that carried the watch's local bookmark id, which
+        // is meaningless on the phone (ids differ per engine), so the phone renamed nothing and pushed
+        // the stale old-name bookmark back — the rename appeared to revert. The name is part of the
+        // sync identity, so a rename = delete(old) + add(new), which onLocalBookmarksChanged +
+        // requestSync express correctly for both connected and standalone.
         WatchBookmarkSyncManager.onLocalBookmarksChanged(context, true)
-        if (NavigationStateHolder.state.value.isEffectivelyStandalone)
-            WatchBookmarkSyncManager.requestSync(context)
-        else
-            getBackend(context).updateBookmarkOnPhone(context, bmkId, name, color, categoryId)
+        WatchBookmarkSyncManager.requestSync(context)
     }
 
     fun createBookmarkCategory(context: Context, name: String) {

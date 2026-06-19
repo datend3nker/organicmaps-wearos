@@ -178,7 +178,8 @@ object WatchBookmarkSyncManager {
             isApplyingRemoteUpdate = true
             try {
                 var removed = 0
-                for (cat in manager.categories)
+                // Snapshot — applyToCategory deletes, mutating the live categories view (CME otherwise).
+                for (cat in manager.categories.toList())
                     removed += BookmarkTombstoneStore.applyToCategory(context, manager, cat)
                 if (removed > 0) Log.d(TAG, "Purged $removed resurrected bookmark(s) after merge")
             } finally {
