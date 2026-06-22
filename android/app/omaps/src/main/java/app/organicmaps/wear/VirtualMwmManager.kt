@@ -569,6 +569,14 @@ object VirtualMwmManager {
         if (missing != null && MapIdUtils.normalize(missing) in normalized) {
             NavigationStateHolder.update { it.copy(missingMapId = null) }
         }
+        // Unlike onBytesReceived (which reloads once ITS streamed map's footer arrives), this fires on
+        // the phone's download-list broadcast alone, with no bytes streamed yet — so a still-blank
+        // World map on the watch leaves nativeFindCountry() returning null forever (it needs World's
+        // country polygons to resolve a viewport coordinate to a country id), and the periodic mount
+        // loop in MapPanel can never even issue a metadata request. Reload now so the engine re-scans
+        // and the World map — if the phone just got it for the first time — becomes visible without
+        // requiring an app restart.
+        ReloadWorldMapsDebouncer.reload()
     }
 
     /**

@@ -224,6 +224,27 @@ public final class BookmarkTombstoneStore
     return ids;
   }
 
+  /** Move tombstones recorded under {@code oldCategoryName} to {@code newCategoryName}'s identity key. */
+  public static void migrateCategoryRename(@NonNull Context c, @NonNull String oldCategoryName, @NonNull String newCategoryName)
+  {
+    String oldPrefix = oldCategoryName.toLowerCase() + "|";
+    SharedPreferences p = prefs(c);
+    SharedPreferences.Editor e = null;
+    for (Map.Entry<String, ?> entry : p.getAll().entrySet())
+    {
+      String key = entry.getKey();
+      if (!key.startsWith(oldPrefix) || !(entry.getValue() instanceof Long))
+        continue;
+      if (e == null)
+        e = p.edit();
+      String newKey = newCategoryName.toLowerCase() + "|" + key.substring(oldPrefix.length());
+      e.remove(key);
+      e.putLong(newKey, (Long) entry.getValue());
+    }
+    if (e != null)
+      e.apply();
+  }
+
   /** Build a wire payload directly from a stored identity key (cat|name|latQ|lonQ) + timestamp. */
   @Nullable
   public static byte[] encodeFromKey(@NonNull String key, long ts)

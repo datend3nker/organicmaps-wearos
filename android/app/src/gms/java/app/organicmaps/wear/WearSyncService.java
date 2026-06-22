@@ -684,6 +684,9 @@ public class WearSyncService {
             sIsApplyingRemoteUpdate = false;
         }
 
+        app.organicmaps.sdk.sync.BookmarkSyncCore.migrateCategoryRename(context,
+                app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE, oldName, newName);
+
         getSyncLayer().renameBookmarkCategory(context, oldName, newName);
         
         android.content.SharedPreferences syncPrefs = context.getSharedPreferences("bookmark_sync_timestamps", Context.MODE_PRIVATE);

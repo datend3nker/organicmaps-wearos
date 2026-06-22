@@ -6,6 +6,7 @@
 #include "base/checked_cast.hpp"
 #include "base/dfa_helpers.hpp"
 #include "base/levenshtein_dfa.hpp"
+#include "base/logging.hpp"
 #include "base/stl_helpers.hpp"
 #include "base/string_utils.hpp"
 
@@ -105,7 +106,14 @@ void Processor::EnableIndexingOfBookmarkGroup(GroupId const & groupId, bool enab
 
 void Processor::Add(Id const & id, Doc const & doc)
 {
-  ASSERT_EQUAL(m_docs.count(id), 0, ());
+  // An id can legitimately arrive here twice: BookmarkManager dispatches Created/Deleted
+  // notifications to listeners (this engine's queue included) independently of the order
+  // a *different* code path (e.g. a category move implemented as delete+recreate) issues
+  // them in, and the id allocator can recycle a just-deleted id before its Deleted
+  // notification is processed on this thread. Overwrite rather than assert/crash: the
+  // previous entry for this id is stale regardless of whether its Erase has run yet.
+  if (m_docs.count(id) != 0)
+    LOG(LWARNING, ("Bookmark search index Add() saw an id already present, overwriting:", id));
 
   DocVec::Builder builder;
   doc.ForEachNameToken([&](int8_t /* lang */, strings::UniString const & token) { builder.Add(token); });

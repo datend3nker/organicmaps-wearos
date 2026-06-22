@@ -202,7 +202,14 @@ object WearMapDownloader {
             val dataVersion = Framework.nativeGetDataVersion()
             val versionedPath = File(storagePath, dataVersion.toString())
             if (!versionedPath.exists()) versionedPath.mkdirs()
-            
+
+            // A prior phone-streamed session may have left a sparse virtual .mwm at this exact path
+            // (same filename as a real download — see VirtualMwmManager.mount). FileOutputStream below
+            // would silently truncate it, but its .bits sidecar would survive and get re-mounted as a
+            // "complete" map full of zeroed holes on next launch (the issue #7 corruption). Tear the
+            // virtual mount down cleanly first so the real download starts from a clean file.
+            app.organicmaps.wear.VirtualMwmManager.deleteVirtual(context, "$mapId.mwm")
+
             val file = File(versionedPath, "$mapId.mwm")
             connection.getInputStream().use { input ->
                 FileOutputStream(file).use { output ->

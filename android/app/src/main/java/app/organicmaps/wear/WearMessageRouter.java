@@ -357,6 +357,8 @@ public class WearMessageRouter {
                         for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getCategories()) {
                             if (cat.getName().equals(oldName)) {
                                 cat.setName(newName);
+                                app.organicmaps.sdk.sync.BookmarkSyncCore.migrateCategoryRename(context,
+                                        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE, oldName, newName);
                                 return;
                             }
                         }

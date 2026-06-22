@@ -76,6 +76,36 @@ object WatchBookmarkSyncManager {
         }
     }
 
+    /**
+     * Move this manager's own per-category bookkeeping (identity snapshot + count/edit-ts state) from
+     * the old category name's keys to the new one's, on rename. Without this the old keys are simply
+     * abandoned (no functional bug on their own, since every lookup here is by live category name —
+     * see [BookmarkSyncCore.migrateCategoryRename] for the related LWW-timestamp fix that this pairs
+     * with), but leaving them stale invites a spurious add/delete diff if a category is ever renamed
+     * back to a name still holding an orphaned snapshot.
+     */
+    fun migrateCategoryRenameState(context: Context, oldName: String, newName: String) {
+        val state = getPrefs(context)
+        state.edit {
+            for (suffix in listOf("last_count_b_", "last_count_t_", "last_local_edit_")) {
+                val oldKey = "$suffix$oldName"
+                if (state.contains(oldKey)) {
+                    if (suffix == "last_local_edit_") putLong("$suffix$newName", state.getLong(oldKey, 0))
+                    else putInt("$suffix$newName", state.getInt(oldKey, -1))
+                    remove(oldKey)
+                }
+            }
+        }
+        val snap = context.getSharedPreferences(SNAP_PREFS, Context.MODE_PRIVATE)
+        val oldSnapKey = "snap_$oldName"
+        snap.getStringSet(oldSnapKey, null)?.let { ids ->
+            snap.edit {
+                putStringSet("snap_$newName", ids)
+                remove(oldSnapKey)
+            }
+        }
+    }
+
     fun requestSync(context: Context) {
         pushUpsertBatch(context)
         flushTombstones(context)

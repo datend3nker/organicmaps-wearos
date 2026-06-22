@@ -34,10 +34,14 @@ class BookmarkRenameHandler : WearMessageHandler {
             app.organicmaps.wear.WatchBookmarkSyncManager.isApplyingRemoteUpdate = true
             try {
                 category?.setName(newName)
+                if (category != null) {
+                    app.organicmaps.sdk.sync.BookmarkSyncCore.migrateCategoryRename(context, manager, oldName, newName)
+                    app.organicmaps.wear.WatchBookmarkSyncManager.migrateCategoryRenameState(context, oldName, newName)
+                }
             } finally {
                 app.organicmaps.wear.WatchBookmarkSyncManager.isApplyingRemoteUpdate = false
             }
-            
+
             NavigationStateHolder.update { current ->
                 val updated = current.bookmarkCategories.map {
                     if (it.name.equals(oldName, ignoreCase = true)) it.copy(name = newName) else it

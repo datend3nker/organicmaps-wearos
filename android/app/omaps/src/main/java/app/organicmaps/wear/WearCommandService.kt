@@ -358,7 +358,12 @@ object WearCommandService {
         // Rename the watch's own category first (visible immediately), remap the UI entry, then
         // forward to the phone when connected.
         val manager = BookmarkManager.INSTANCE
-        manager.getCategories().find { it.name.equals(oldName, ignoreCase = true) }?.name = newName
+        val renamed = manager.getCategories().find { it.name.equals(oldName, ignoreCase = true) }
+        renamed?.name = newName
+        if (renamed != null) {
+            app.organicmaps.sdk.sync.BookmarkSyncCore.migrateCategoryRename(context, manager, oldName, newName)
+            WatchBookmarkSyncManager.migrateCategoryRenameState(context, oldName, newName)
+        }
         NavigationStateHolder.update { current ->
             current.copy(bookmarkCategories = current.bookmarkCategories.map {
                 if (it.name.equals(oldName, ignoreCase = true)) it.copy(name = newName) else it

@@ -147,7 +147,11 @@ class WearApplication : Application() {
 
         // Initialize Bookmark Sync
         BookmarkManager.INSTANCE.addCategoriesUpdatesListener {
-            WatchBookmarkSyncManager.onLocalBookmarksChanged(this)
+            // Native fires this listener via a posted Handler message, not synchronously inside the
+            // setName()/rename call — so by the time it runs, a remote-apply guard set and cleared
+            // around that single call may already be back to false. Re-check at fire time, not via
+            // the (possibly stale) value captured when the lambda was registered.
+            WatchBookmarkSyncManager.onLocalBookmarksChanged(this, isUserAction = !WatchBookmarkSyncManager.isApplyingRemoteUpdate)
         }
         // After every bookmark file merge, purge any bookmark the union-merge resurrected but that is
         // tombstoned locally (a merge never removes), so deletions stay deleted across syncs.

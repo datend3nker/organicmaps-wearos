@@ -186,12 +186,47 @@ public final class BookmarkSyncCore
 
       if (existingId == -1)
       {
-        boolean ok = createBookmark(mgr, cat, name, lat, lon, color, type, desc);
-        if (ok)
+        // Not found under the target category — but a category change is still the *same* bookmark
+        // moving, not a delete+recreate. Re-creating it natively (as a brand-new id) right after the
+        // peer's delete of the old identity races the async search-index thread: OnBookmarksCreated
+        // for the recycled id can land before OnBookmarksDeleted finishes erasing the old entry for
+        // that id, tripping search::bookmarks::Processor::Add's ASSERT_EQUAL(m_docs.count(id), 0) and
+        // crashing. Detect the move and relocate the existing native bookmark instead.
+        long movedId = findBookmarkByNamePos(mgr, name, lat, lon);
+        if (movedId != -1)
         {
-          created++;
+          BookmarkCategory fromCat = findCategoryById(mgr, mgr.getBookmarkInfo(movedId).getCategoryId());
+          try
+          {
+            BookmarkCategory toCat = findCategory(mgr, cat);
+            long toCatId = (toCat != null) ? toCat.getId() : mgr.createCategory(cat);
+            BookmarkInfo info = mgr.getBookmarkInfo(movedId);
+            info.changeCategory(toCatId);
+            info.update(name, new Icon(color, type), desc);
+            updated++;
+          }
+          catch (Exception e)
+          {
+            Log.w(TAG, "move (category change) failed for '" + name + "': " + e.getMessage(), e);
+          }
+          if (fromCat != null)
+          {
+            String oldKey = BookmarkTombstoneStore.identityKey(fromCat.getName(), name, lat, lon);
+            editor.remove(oldKey);
+            editor.remove(HASH_PREFIX + oldKey);
+          }
           editor.putLong(key, ts);
           editor.putInt(HASH_PREFIX + key, contentHash(name, color, type, desc));
+        }
+        else
+        {
+          boolean ok = createBookmark(mgr, cat, name, lat, lon, color, type, desc);
+          if (ok)
+          {
+            created++;
+            editor.putLong(key, ts);
+            editor.putInt(HASH_PREFIX + key, contentHash(name, color, type, desc));
+          }
         }
       }
       else if (ts > localTs)
@@ -250,6 +285,50 @@ public final class BookmarkSyncCore
     editor.apply();
   }
 
+  /**
+   * Move every per-identity LWW entry of a renamed category from its old identity key to the new
+   * one, bumping the timestamp to {@code now} so the rename wins the next LWW reconcile on the peer.
+   * Without this, the old key is orphaned (never looked up again, since {@link #buildUpsertBatch}
+   * always derives keys from the live category name) and the new key starts unstamped, so whichever
+   * side's next push or handshake happens to land first decides the timestamp race arbitrarily —
+   * which is what made a rename on one device look "reverted" by the other. Call right after the
+   * category object itself is renamed, on both the initiating side and the side applying it remotely.
+   */
+  public static void migrateCategoryRename(@NonNull Context c, @NonNull BookmarkManager mgr,
+                                           @NonNull String oldName, @NonNull String newName)
+  {
+    BookmarkCategory cat = findCategory(mgr, newName);
+    if (cat == null)
+      return;
+    SharedPreferences prefs = lww(c);
+    SharedPreferences.Editor editor = prefs.edit();
+    long now = System.currentTimeMillis();
+
+    int count = cat.getBookmarksCount();
+    for (int i = 0; i < count; i++)
+    {
+      long id = cat.getBookmarkIdByPosition(i);
+      BookmarkInfo info = mgr.getBookmarkInfo(id);
+      if (info == null)
+        continue;
+      String name = info.getName();
+      double lat = info.getLat();
+      double lon = info.getLon();
+      String oldKey = BookmarkTombstoneStore.identityKey(oldName, name, lat, lon);
+      String newKey = BookmarkTombstoneStore.identityKey(newName, name, lat, lon);
+
+      int hash = prefs.getInt(HASH_PREFIX + oldKey, Integer.MIN_VALUE);
+      editor.remove(oldKey);
+      editor.remove(HASH_PREFIX + oldKey);
+      editor.putLong(newKey, now);
+      if (hash != Integer.MIN_VALUE)
+        editor.putInt(HASH_PREFIX + newKey, hash);
+    }
+    editor.apply();
+
+    BookmarkTombstoneStore.migrateCategoryRename(c, oldName, newName);
+  }
+
   // ---- helpers -----------------------------------------------------------
 
   @Nullable
@@ -272,6 +351,34 @@ public final class BookmarkSyncCore
       if (cat.getName().equalsIgnoreCase(name))
         return cat;
     return null;
+  }
+
+  @Nullable
+  private static BookmarkCategory findCategoryById(@NonNull BookmarkManager mgr, long id)
+  {
+    for (BookmarkCategory cat : mgr.getCategories())
+      if (cat.getId() == id)
+        return cat;
+    return null;
+  }
+
+  /** Find a bookmark by name+position across every category (ignores category), or -1. */
+  private static long findBookmarkByNamePos(@NonNull BookmarkManager mgr, @NonNull String name, double lat, double lon)
+  {
+    for (BookmarkCategory cat : mgr.getCategories())
+    {
+      int count = cat.getBookmarksCount();
+      for (int i = 0; i < count; i++)
+      {
+        long id = cat.getBookmarkIdByPosition(i);
+        BookmarkInfo info = mgr.getBookmarkInfo(id);
+        if (info != null && info.getName().equals(name)
+            && BookmarkTombstoneStore.quant(info.getLat()) == BookmarkTombstoneStore.quant(lat)
+            && BookmarkTombstoneStore.quant(info.getLon()) == BookmarkTombstoneStore.quant(lon))
+          return id;
+      }
+    }
+    return -1;
   }
 
   /** Find a bookmark by content identity within its named category, or -1. */

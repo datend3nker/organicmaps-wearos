@@ -131,7 +131,15 @@ class WearDataListenerService : WearableListenerService() {
                 // "GMS shows connected while phone is on Bluetooth" bug). The app connection is set by
                 // WearMessageRouter only when a real app message/pong arrives on the selected backend.
                 // Prompt the phone once per reachability transition to elicit such a response.
-                if (!sReachablePrompted) {
+                // Re-prompt as long as we're not actually connected yet, not just once per reachability
+                // transition. A one-shot latch here means: if the phone app is still cold-starting and
+                // doesn't answer this very first round of requests, isPhoneConnected never flips true,
+                // and — since the latch is already spent — checkPhoneConnection's later 5s retries (the
+                // ones below this block) see "nodes with capability" forever but never re-issue the
+                // request that would actually establish the connection. That's why a restart "fixes" it:
+                // the latch resets to false at process start and the phone is warm by then. Gate on
+                // actual connection state instead, so this keeps retrying every ~5s until it lands.
+                if (!sReachablePrompted || !NavigationStateHolder.state.value.isPhoneConnected) {
                     sReachablePrompted = true
                     Log.i(TAG, "DEBUG_GMS_PIPELINE: Phone node reachable over GMS, requesting initial sync")
                     WearCommandService.syncPreferences()
