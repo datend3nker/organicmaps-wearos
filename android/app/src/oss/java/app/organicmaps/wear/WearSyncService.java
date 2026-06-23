@@ -145,6 +145,31 @@ public class WearSyncService {
                app.organicmaps.MwmApplication.sInstance.getOrganicMaps().arePlatformAndCoreInitialized();
     }
 
+    public static void pushDownloadedMaps(@Nullable Context context) {
+        if (context == null || !isFrameworkReady()) return;
+        java.util.List<app.organicmaps.sdk.downloader.CountryItem> downloaded = new java.util.ArrayList<>();
+        app.organicmaps.sdk.downloader.MapManager.nativeListItems(null, 0, 0, false, true, downloaded);
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        for (app.organicmaps.sdk.downloader.CountryItem item : downloaded)
+            if (item.present) ids.add(item.id);
+        getSyncLayer().sendDownloadedMaps(context.getApplicationContext(), ids);
+    }
+
+    private static final app.organicmaps.sdk.downloader.MapManager.StorageCallback sStorageCallback =
+        new app.organicmaps.sdk.downloader.MapManager.StorageCallback() {
+            @Override
+            public void onStatusChanged(java.util.List<app.organicmaps.sdk.downloader.MapManager.StorageCallbackData> data) {
+                for (app.organicmaps.sdk.downloader.MapManager.StorageCallbackData d : data) {
+                    if (d.newStatus == app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE) {
+                        pushDownloadedMaps(app.organicmaps.MwmApplication.sInstance);
+                        return;
+                    }
+                }
+            }
+            @Override
+            public void onProgress(String countryId, long localSize, long remoteSize) {}
+        };
+
     public static synchronized void initSyncLayer(@Nullable Context context) {
         if (sSyncLayer != null) {
             sSyncLayer.stop();
@@ -158,6 +183,7 @@ public class WearSyncService {
             app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addSharingListener(sSharingListener);
             androidx.preference.PreferenceManager.getDefaultSharedPreferences(context).registerOnSharedPreferenceChangeListener(sPrefsListener);
             app.organicmaps.MwmApplication.sInstance.getOrganicMaps().getLocationHelper().addListener(sLocationListener);
+            app.organicmaps.sdk.downloader.MapManager.nativeSubscribe(sStorageCallback);
             sListenersRegistered = true;
         }
 
