@@ -1,0 +1,112 @@
+name: Sideload Builds
+
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.flavor }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [google, fdroid, oss]
+        include:
+          - flavor: google
+            taskFlavor: Google
+          - flavor: fdroid
+            taskFlavor: Fdroid
+          - flavor: oss
+            taskFlavor: Oss
+    steps:
+      - name: Install build tools and dependencies
+        shell: bash
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ninja-build
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+
+      - name: Restore Boost submodule from cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            3party/boost
+            .git/modules/3party/boost
+          key: boost-submodule
+
+      - name: Parallel submodules checkout
+        shell: bash
+        run: git submodule update --depth 1 --init --recursive --jobs=$(($(nproc) * 20))
+
+      - name: Configure repository
+        shell: bash
+        run: ./configure.sh
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Configure ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.workflow }}-${{ matrix.flavor }}
+
+      - name: Build Phone and Watch APKs
+        working-directory: android
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          # Build Phone app and Watch app debug APKs with arm32 + arm64 ABIs
+          ./gradlew :app:assemble${{ matrix.taskFlavor }}Debug :app:omaps:assemble${{ matrix.taskFlavor }}Debug -Parm32 -Parm64
+
+      - name: Prepare assets
+        shell: bash
+        run: |
+          mkdir -p build_output
+          cp android/app/build/outputs/apk/${{ matrix.flavor }}/debug/app-${{ matrix.flavor }}-debug.apk build_output/OrganicMaps-Phone-${{ matrix.flavor }}-debug.apk
+          cp android/app/omaps/build/outputs/apk/${{ matrix.flavor }}/debug/omaps-${{ matrix.flavor }}-debug.apk build_output/OrganicMaps-Watch-${{ matrix.flavor }}-debug.apk
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sideload-apks-${{ matrix.flavor }}
+          path: build_output/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish Rolling Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_apks
+          pattern: sideload-apks-*
+          merge-multiple: true
+
+      - name: Publish to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create rolling pre-release tag if it does not exist
+          gh release create sideload-latest \
+            --title "Sideload / Testing Builds" \
+            --notes "Latest sideloadable testing builds from master branch. These are debug builds signed with the checked-in debug key." \
+            --prerelease || true
+          
+          # Upload all APKs, overwriting any existing ones
+          gh release upload sideload-latest all_apks/*.apk --clobber
