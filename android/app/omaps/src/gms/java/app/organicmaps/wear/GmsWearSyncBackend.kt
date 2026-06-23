@@ -245,6 +245,14 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_TRACK_RECORDING_TOGGLE, byteArrayOf())
     }
 
+    override fun saveTrackRecording(context: Context, name: String) {
+        sendMessage(context, WearProtocol.PATH_TRACK_RECORDING_SAVE, name.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    override fun discardTrackRecording(context: Context) {
+        sendMessage(context, WearProtocol.PATH_TRACK_RECORDING_DISCARD, byteArrayOf())
+    }
+
     override fun requestBookmarks(context: Context) {
         sendMessage(context, WearProtocol.PATH_BOOKMARKS_REQUEST, byteArrayOf())
     }
@@ -276,9 +284,16 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_CATEGORY_CREATE, name.toByteArray(StandardCharsets.UTF_8))
     }
 
-    override fun showBookmarkOnPhone(context: Context, bmkId: Long) {
-        val buffer = ByteBuffer.allocate(8)
-        buffer.putLong(bmkId)
+    override fun showBookmarkOnPhone(context: Context, name: String, categoryName: String, lat: Double, lon: Double) {
+        val nameBytes = name.toByteArray(StandardCharsets.UTF_8)
+        val catBytes = categoryName.toByteArray(StandardCharsets.UTF_8)
+        val buffer = ByteBuffer.allocate(4 + nameBytes.size + 4 + catBytes.size + 8 + 8)
+        buffer.putInt(nameBytes.size)
+        buffer.put(nameBytes)
+        buffer.putInt(catBytes.size)
+        buffer.put(catBytes)
+        buffer.putDouble(lat)
+        buffer.putDouble(lon)
         sendMessage(context, WearProtocol.PATH_BOOKMARK_SHOW, buffer.array())
     }
 

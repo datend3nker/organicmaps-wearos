@@ -49,7 +49,11 @@ class BookmarksHandler : WearMessageHandler {
                 // imported on the watch still show (and drive the sync + detail "syncing" state).
                 val displayBmk = maxOf(bmkCount, localCat?.bookmarksCount ?: 0)
                 val displayTrk = maxOf(trkCount, localCat?.tracksCount ?: 0)
-                categories.add(BookmarkCategoryItem(id, name, isVisible, displayBmk, displayTrk, isSyncing))
+                // Prefer the local ID if this category already exists on the watch, so the UI passes
+                // valid local IDs back to the engine for edits. Phone IDs are engine-private and
+                // invalid on the watch.
+                val displayId = localCat?.id ?: id
+                categories.add(BookmarkCategoryItem(displayId, name, isVisible, displayBmk, displayTrk, isSyncing))
             }
 
             if (categories != currentState.bookmarkCategories) {

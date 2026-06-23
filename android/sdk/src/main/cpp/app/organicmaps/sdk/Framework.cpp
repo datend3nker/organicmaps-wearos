@@ -1200,6 +1200,83 @@ JNIEXPORT void JNICALL Java_app_organicmaps_sdk_Framework_nativeRemoveRouteLine(
     f->GetDrapeApi().RemoveLine("route");
 }
 
+// Ids of the currently-drawn companion route arrows, so a redraw/clear can remove them.
+static std::vector<std::string> g_routeArrowIds;
+
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_Framework_nativeClearRouteArrows(JNIEnv *, jclass)
+{
+  ::Framework * f = frm();
+  if (!f)
+    return;
+  for (auto const & id : g_routeArrowIds)
+    f->GetDrapeApi().RemoveLine(id);
+  g_routeArrowIds.clear();
+}
+
+JNIEXPORT void JNICALL Java_app_organicmaps_sdk_Framework_nativeDrawRouteArrows(
+    JNIEnv * env, jclass, jdoubleArray lats, jdoubleArray lons, jdoubleArray bearings,
+    jfloat sizeMeters, jfloat width, jint argbColor)
+{
+  ::Framework * f = frm();
+  if (!f)
+    return;
+
+  // Remove previous arrows first (keys are unique per-arrow, so AddLine wouldn't overwrite them).
+  for (auto const & id : g_routeArrowIds)
+    f->GetDrapeApi().RemoveLine(id);
+  g_routeArrowIds.clear();
+
+  size_t const count = env->GetArrayLength(lats);
+  if (count == 0 || count != static_cast<size_t>(env->GetArrayLength(lons)) ||
+      count != static_cast<size_t>(env->GetArrayLength(bearings)))
+    return;
+
+  jdouble * pLats = env->GetDoubleArrayElements(lats, 0);
+  jdouble * pLons = env->GetDoubleArrayElements(lons, 0);
+  jdouble * pBrg = env->GetDoubleArrayElements(bearings, 0);
+
+  dp::Color const color = dp::Color::FromARGB(static_cast<uint32_t>(argbColor));
+  double const kDeg2Rad = 3.14159265358979323846 / 180.0;
+  double const kMetersPerDegLat = 111320.0;
+
+  // Offset a lat/lon by distM metres towards compass bearing brgDeg (clockwise from north).
+  auto offset = [&](double lat, double lon, double brgDeg, double distM) -> ms::LatLon {
+    double const b = brgDeg * kDeg2Rad;
+    double const dLat = (distM * std::cos(b)) / kMetersPerDegLat;
+    double const cosLat = std::cos(lat * kDeg2Rad);
+    double const dLon = (distM * std::sin(b)) / (kMetersPerDegLat * (std::abs(cosLat) < 1e-6 ? 1e-6 : cosLat));
+    return ms::LatLon(lat + dLat, lon + dLon);
+  };
+
+  for (size_t i = 0; i < count; ++i)
+  {
+    double const lat = pLats[i];
+    double const lon = pLons[i];
+    double const brg = pBrg[i];
+
+    // Chevron ">" pointing along the travel bearing: apex forward, two wings angled back.
+    ms::LatLon const apex = offset(lat, lon, brg, sizeMeters);
+    ms::LatLon const left = offset(lat, lon, brg + 140.0, sizeMeters);
+    ms::LatLon const right = offset(lat, lon, brg - 140.0, sizeMeters);
+
+    std::vector<m2::PointD> pts = {
+        mercator::FromLatLon(left.m_lat, left.m_lon),
+        mercator::FromLatLon(apex.m_lat, apex.m_lon),
+        mercator::FromLatLon(right.m_lat, right.m_lon),
+    };
+
+    df::DrapeApiLineData data(pts, color);
+    data.Width(width);
+    std::string const id = "route_arrow_" + std::to_string(i);
+    f->GetDrapeApi().AddLine(id, data);
+    g_routeArrowIds.push_back(id);
+  }
+
+  env->ReleaseDoubleArrayElements(lats, pLats, JNI_ABORT);
+  env->ReleaseDoubleArrayElements(lons, pLons, JNI_ABORT);
+  env->ReleaseDoubleArrayElements(bearings, pBrg, JNI_ABORT);
+}
+
 JNIEXPORT jstring JNICALL Java_app_organicmaps_sdk_Framework_nativeGetBookmarkDir(JNIEnv * env, jclass)
 {
   return jni::ToJavaString(env, GetPlatform().SettingsDir().c_str());

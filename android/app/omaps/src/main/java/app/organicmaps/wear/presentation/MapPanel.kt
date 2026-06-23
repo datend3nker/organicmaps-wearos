@@ -100,11 +100,17 @@ fun MapPanel(
         if (isVisible) focusRequester.requestFocus()
     }
     
-    var showQuickMenu by remember { mutableStateOf(false) }
     var tappedDestination by remember { mutableStateOf<SearchResultItem?>(null) }
 
     var isMapDownloaded by remember { mutableStateOf(false) }
     var isWorldMapPresent by remember { mutableStateOf(true) }
+
+    // Bumping this recreates the MapView (fresh GL surface). Used to recover from the "map stays blank
+    // until I reopen the page" case: when the phone finishes downloading the region under the viewport,
+    // the already-live surface doesn't repaint the late-mounted map — recreating it does (same as reopen).
+    var mapReloadToken by remember { mutableIntStateOf(0) }
+    // Countries we've already force-remounted for, so a repeated phone push can't loop the recreation.
+    val remountedFor = remember { mutableSetOf<String>() }
     
     LaunchedEffect(location, connectionStatus, hApp.isFullyInitialized) {
         if (hApp.isFullyInitialized) {
@@ -190,6 +196,31 @@ fun MapPanel(
 
     // Side Effect: Clear missingMapId on country change or mount
     val state by NavigationStateHolder.state.collectAsState()
+
+    // Side Effect: Recover a blank map after a late phone download. When the phone reports it now has
+    // the region under the watch viewport (phoneDownloadedMaps gains it) and the watch isn't already
+    // showing it, request the stream now and recreate the MapView so the late-mounted map renders
+    // without the user reopening the page. remountedFor makes this fire at most once per country, so a
+    // repeated download-list push can't loop the (heavy) surface recreation.
+    LaunchedEffect(state.phoneDownloadedMaps, hApp.isFullyInitialized, connectionStatus) {
+        if (!hApp.isFullyInitialized || connectionStatus.watchLocalMode || !connectionStatus.isPhoneConnected)
+            return@LaunchedEffect
+        val center = Framework.nativeGetScreenRectCenter() ?: return@LaunchedEffect
+        if (center.size != 2) return@LaunchedEffect
+        val country = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(center[0], center[1]) }
+        if (country.isNullOrEmpty() || country in remountedFor) return@LaunchedEffect
+        val nowAvailable = state.phoneDownloadedMaps.contains(country)
+        val alreadyShown = VirtualMwmManager.isMounted(country) ||
+                MapManager.nativeGetStatus(country) == CountryItem.STATUS_DONE
+        if (nowAvailable && !alreadyShown) {
+            remountedFor.add(country)
+            Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: Phone download complete for $country — remounting view")
+            maybeRequestMount(context, country, "PhoneDownloadComplete")
+            delay(3.seconds) // let the metadata + first blocks stream in before the surface recreates
+            mapReloadToken++
+        }
+    }
+
     LaunchedEffect(location, state.missingMapId) {
         val (lat, lon, _) = location
         if (lat != 0.0 && state.missingMapId != null) {
@@ -206,8 +237,11 @@ fun MapPanel(
             val lats = routingStatus.routePoints.map { it.first }.toDoubleArray()
             val lons = routingStatus.routePoints.map { it.second }.toDoubleArray()
             Framework.nativeDrawRouteLine(lats, lons, 6.0f, 0xBB1E90FF.toInt())
+            // Turn chevrons removed — looked cluttered on the round watch screen.
+            Framework.nativeClearRouteArrows()
         } else if (!routingStatus.isActive || connectionStatus.watchLocalMode) {
             Framework.nativeRemoveRouteLine()
+            Framework.nativeClearRouteArrows()
         }
     }
 
@@ -254,7 +288,7 @@ fun MapPanel(
             !VirtualMwmManager.isMounted(currentCountry)
 
     val downloadState by WearMapDownloader.downloadState.collectAsState()
-    val isOverlayActive = (!isMapDownloaded || !isWorldMapPresent || isMapNotOnPhone) || showQuickMenu || (tappedDestination != null) || (downloadState != WearMapDownloader.DownloadState.IDLE && downloadState != WearMapDownloader.DownloadState.COMPLETED && downloadState != WearMapDownloader.DownloadState.CANCELLED)
+    val isOverlayActive = (!isMapDownloaded || !isWorldMapPresent || isMapNotOnPhone) || (tappedDestination != null) || (downloadState != WearMapDownloader.DownloadState.IDLE && downloadState != WearMapDownloader.DownloadState.COMPLETED && downloadState != WearMapDownloader.DownloadState.CANCELLED)
 
     Box(
         modifier = Modifier.then(modifier).fillMaxSize().clipToBounds()
@@ -263,7 +297,6 @@ fun MapPanel(
             .onKeyEvent {
                 if (!hApp.isFullyInitialized || isOverlayActive) return@onKeyEvent false
                 when (it.nativeKeyEvent.keyCode) {
-                    KeyEvent.KEYCODE_STEM_1 -> { showQuickMenu = true; true }
                     KeyEvent.KEYCODE_STEM_2 -> {
                         if (mapStatus.isMapUnlocked) {
                             repeat(5) {
@@ -299,14 +332,17 @@ fun MapPanel(
         if (!hApp.isFullyInitialized) {
             CircularProgressIndicator()
         } else {
-            MapViewContainer(
-                isVisible = isVisible,
-                isAmbient = isAmbient,
-                isOverlayActive = isOverlayActive,
-                isMapUnlocked = mapStatus.isMapUnlocked,
-                mapStyle = mapStatus.mapStyle,
-                onLongClick = { showQuickMenu = true }
-            )
+            // key(mapReloadToken): recreate the MapView (fresh GL surface) when a late phone download
+            // needs the blank map repainted — see the "Recover a blank map" effect above.
+            key(mapReloadToken) {
+                MapViewContainer(
+                    isVisible = isVisible,
+                    isAmbient = isAmbient,
+                    isOverlayActive = isOverlayActive,
+                    isMapUnlocked = mapStatus.isMapUnlocked,
+                    mapStyle = mapStatus.mapStyle
+                )
+            }
 
             if (isOverlayActive) {
                 Box(
@@ -323,17 +359,19 @@ fun MapPanel(
                 )
             }
             
+            /*
             MapLockControl(
                 isOverlayActive = isOverlayActive,
                 isAmbient = isAmbient
             )
+            */
             
             NavigationInstructionsOverlay(
                 isMapUnlocked = mapStatus.isMapUnlocked
             )
             
             RecenterControl()
-            
+
             GpsStatusControl(
                 isAmbient = isAmbient
             )
@@ -350,8 +388,6 @@ fun MapPanel(
                 isAmbient = isAmbient
             )
             
-            if (showQuickMenu) QuickMenu(onDismiss = { showQuickMenu = false })
-            
             PlacePageOverlay(
                 tappedDestination = tappedDestination,
                 onDismiss = { tappedDestination = null }
@@ -367,7 +403,6 @@ private fun MapViewContainer(
     isOverlayActive: Boolean,
     isMapUnlocked: Boolean,
     mapStyle: String,
-    onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -379,17 +414,10 @@ private fun MapViewContainer(
         factory = { ctx ->
             MapView(ctx).apply {
                 getMap().setLocationHelper(hApp.organicMaps.locationHelper)
-                isLongClickable = true
-                setOnLongClickListener {
-                    if (hApp.isFullyInitialized && !isOverlayActive) {
-                        onLongClick()
-                    }
-                    true
-                }
             }
         },
         update = { mapView ->
-            mapView.setMapLocked(isOverlayActive || !isMapUnlocked)
+            mapView.setMapLocked(isOverlayActive)
             mapView.isClickable = !isOverlayActive
             mapView.setOnTouchListener { v, _ -> 
                 if (isOverlayActive) {
@@ -521,9 +549,12 @@ private fun RecenterControl(
     modifier: Modifier = Modifier
 ) {
     val mapStatus by NavigationStateHolder.mapStatusFlow.collectAsState(initial = null)
+    val routingStatus by NavigationStateHolder.routingStatusFlow.collectAsState(initial = null)
     val hApp = LocalContext.current.applicationContext as WearApplication
 
-    if (mapStatus?.isMapUnlocked == true) {
+    // Show after a manual pan (map unlocked) and also during navigation, where the map auto-follows
+    // but the user may still pan away and need to snap back to the live position.
+    if (mapStatus?.isMapUnlocked == true || routingStatus?.isNavigating == true) {
         Box(
             modifier = modifier.fillMaxSize().padding(bottom = 10.dp),
             contentAlignment = Alignment.BottomCenter
@@ -532,8 +563,10 @@ private fun RecenterControl(
                 onClick = { 
                     if (hApp.isFullyInitialized) {
                         repeat(5) {
+                            // Clamp to live location AND heading (orientation), like the phone.
+                            // Does not lock the map — a manual pan still unlocks to NOT_FOLLOW.
                             val mode = LocationState.getMode()
-                            if (mode == LocationState.FOLLOW || mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
+                            if (mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
                             LocationState.nativeSwitchToNextMode()
                         }
                     }
@@ -817,128 +850,58 @@ private fun PlacePageOverlay(
     }
 }
 
-@Composable
-fun QuickMenu(onDismiss: () -> Unit) {
-    androidx.wear.compose.material.dialog.Dialog(showDialog = true, onDismissRequest = onDismiss) {
-        val routingStatus by NavigationStateHolder.routingStatusFlow.collectAsState(initial = null)
-        val connectionStatus by NavigationStateHolder.connectionStatusFlow.collectAsState(initial = null)
-        val trackRecording by NavigationStateHolder.trackRecordingFlow.collectAsState(initial = null)
-        val context = LocalContext.current
-        
-        var elapsedTime by remember { mutableStateOf("") }
-        LaunchedEffect(trackRecording?.isRecording, trackRecording?.startTime) {
-            val recording = trackRecording
-            if (recording != null && recording.isRecording && recording.startTime > 0) {
-                while (true) {
-                    val ms = System.currentTimeMillis() - recording.startTime
-                    val sec = (ms / 1000) % 60
-                    val min = (ms / 60000) % 60
-                    val hr = ms / 3600000
-                    elapsedTime = if (hr > 0) String.format(Locale.US, "%d:%02d:%02d", hr, min, sec) else String.format(Locale.US, "%02d:%02d", min, sec)
-                    delay(1.seconds)
-                }
-            } else {
-                elapsedTime = ""
-            }
-        }
+// --- Companion-route turn arrows -------------------------------------------------------------
+// The companion route is a dense (~20 m sampled) polyline with no engine maneuver data, so turns
+// are derived geometrically: a vertex is a "turn" when the heading change between its incoming and
+// outgoing segment exceeds TURN_DEG. Gentle road curvature spreads heading change thinly across
+// many vertices (small per-vertex delta) and is ignored; an intersection turn concentrates it at
+// one vertex. MIN_SPACING_M de-dups multi-vertex turns.
+private const val TURN_DEG = 35.0
+private const val MIN_SPACING_M = 30.0
 
-        val listState = rememberScalingLazyListState()
-        ScalingLazyColumn(
-            modifier = Modifier.fillMaxSize(), 
-            state = listState,
-            horizontalAlignment = Alignment.CenterHorizontally, 
-            contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp, start = 8.dp, end = 8.dp)
-        ) {
-            item { Text("Quick Menu", style = MaterialTheme.typography.caption1, color = Color(0xFF00E5FF)) }
-            
-            if (routingStatus?.isActive == true) {
-                item {
-                    Chip(
-                        onClick = {
-                            if (connectionStatus?.standaloneMode == true || connectionStatus?.watchLocalMode == true) {
-                                RoutingController.get().cancel()
-                            } else {
-                                WearCommandService.stopNavigation(context)
-                            }
-                            repeat(5) {
-                                val mode = LocationState.getMode()
-                                if (mode == LocationState.FOLLOW_AND_ROTATE) return@repeat
-                                LocationState.nativeSwitchToNextMode()
-                            }
-                            NavigationStateHolder.update { it.copy(isActive = false, isNavigating = false, isRouteBuilt = false, isRouteBuilding = false, isMapUnlocked = false) }
-                            onDismiss()
-                        },
-                        label = { Text("Stop Navigation") },
-                        icon = { Icon(Icons.Default.Close, contentDescription = null) },
-                        colors = ChipDefaults.primaryChipColors(),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                    )
-                }
-            }
+private fun bearingDeg(aLat: Double, aLon: Double, bLat: Double, bLon: Double): Double {
+    val dLon = Math.toRadians(bLon - aLon)
+    val la = Math.toRadians(aLat)
+    val lb = Math.toRadians(bLat)
+    val y = Math.sin(dLon) * Math.cos(lb)
+    val x = Math.cos(la) * Math.sin(lb) - Math.sin(la) * Math.cos(lb) * Math.cos(dLon)
+    return (Math.toDegrees(Math.atan2(y, x)) + 360.0) % 360.0
+}
 
-            item { Chip(onClick = { if (Map.isEngineCreated()) Map.zoomIn(); onDismiss() }, label = { Text("Zoom In") }, icon = { Icon(Icons.Default.Add, contentDescription = null) }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = ChipDefaults.secondaryChipColors()) }
-            item { Chip(onClick = { if (Map.isEngineCreated()) Map.zoomOut(); onDismiss() }, label = { Text("Zoom Out") }, icon = { Icon(Icons.Default.Remove, contentDescription = null) }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = ChipDefaults.secondaryChipColors()) }
+private fun haversineM(aLat: Double, aLon: Double, bLat: Double, bLon: Double): Double {
+    val r = 6371000.0
+    val dLat = Math.toRadians(bLat - aLat)
+    val dLon = Math.toRadians(bLon - aLon)
+    val h = Math.sin(dLat / 2).let { it * it } +
+            Math.cos(Math.toRadians(aLat)) * Math.cos(Math.toRadians(bLat)) *
+            Math.sin(dLon / 2).let { it * it }
+    return 2 * r * Math.asin(Math.min(1.0, Math.sqrt(h)))
+}
 
-            item {
-                Chip(
-                    onClick = {
-                        // Create a bookmark at the current map centre and push it to the phone via
-                        // the normal metadata→file sync (de-dup + tombstone aware).
-                        val center = Framework.nativeGetScreenRectCenter()
-                        if (center != null && center.size == 2) {
-                            try {
-                                BookmarkManager.INSTANCE.addNewBookmark(center[0], center[1])
-                                WatchBookmarkSyncManager.onLocalBookmarksChanged(context, isUserAction = true)
-                                WatchBookmarkSyncManager.requestSync(context)
-                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("Bookmark added"))
-                            } catch (_: Exception) {
-                                NavigationStateHolder.emitEvent(UiEvent.ShowToast("Couldn't add bookmark"))
-                            }
-                        } else {
-                            NavigationStateHolder.emitEvent(UiEvent.ShowToast("Map not ready"))
-                        }
-                        onDismiss()
-                    },
-                    label = { Text("Add Bookmark") },
-                    icon = { Icon(Icons.Default.Star, contentDescription = null) },
-                    colors = ChipDefaults.secondaryChipColors(),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                )
-            }
-
-            item {
-                val isRecording = trackRecording?.isRecording == true
-                Chip(
-                    onClick = { 
-                        WearCommandService.toggleTrackRecording(context)
-                        onDismiss()
-                    },
-                    label = { Text(if (isRecording) "Stop Recording" else "Start Recording") },
-                    secondaryLabel = { if (elapsedTime.isNotEmpty()) Text(elapsedTime) },
-                    icon = { 
-                        Icon(
-                            imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
-                            contentDescription = null,
-                            tint = if (isRecording) Color.Red else Color.White
-                        ) 
-                    },
-                    colors = if (isRecording) {
-                        ChipDefaults.chipColors(
-                            backgroundColor = Color(0xFFD32F2F).copy(alpha = 0.5f),
-                            contentColor = Color.White,
-                            secondaryContentColor = Color.White.copy(alpha = 0.7f),
-                            iconColor = Color.Red
-                        )
-                    } else {
-                        ChipDefaults.primaryChipColors()
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                )
-            }
-
-            item { Chip(onClick = onDismiss, label = { Text("Close") }, colors = ChipDefaults.primaryChipColors(), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) }
+/** Returns (turnLats, turnLons, outgoingBearingsDeg) for arrow placement along the route. */
+private fun computeRouteTurns(points: List<Pair<Double, Double>>): Triple<DoubleArray, DoubleArray, DoubleArray> {
+    if (points.size < 3) return Triple(DoubleArray(0), DoubleArray(0), DoubleArray(0))
+    val lats = ArrayList<Double>()
+    val lons = ArrayList<Double>()
+    val brgs = ArrayList<Double>()
+    var lastLat = Double.NaN
+    var lastLon = Double.NaN
+    for (i in 1 until points.size - 1) {
+        val (aLat, aLon) = points[i - 1]
+        val (bLat, bLon) = points[i]
+        val (cLat, cLon) = points[i + 1]
+        val bIn = bearingDeg(aLat, aLon, bLat, bLon)
+        val bOut = bearingDeg(bLat, bLon, cLat, cLon)
+        var d = bOut - bIn
+        while (d > 180) d -= 360
+        while (d < -180) d += 360
+        if (kotlin.math.abs(d) >= TURN_DEG) {
+            if (!lastLat.isNaN() && haversineM(lastLat, lastLon, bLat, bLon) < MIN_SPACING_M) continue
+            lats.add(bLat); lons.add(bLon); brgs.add(bOut)
+            lastLat = bLat; lastLon = bLon
         }
     }
+    return Triple(lats.toDoubleArray(), lons.toDoubleArray(), brgs.toDoubleArray())
 }
 
 private fun maybeRequestMount(context: Context, countryId: String?, trigger: String) {

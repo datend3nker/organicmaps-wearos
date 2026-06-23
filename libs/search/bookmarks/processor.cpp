@@ -128,7 +128,11 @@ void Processor::Add(Id const & id, Doc const & doc)
 
 void Processor::AddToIndex(Id const & id)
 {
-  ASSERT_EQUAL(m_docs.count(id), 1, ());
+  if (m_docs.count(id) == 0)
+  {
+    LOG(LDEBUG, ("Tried to add bookmark", id, "to index but it is not present in search processor."));
+    return;
+  }
 
   m_index.Add(id, DocVecWrapper(m_docs[id]));
 }
@@ -153,17 +157,26 @@ void Processor::Update(Id const & id, Doc const & doc)
 
 void Processor::Erase(Id const & id)
 {
-  ASSERT_EQUAL(m_docs.count(id), 1, ());
+  if (m_docs.count(id) == 0)
+  {
+    LOG(LDEBUG, ("Tried to erase bookmark", id, "but it is not present in search processor."));
+    return;
+  }
 
-  ASSERT(m_idToGroup.find(id) == m_idToGroup.end(),
-         ("A bookmark must be detached from all groups before being deleted."));
+  auto const it = m_idToGroup.find(id);
+  if (it != m_idToGroup.end())
+  {
+    LOG(LDEBUG, ("Bookmark", id, "is being erased but it is still attached to group", it->second));
+    DetachFromGroup(id, it->second);
+  }
 
   m_docs.erase(id);
 }
 
 void Processor::EraseFromIndex(Id const & id)
 {
-  ASSERT_EQUAL(m_docs.count(id), 1, ());
+  if (m_docs.count(id) == 0)
+    return;
 
   auto const & docVec = m_docs[id];
   m_index.Erase(id, DocVecWrapper(docVec));

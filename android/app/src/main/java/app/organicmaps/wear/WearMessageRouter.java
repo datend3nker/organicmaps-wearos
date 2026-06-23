@@ -95,6 +95,17 @@ public class WearMessageRouter {
                 // Force a bookmark-metadata push once per connect so both sides reconcile to a full
                 // mirror. (Self-guards on framework readiness.)
                 sMainHandler.post(WearSyncService::syncBookmarksMetadataForced);
+                // Push the phone's current downloaded-maps list on every connect. The StorageCallback
+                // only fires on a STATUS_DONE *transition*, so a map already downloaded before the
+                // watch connected produced no event — the watch never learned the phone had it and its
+                // map stayed blank until an app restart. Pushing here makes the first connect behave
+                // like that restart. (Self-guards on framework readiness.)
+                sMainHandler.post(() -> WearSyncService.pushDownloadedMaps(context));
+                // Re-send the current track-recording status on every connect so a recording started
+                // while the watch was disconnected (the foreground service keeps running) is reflected
+                // on the watch the moment it reconnects.
+                sMainHandler.post(() -> WearSyncService.sendTrackRecordingStatus(context,
+                        app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled()));
                 break;
             case PATH_STOP_NAVIGATION:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_STOP_NAVIGATION");
@@ -244,6 +255,23 @@ public class WearMessageRouter {
                     }
                 });
                 break;
+            case WearProtocol.PATH_TRACK_RECORDING_SAVE: {
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_TRACK_RECORDING_SAVE");
+                final String saveName = finalPayload != null && finalPayload.length > 0
+                        ? new String(finalPayload, StandardCharsets.UTF_8) : "";
+                sMainHandler.post(() -> {
+                    if (app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled())
+                        TrackRecordingService.saveRecording(context, saveName);
+                });
+                break;
+            }
+            case WearProtocol.PATH_TRACK_RECORDING_DISCARD:
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_TRACK_RECORDING_DISCARD");
+                sMainHandler.post(() -> {
+                    if (app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled())
+                        TrackRecordingService.discardRecording(context);
+                });
+                break;
             case PATH_BOOKMARKS_REQUEST:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARKS_REQUEST");
                 sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
@@ -255,16 +283,62 @@ public class WearMessageRouter {
                 break;
             case PATH_BOOKMARK_SHOW: {
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARK_SHOW");
-                long bmkId = ByteBuffer.wrap(finalPayload).getLong();
-                sMainHandler.post(() -> {
-                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to show bookmark: " + bmkId);
-                    app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId);
-                    Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
-                    if (launchIntent != null) {
-                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        context.startActivity(launchIntent);
+                ByteBuffer buffer = ByteBuffer.wrap(finalPayload);
+                int nameLen = buffer.getInt();
+                byte[] nameBytes = new byte[nameLen];
+                buffer.get(nameBytes);
+                String name = new String(nameBytes, StandardCharsets.UTF_8);
+                int catLen = buffer.getInt();
+                byte[] catBytes = new byte[catLen];
+                buffer.get(catBytes);
+                String catName = new String(catBytes, StandardCharsets.UTF_8);
+                double lat = buffer.getDouble();
+                double lon = buffer.getDouble();
+
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to show bookmark: " + name + " in " + catName);
+                    long bmkId = app.organicmaps.sdk.sync.BookmarkSyncCore.findBookmarkId(
+                            app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE, catName, name, lat, lon);
+                    if (bmkId != -1) {
+                        app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId);
+                    } else {
+                        Log.w(TAG, "DEBUG_WEAR_PIPELINE: Could not resolve bookmark identity to local ID: " + name);
+                        // Fallback: show the coordinates at least
+                        app.organicmaps.sdk.Framework.nativeZoomToPoint(lat, lon, 15, true);
                     }
-                });
+                    // Launch the map activity explicitly with CLEAR_TOP|SINGLE_TOP so it is brought to
+                    // the FRONT of the existing task. The previous getLaunchIntentForPackage() merely
+                    // resurfaced the task as-is, leaving whatever activity was on top (e.g. the Wear OS
+                    // SettingsActivity) visible instead of the map — so "Show on Phone" appeared to do
+                    // nothing. Mirrors the working PATH_POI_SHOW path.
+                    Intent launchIntent = new Intent(context, app.organicmaps.MwmActivity.class);
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    launchIntent.putExtra(app.organicmaps.MwmActivity.EXTRA_SHOW_MAP, true);
+                    if (bmkId != -1) {
+                        launchIntent.putExtra(app.organicmaps.MwmActivity.EXTRA_BOOKMARK_ID, bmkId);
+                    }
+                    context.startActivity(launchIntent);
+                }));
+                break;
+            }
+            case WearProtocol.PATH_POI_SHOW: {
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_POI_SHOW");
+                ByteBuffer buffer = ByteBuffer.wrap(finalPayload);
+                double lat = buffer.getDouble();
+                double lon = buffer.getDouble();
+                byte[] nameBytes = new byte[buffer.remaining()];
+                buffer.get(nameBytes);
+                String name = new String(nameBytes, StandardCharsets.UTF_8);
+
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
+                    Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch requested to show POI: " + name + " (" + lat + ", " + lon + ")");
+                    app.organicmaps.sdk.Framework.nativeZoomToPoint(lat, lon, 15, true);
+                    
+                    Intent intent = new Intent(context, app.organicmaps.MwmActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    intent.putExtra(app.organicmaps.MwmActivity.EXTRA_SHOW_MAP, true);
+                    context.startActivity(intent);
+                }));
                 break;
             }
             case PATH_BOOKMARK_UPDATE: {

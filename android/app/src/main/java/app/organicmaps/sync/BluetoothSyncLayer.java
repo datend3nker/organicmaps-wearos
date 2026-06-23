@@ -349,9 +349,11 @@ public class BluetoothSyncLayer implements ISyncLayer {
     @Override
     public void sendTrackRecordingStatus(@NonNull Context context, boolean isRecording) {
         long startTime = app.organicmaps.location.TrackRecordingService.getRecordingStartTime();
-        ByteBuffer buffer = ByteBuffer.allocate(1 + 8);
+        ByteBuffer buffer = ByteBuffer.allocate(1 + 8 + 8 + 8);
         buffer.put((byte) (isRecording ? 1 : 0));
         buffer.putLong(startTime);
+        buffer.putDouble(isRecording ? app.organicmaps.location.TrackRecordingService.getRecordedLength() : 0);
+        buffer.putDouble(isRecording ? app.organicmaps.location.TrackRecordingService.getRecordedDuration() : 0);
         sendRawMessage(context, WearProtocol.TYPE_TRACK_RECORDING, buffer.array());
     }
 

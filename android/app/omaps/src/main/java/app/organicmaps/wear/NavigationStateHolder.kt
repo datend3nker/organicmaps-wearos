@@ -107,6 +107,8 @@ data class NavigationState(
     val syncNotificationsEnabled: Boolean = true,
     val isTrackRecording: Boolean = false,
     val trackRecordingStartTime: Long = 0L,
+    val trackRecordingDistance: Double = 0.0, // metres
+    val trackRecordingDuration: Double = 0.0, // seconds
     val bookmarkCategories: List<BookmarkCategoryItem> = emptyList(),
     val missingMapId: String? = null,
     val phoneDownloadedMaps: Set<String> = emptySet()
@@ -152,7 +154,9 @@ data class ConnectionStatus(
 
 data class TrackRecordingStatus(
     val isRecording: Boolean,
-    val startTime: Long
+    val startTime: Long,
+    val distance: Double = 0.0, // metres
+    val duration: Double = 0.0  // seconds
 )
 
 data class BookmarkCategoryItem(
@@ -196,11 +200,19 @@ object NavigationStateHolder {
     }.distinctUntilChanged()
 
     val trackRecordingFlow = state.map {
-        TrackRecordingStatus(it.isTrackRecording, it.trackRecordingStartTime)
+        TrackRecordingStatus(it.isTrackRecording, it.trackRecordingStartTime, it.trackRecordingDistance, it.trackRecordingDuration)
     }.distinctUntilChanged()
 
     var lastMessageTimestamp: Long = 0L
         private set
+
+    // When the user cancels navigation on the watch, the phone keeps streaming a few in-flight
+    // /navigation/status frames with active=true before it processes the stop. Those would
+    // resurrect the nav UI (and even relaunch the activity), forcing the user to press X twice.
+    // While now < navCancelGuardUntil, NavStatusHandler drops active=true frames so a single X
+    // sticks. Cleared as soon as an inactive frame (phone confirmed stop) arrives.
+    @Volatile
+    var navCancelGuardUntil: Long = 0L
 
     fun emitEvent(event: UiEvent) {
         scope.launch {

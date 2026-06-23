@@ -180,6 +180,15 @@ public final class BookmarkSyncCore
       Long tomb = tombstones.get(key);
       if (tomb != null && tomb >= ts)
         continue; // deletion wins over this (or an equally-old) upsert
+      if (tomb != null)
+      {
+        // This upsert is strictly newer than the tombstone: the identity has been revived. Drop the
+        // now-obsolete tombstone in BOTH the live map and the persistent store, otherwise a later
+        // applyToCategory pass (which keys purely on tombstone membership) would delete the bookmark
+        // we are about to (re)create — the "move back / rename / vanish" loss.
+        BookmarkTombstoneStore.clear(c, key);
+        tombstones.remove(key);
+      }
 
       long localTs = prefs.getLong(key, 0);
       long existingId = findBookmarkId(mgr, cat, name, lat, lon);
@@ -192,28 +201,41 @@ public final class BookmarkSyncCore
         // for the recycled id can land before OnBookmarksDeleted finishes erasing the old entry for
         // that id, tripping search::bookmarks::Processor::Add's ASSERT_EQUAL(m_docs.count(id), 0) and
         // crashing. Detect the move and relocate the existing native bookmark instead.
+        // First try an exact name+position match (a pure category move). If that misses, fall back to
+        // a position-only match: a rename changes the name part of the identity, so the bookmark being
+        // renamed is the single pin sitting at this position. Either way it's the SAME native bookmark
+        // relocating/renaming, not a delete+recreate — so we mutate it in place rather than minting a
+        // new id (which both leaves a stale duplicate and races the search index).
         long movedId = findBookmarkByNamePos(mgr, name, lat, lon);
+        if (movedId == -1)
+          movedId = findBookmarkByPos(mgr, lat, lon);
         if (movedId != -1)
         {
-          BookmarkCategory fromCat = findCategoryById(mgr, mgr.getBookmarkInfo(movedId).getCategoryId());
+          BookmarkInfo info = mgr.getBookmarkInfo(movedId);
+          String prevName = info.getName();
+          double prevLat = info.getLat();
+          double prevLon = info.getLon();
+          BookmarkCategory fromCat = findCategoryById(mgr, info.getCategoryId());
           try
           {
             BookmarkCategory toCat = findCategory(mgr, cat);
             long toCatId = (toCat != null) ? toCat.getId() : mgr.createCategory(cat);
-            BookmarkInfo info = mgr.getBookmarkInfo(movedId);
             info.changeCategory(toCatId);
             info.update(name, new Icon(color, type), desc);
             updated++;
           }
           catch (Exception e)
           {
-            Log.w(TAG, "move (category change) failed for '" + name + "': " + e.getMessage(), e);
+            Log.w(TAG, "move/rename failed for '" + name + "': " + e.getMessage(), e);
           }
           if (fromCat != null)
           {
-            String oldKey = BookmarkTombstoneStore.identityKey(fromCat.getName(), name, lat, lon);
+            // Clean the bookmark's PREVIOUS identity (old category and/or old name), not the new one.
+            String oldKey = BookmarkTombstoneStore.identityKey(fromCat.getName(), prevName, prevLat, prevLon);
             editor.remove(oldKey);
             editor.remove(HASH_PREFIX + oldKey);
+            // The old-identity tombstone the peer sent for this same logical bookmark is now obsolete.
+            BookmarkTombstoneStore.clear(c, oldKey);
           }
           editor.putLong(key, ts);
           editor.putInt(HASH_PREFIX + key, contentHash(name, color, type, desc));
@@ -381,8 +403,41 @@ public final class BookmarkSyncCore
     return -1;
   }
 
+  /** Find the single bookmark at (lat,lon) across every category, or -1 if none or ambiguous. */
+  private static long findBookmarkByPos(@NonNull BookmarkManager mgr, double lat, double lon)
+  {
+    long qlat = BookmarkTombstoneStore.quant(lat);
+    long qlon = BookmarkTombstoneStore.quant(lon);
+    long found = -1;
+    for (BookmarkCategory cat : mgr.getCategories())
+    {
+      int count = cat.getBookmarksCount();
+      for (int i = 0; i < count; i++)
+      {
+        long id = cat.getBookmarkIdByPosition(i);
+        BookmarkInfo info = mgr.getBookmarkInfo(id);
+        if (info == null)
+          continue;
+        if (BookmarkTombstoneStore.quant(info.getLat()) == qlat
+            && BookmarkTombstoneStore.quant(info.getLon()) == qlon)
+        {
+          if (found != -1)
+            return -1; // two pins share this ~1 m cell — too ambiguous to relocate safely
+          found = id;
+        }
+      }
+    }
+    return found;
+  }
+
+  /** Stored LWW upsert timestamp for an identity key, or 0 if never stamped. */
+  public static long lwwTimestamp(@NonNull Context c, @NonNull String key)
+  {
+    return lww(c).getLong(key, 0);
+  }
+
   /** Find a bookmark by content identity within its named category, or -1. */
-  private static long findBookmarkId(@NonNull BookmarkManager mgr, @NonNull String catName,
+  public static long findBookmarkId(@NonNull BookmarkManager mgr, @NonNull String catName,
                                      @NonNull String name, double lat, double lon)
   {
     BookmarkCategory cat = findCategory(mgr, catName);

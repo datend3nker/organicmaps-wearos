@@ -290,8 +290,9 @@ class WearDataListenerService : WearableListenerService() {
         for (key in dataMap.keySet()) {
             if (key.startsWith("ts_") || key == "timestamp" || key == "protocolVersion") continue
             val ts = dataMap.getLong("ts_$key", globalTs)
+            val ver = dataMap.getLong("v_$key", 0L)
             val value = dataMap.get<Any>(key) ?: continue
-            updates.add(BaseSettingsSyncManager.SettingUpdate(key, value, ts))
+            updates.add(BaseSettingsSyncManager.SettingUpdate(key, value, ts, ver))
         }
         manager.applyRemoteUpdates(updates)
     }
@@ -303,7 +304,7 @@ class WearDataListenerService : WearableListenerService() {
             if (key == "_trigger" || key == "protocolVersion") continue
             val item = dataMap.getDataMap(key) ?: continue
             val value = item.get<Any>("v") ?: continue
-            updates.add(BaseSettingsSyncManager.SettingUpdate(key, value, item.getLong("t")))
+            updates.add(BaseSettingsSyncManager.SettingUpdate(key, value, item.getLong("t"), item.getLong("ver", 0L)))
         }
         manager.applyRemoteUpdates(updates)
     }

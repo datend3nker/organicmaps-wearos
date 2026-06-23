@@ -104,8 +104,21 @@ public class MapView extends SurfaceView
   @Override
   public boolean onTouchEvent(@NonNull MotionEvent event)
   {
-    mGestureDetector.onTouchEvent(event);
     int action = event.getActionMasked();
+    // Ignore touches that start at the edges to allow system gestures (like Back) 
+    // without moving the map.
+    if (action == MotionEvent.ACTION_DOWN)
+    {
+      final float x = event.getX();
+      final float edgeThreshold = 15 * getResources().getDisplayMetrics().density;
+      if (x < edgeThreshold || x > getWidth() - edgeThreshold)
+        return false;
+      
+      if (getParent() != null)
+        getParent().requestDisallowInterceptTouchEvent(true);
+    }
+
+    mGestureDetector.onTouchEvent(event);
     int pointerIndex = event.getActionIndex();
 
     // Map Android action to NATIVE_ACTION

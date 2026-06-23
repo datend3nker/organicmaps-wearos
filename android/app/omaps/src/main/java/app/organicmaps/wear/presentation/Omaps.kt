@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.setValue
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -259,11 +260,11 @@ fun WearApp() {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     
     val pagerState = rememberPagerState(
-        pageCount = { 
+        pageCount = {
             if (isNavigating) {
                 if (isMapEnabled) 3 else 2
             } else {
-                if (isMapEnabled) 5 else 4
+                if (isMapEnabled) 6 else 5
             }
         }
     )
@@ -273,12 +274,12 @@ fun WearApp() {
             when (event) {
                 is UiEvent.OpenMap -> {
                     if (!isNavigating) {
-                        pagerState.animateScrollToPage(0)
+                        pagerState.animateScrollToPage(1)
                     }
                 }
                 is UiEvent.OpenMapManager -> {
                     if (!isNavigating) {
-                        pagerState.animateScrollToPage(if (isMapEnabled) 3 else 2)
+                        pagerState.animateScrollToPage(if (isMapEnabled) 4 else 3)
                     }
                 }
                 is UiEvent.ShowToast -> {
@@ -294,10 +295,10 @@ fun WearApp() {
             if (!navState.standaloneMode && !navState.watchLocalMode) {
                 pagerState.scrollToPage(if (isMapEnabled) 1 else 0)
             } else if (isMapEnabled) {
-                pagerState.scrollToPage(0)
+                pagerState.scrollToPage(1)
             }
         } else {
-            pagerState.scrollToPage(0)
+            pagerState.scrollToPage(1)
         }
     }
 
@@ -311,6 +312,14 @@ fun WearApp() {
                 activity.setShowWhenLocked(false);
                 activity.setTurnScreenOn(false);
             }
+        }
+    }
+
+    // Intercept back gesture on the Map page to navigate to the previous tab
+    // instead of exiting the app or panning the map at the edge.
+    BackHandler(enabled = pagerState.currentPage == 1) {
+        scope.launch {
+            pagerState.animateScrollToPage(0)
         }
     }
 
@@ -329,27 +338,29 @@ fun WearApp() {
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    userScrollEnabled = !navState.isMapUnlocked && !navState.isRouteBuilding
+                    userScrollEnabled = true
                 ) { page ->
                     val isVisible = pagerState.currentPage == page
                     if (isMapEnabled) {
                         when (page) {
-                            0 -> MapPanel(
+                            0 -> SearchScreen(isVisible = isVisible)
+                            1 -> MapPanel(
                                 isVisible = isVisible,
-                                onSearchClick = { scope.launch { pagerState.animateScrollToPage(1) } },
-                                onSettingsClick = { scope.launch { pagerState.animateScrollToPage(if (isMapEnabled) 4 else 3) } }
+                                onSearchClick = { scope.launch { pagerState.animateScrollToPage(0) } },
+                                onSettingsClick = { scope.launch { pagerState.animateScrollToPage(if (isMapEnabled) 5 else 4) } }
                             )
-                            1 -> SearchScreen(isVisible = isVisible)
                             2 -> app.organicmaps.wear.presentation.bookmarks.BookmarksScreen(isVisible = isVisible)
-                            3 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
-                            4 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
+                            3 -> app.organicmaps.wear.presentation.track.TrackScreen(isVisible = isVisible)
+                            4 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
+                            5 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
                         }
                     } else {
                         when (page) {
                             0 -> SearchScreen(isVisible = isVisible)
                             1 -> app.organicmaps.wear.presentation.bookmarks.BookmarksScreen(isVisible = isVisible)
-                            2 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
-                            3 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
+                            2 -> app.organicmaps.wear.presentation.track.TrackScreen(isVisible = isVisible)
+                            3 -> app.organicmaps.wear.presentation.downloads.MapManagerScreen(isVisible = isVisible)
+                            4 -> app.organicmaps.wear.presentation.settings.SettingsScreen()
                         }
                     }
                 }
@@ -357,17 +368,17 @@ fun WearApp() {
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    userScrollEnabled = !navState.isMapUnlocked && !navState.isRouteBuilding
+                    userScrollEnabled = true
                 ) { page ->
                     if (isMapEnabled) {
                         val isVisible = pagerState.currentPage == page
                         when (page) {
-                            0 -> MapPanel(
+                            0 -> NavigationPanel(navState)
+                            1 -> MapPanel(
                                 isVisible = isVisible,
                                 onSearchClick = { /* No search during navigation? Or go to nav screen */ },
                                 onSettingsClick = { /* Settings during nav */ }
                             )
-                            1 -> NavigationPanel(navState)
                             2 -> StatsScreen(navState)
                         }
                     } else {
@@ -468,22 +479,7 @@ fun WearApp() {
                         }
                         
                         CompactChip(
-                            onClick = {
-                                if (navState.standaloneMode || navState.watchLocalMode) {
-                                    app.organicmaps.sdk.routing.RoutingController.get().cancel()
-                                } else {
-                                    WearCommandService.stopNavigation(context)
-                                }
-                                NavigationStateHolder.update(navState.copy(
-                                    isActive = false, 
-                                    isNavigating = false, 
-                                    isRouteBuilding = false,
-                                    isRouteBuilt = false,
-                                    isRouteReady = false,
-                                    lastRouteError = 0,
-                                    isMapUnlocked = false
-                                ), force = true)
-                            },
+                            onClick = { WearCommandService.cancelNavigation(context) },
                             colors = ChipDefaults.secondaryChipColors(),
                             label = { Text("Cancel", style = MaterialTheme.typography.caption2) },
                             modifier = Modifier.width(100.dp).height(32.dp)
@@ -562,19 +558,8 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
         distanceToNextTurn = navState.distToTurn,
         turnIcon = getTurnIcon(navState.carDirection, navState.pedestrianDirection, navState.exitNum), 
         remainingTime = navState.nextStreet,
-        onCancelClick = { 
-            app.organicmaps.sdk.routing.RoutingController.get().cancel()
-            if (!navState.standaloneMode) {
-                WearCommandService.stopNavigation(context)
-            }
-            NavigationStateHolder.update(navState.copy(
-                isActive = false, 
-                isNavigating = false,
-                isRouteBuilding = false,
-                isRouteBuilt = false,
-                isRouteReady = false,
-                isMapUnlocked = false
-            ), force = true)
+        onCancelClick = {
+            WearCommandService.cancelNavigation(context)
         },
         deviceRotation = deviceRotation,
         exitNum = navState.exitNum

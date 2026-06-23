@@ -382,6 +382,19 @@ public class Framework
 
   public static native void nativeRemoveRouteLine();
 
+  /**
+   * Draw turn-direction chevrons on the companion route (Wear). Each arrow is a small "{@code >}"
+   * pointing along {@code bearings[i]} (degrees clockwise from north) centred at
+   * {@code lats[i]/lons[i]}. {@code sizeMeters} is the arrow half-size on the ground. Replaces any
+   * previously drawn arrows. Used because the companion route is a raw polyline (no engine route),
+   * so the native route renderer's maneuver arrows are unavailable.
+   */
+  public static native void nativeDrawRouteArrows(@NonNull double[] lats, @NonNull double[] lons,
+                                                  @NonNull double[] bearings, float sizeMeters,
+                                                  float width, int argbColor);
+
+  public static native void nativeClearRouteArrows();
+
   public static native byte[] nativeGetMwmBytes(String name, long offset, int size);
 
   public static native long nativeGetMwmSize(String name);

@@ -348,9 +348,11 @@ public class MwmActivity extends BaseMwmFragmentActivity
     final long trackId = intent.getLongExtra(EXTRA_TRACK_ID, -1);
     if (bookmarkId != -1)
     {
-      Objects.requireNonNull(BookmarkManager.INSTANCE.getBookmarkInfo(bookmarkId));
-      BookmarkManager.INSTANCE.showBookmarkOnMap(bookmarkId);
-      return;
+      if (BookmarkManager.INSTANCE.getBookmarkInfo(bookmarkId) != null)
+      {
+        BookmarkManager.INSTANCE.showBookmarkOnMap(bookmarkId);
+        return;
+      }
     }
     else if (trackId != -1)
     {

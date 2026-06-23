@@ -461,9 +461,13 @@ public class GmsSyncLayer implements ISyncLayer {
     @Override
     public void sendTrackRecordingStatus(@NonNull Context context, boolean isRecording) {
         long startTime = app.organicmaps.location.TrackRecordingService.getRecordingStartTime();
-        ByteBuffer buffer = ByteBuffer.allocate(1 + 8);
+        // Payload: [isRecording:1][startTime:8][length_m:8][duration_s:8]. The trailing doubles are
+        // back-compatible — an older watch that reads only the first 9 bytes still works.
+        ByteBuffer buffer = ByteBuffer.allocate(1 + 8 + 8 + 8);
         buffer.put((byte) (isRecording ? 1 : 0));
         buffer.putLong(startTime);
+        buffer.putDouble(isRecording ? app.organicmaps.location.TrackRecordingService.getRecordedLength() : 0);
+        buffer.putDouble(isRecording ? app.organicmaps.location.TrackRecordingService.getRecordedDuration() : 0);
         sendMessage(context, WearProtocol.PATH_TRACK_RECORDING, buffer.array());
     }
 

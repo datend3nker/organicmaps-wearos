@@ -2,6 +2,8 @@ package app.organicmaps.sdk.sync
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 
 abstract class BaseSettingsSyncManager(protected val context: Context) {
@@ -32,6 +34,8 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
     @get:Synchronized
     var isApplyingRemoteUpdates: Boolean = false
         protected set
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     data class SettingUpdate(
         @JvmField val key: String,
@@ -124,6 +128,8 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
     fun applyRemoteUpdates(updates: List<SettingUpdate>): Boolean {
         var changed = false
         isApplyingRemoteUpdates = true
+        // Cancel any pending guard-release: re-entrant applies must keep the guard up.
+        mainHandler.removeCallbacks(releaseGuard)
         try {
             val mainPrefs = getMainPrefs()
             val mainEditor = mainPrefs.edit()
@@ -163,16 +169,28 @@ abstract class BaseSettingsSyncManager(protected val context: Context) {
                 }
             }
 
+            // Always commit the sync bookkeeping (cleared dirty flags, bumped ts/ver) even when the
+            // value was already equal — otherwise an accepted-but-unchanged remote update never clears
+            // its dirty flag, so the setting is re-sent on every sync forever and never converges.
+            syncEditor.apply()
             if (changed) {
                 mainEditor.apply()
-                syncEditor.apply()
                 onSettingsApplied()
             }
         } finally {
-            isApplyingRemoteUpdates = false
+            // Release the guard on the main looper AFTER the SharedPreferences change callbacks that
+            // mainEditor.apply() just queued have run. Resetting synchronously here left the guard
+            // false by the time the async OnSharedPreferenceChangeListener fired, so every applied
+            // remote value was re-counted as a local user edit — inflating its version and dirtying it,
+            // which echoed back to the peer and eventually let the watch's runaway version outrank the
+            // phone (the authority), silently breaking later phone->watch updates.
+            mainHandler.removeCallbacks(releaseGuard)
+            mainHandler.post(releaseGuard)
         }
         return changed
     }
+
+    private val releaseGuard = Runnable { isApplyingRemoteUpdates = false }
 
     private fun applyValue(editor: SharedPreferences.Editor, key: String, value: Any) {
         when (value) {

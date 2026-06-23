@@ -9,14 +9,15 @@ This module contains the Wear OS application for Organic Maps. It provides a ric
 - **Dual Data Modes**: **Streaming** (map data fetched on demand from the phone) and **Local** (data resident on watch storage).
 - **Manual Interaction**:
     - **Panning**: Drag on the map to explore the surrounding area.
-    - **Zooming**: Use the **rotary crown** for smooth zooming, or the Zoom In/Out actions in the Quick Menu.
+    - **Zooming**: Use the **rotary crown** for smooth zooming.
     - **Interaction Lock**: Toggle between swiping panels and panning the map, to prevent accidental gestures.
     - **Re-center**: Snap back to your current position with the dedicated "My Location" button.
 - **Location Marker Sync**: Real-time position and bearing kept in sync between phone and watch.
-- **Route & Track Recording**:
-    - **Direct Control**: Start and stop track recording directly from the watch.
-    - **Real-time Status**: A "Red Dot" indicator and timer show recording progress at a glance.
-    - **Synced Persistence**: Tracks are saved and synced to your bookmarks on both devices.
+- **Track Recording (manage & control)**:
+    - **Full control from the wrist**: **Start**, **Save** (stops and keeps the track, with an optional name), or **Discard** (stops and deletes) — from the dedicated **Track** screen (swipe to it like the Bookmarks screen). The phone runs the recording (its GPS + a foreground service); the watch drives it.
+    - **Live stats**: A red-dot indicator plus live **distance** and **elapsed time** update on the watch every ~2 s while recording.
+    - **Disconnect-resilient**: The recording runs in a sticky foreground service on the phone, so it keeps going if the watch disconnects; on reconnect the phone re-pushes the current recording status and the watch reconciles automatically.
+    - **Saved as a track**: A saved recording becomes a track in your bookmark categories (track counts sync in bookmark metadata).
 - **Points of Interest**: POIs (food, fuel, ATMs, transit, …) are rendered by the native engine using the official Organic Maps styles; which categories appear is controlled by **Map Details** (see §5).
 - **Place Interaction**:
     - **Companion Mode**: Tapping a place opens it instantly on the connected phone.
@@ -38,14 +39,17 @@ This module contains the Wear OS application for Organic Maps. It provides a ric
 - **Search Everywhere**: Find destinations directly on the watch using voice input or the keyboard.
 - **Region Search**: Easily find map regions to download via a substring-search bar in the Map Manager.
 - **Map Management**: Downloaded regions are automatically sorted to the top for easy removal or updates.
+- **Auto-availability**: A region downloaded on the phone becomes streamable on the watch without restarting the watch app — the phone announces its downloaded-maps set on every connect and whenever a download completes, and the watch re-scans immediately.
 - **History**: View search history synced from the phone.
 - **Instant Start**: Launch navigation immediately from any search result.
 
 ### 4. Bookmarks
-- **Add From the Wrist**: Drop a bookmark at the current map centre from the Quick Menu (long-press the map or press the side button).
-- **Bidirectional Sync**: Bookmark categories sync both ways as a non-destructive, de-duplicating union-merge — offline edits on either device are preserved and repeated syncs never duplicate pins.
-- **Deletions Stick**: Deleting a bookmark on one device propagates to the other via tombstones, instead of being resurrected on the next sync.
-- **Visibility & Management**: Toggle category visibility, rename, and delete from the watch.
+- **Add From the Wrist**: Drop a bookmark at the current map centre with the **star button** on the map.
+- **Per-bookmark sync**: Bookmarks sync as individual, content-addressed records (identity = category + name + position), reconciled last-writer-wins — not whole-category files. Both devices derive the same id for the same pin, so repeated syncs never duplicate and the old category-name "My Places → My Places1 → 11 → …" explosion is structurally impossible.
+- **Edits, moves & renames converge**: Renaming a bookmark, recolouring it, editing its note, or moving it between categories propagates and converges on both devices without leaving duplicates or losing the pin.
+- **Deletions stick**: Deleting a bookmark on one device propagates via tombstones instead of being resurrected on the next sync; a later re-create of the same pin correctly overrides an old tombstone.
+- **Show on Phone / Show on Watch**: From a bookmark on the watch, recentre the **phone** map on it (brings the phone map to the front) or recentre the **watch** map.
+- **Visibility & Management**: Create categories, toggle visibility, rename, move, and delete from the watch.
 
 ### 5. Map Customization
 - **Map Layers**: Toggle **Subway/Underground**, **Cycling routes**, **Hiking routes**, and **Contour lines** overlays.
@@ -59,7 +63,7 @@ This module contains the Wear OS application for Organic Maps. It provides a ric
 - **Tile**: An Organic Maps tile for one-tap access to "Where to?" search and your last destination.
 - **Watch-Face Complication**: A navigation complication surfaces the live distance-to-turn on supported watch faces (short & long text).
 - **Ambient (Always-On) Support**: The UI adapts to the low-power ambient state (the live map pauses to save battery).
-- **Hardware Controls**: The rotary crown zooms; side button 1 opens the Quick Menu; side button 2 recenters / cycles the map-follow mode; long-press unlocks the map.
+- **Hardware Controls**: The rotary crown zooms; side button 2 recenters / cycles the map-follow mode.
 - **Smart Power Management**: GPS and networking are managed automatically based on connectivity and navigation state to preserve battery.
 
 ---
@@ -67,6 +71,8 @@ This module contains the Wear OS application for Organic Maps. It provides a ric
 ## Settings & Synchronization Logic
 
 Settings can be managed on both the phone and watch. They are designed to be intuitive, with "Standalone" and "Local" modes taking priority to ensure reliability.
+
+All settings below — plus every **Map Customization** option in §5 (3D, auto-zoom, map style, units, map layers, POI mask, routing avoidances) — are reconciled with a per-setting **version + timestamp last-writer-wins** scheme. They sync on the very first connection (the phone seeds its defaults at startup and the watch adopts them), and every later change on either device propagates and is applied live on the other.
 
 ### Settings Reference
 
@@ -113,9 +119,10 @@ JNI bridge, and talks to the phone through a transport-agnostic message protocol
 - **Bounded map streaming**: In Companion mode the watch mounts a **sparse** `.mwm` and faults 64 KB blocks
   on demand via the native `VirtualModelReader`; a free-space-derived LRU cache evicts cold blocks
   (`fallocate(PUNCH_HOLE)`) so disk use stays bounded.
-- **Non-destructive bookmark sync**: Bookmarks sync as a de-duplicating **union-merge** (KMZ/KML, identity =
-  name + position, per-pin timestamp LWW), with **tombstones** so deletions propagate instead of being
-  resurrected.
+- **Per-bookmark LWW sync**: Bookmarks sync as individual content-addressed records via `BookmarkSyncCore`
+  (identity = `category|name|latQ|lonQ`), reconciled last-writer-wins per identity, with **tombstones** so
+  deletions propagate instead of being resurrected. This replaced the old category-grained KMZ/KML
+  union-merge, whose same-name import collisions caused an exponential category-uniquify cascade.
 - **Efficient Data Transfer**: Large payloads are Gzip-compressed before transmission to stay within message
   size limits and reduce latency.
 - **Native Power**: Complex map feature extraction is handled in C++ using the same core engine as the phone

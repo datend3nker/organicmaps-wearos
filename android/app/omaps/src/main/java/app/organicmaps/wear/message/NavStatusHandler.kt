@@ -19,7 +19,14 @@ class NavStatusHandler : WearMessageHandler {
         
         val active = buffer.get().toInt() == 1
         val currentState = NavigationStateHolder.state.value
-        
+
+        // User just cancelled on the watch: ignore the phone's still-in-flight active=true frames
+        // so a single X press sticks (otherwise they resurrect the nav UI / relaunch the activity).
+        if (active && System.currentTimeMillis() < NavigationStateHolder.navCancelGuardUntil) {
+            Log.d("NavStatusHandler", "Dropping active nav status during cancel-guard window")
+            return
+        }
+
         val carDir = buffer.get().toInt()
         val pedDir = buffer.get().toInt()
         val exitNum = buffer.get().toInt()
@@ -34,6 +41,8 @@ class NavStatusHandler : WearMessageHandler {
         val speedLimit = buffer.float.toDouble()
 
         if (!active) {
+            // Phone confirmed the stop — disarm the cancel guard.
+            NavigationStateHolder.navCancelGuardUntil = 0L
             val newState = currentState.copy(
                 isActive = false,
                 isNavigating = false,
@@ -47,9 +56,10 @@ class NavStatusHandler : WearMessageHandler {
             )
             NavigationStateHolder.update(newState)
 
-            // Navigation ended → clear the companion route polyline.
+            // Navigation ended → clear the companion route polyline + turn arrows.
             CoroutineScope(Dispatchers.Main).launch {
                 try { app.organicmaps.sdk.Framework.nativeRemoveRouteLine() } catch (_: Throwable) {}
+                try { app.organicmaps.sdk.Framework.nativeClearRouteArrows() } catch (_: Throwable) {}
             }
 
             // Still update location in native core if we got a valid one

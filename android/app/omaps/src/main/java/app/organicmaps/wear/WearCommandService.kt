@@ -78,6 +78,35 @@ object WearCommandService {
 
     fun stopNavigation(context: Context) = getBackend(context).stopNavigation(context)
 
+    /**
+     * Single-press navigation cancel. Cancels the watch's local routing controller, tells the phone
+     * to stop (companion mode), clears the local nav state, and arms a guard window so stale
+     * in-flight active=true status frames from the phone don't bounce the UI back into navigation
+     * (the old "press X twice" bug). Use everywhere the user cancels/stops navigation.
+     */
+    fun cancelNavigation(context: Context) {
+        val navState = NavigationStateHolder.state.value
+        // Arm first so any status frame racing in during this call is already suppressed.
+        NavigationStateHolder.navCancelGuardUntil = System.currentTimeMillis() + 4000L
+        try { app.organicmaps.sdk.routing.RoutingController.get().cancel() } catch (_: Throwable) {}
+        if (!navState.standaloneMode) {
+            stopNavigation(context)
+        }
+        try { app.organicmaps.sdk.Framework.nativeRemoveRouteLine() } catch (_: Throwable) {}
+        NavigationStateHolder.update(
+            navState.copy(
+                isActive = false,
+                isNavigating = false,
+                isRouteBuilding = false,
+                isRouteBuilt = false,
+                isRouteReady = false,
+                lastRouteError = 0,
+                isMapUnlocked = false
+            ),
+            force = true
+        )
+    }
+
     // Watchdog so the search spinner never hangs forever: cleared on results-end / fresh search,
     // fired if neither the local engine nor the phone produces a result in time.
     private val searchWatchdogHandler = Handler(Looper.getMainLooper())
@@ -268,6 +297,35 @@ object WearCommandService {
             getBackend(context).toggleTrackRecording(context)
         }
     }
+
+    /** Stop the current recording and save it (optional name). Local when standalone, else phone. */
+    fun saveTrackRecording(context: Context, name: String = "") {
+        val navState = NavigationStateHolder.state.value
+        if (navState.standaloneMode || !navState.isPhoneConnected) {
+            if (TrackRecorder.nativeIsTrackRecordingEnabled()) {
+                if (!TrackRecorder.nativeIsTrackRecordingEmpty())
+                    TrackRecorder.nativeSaveTrackRecordingWithName(name)
+                TrackRecorder.nativeStopTrackRecording()
+            }
+            NavigationStateHolder.update { it.copy(isTrackRecording = false, trackRecordingStartTime = 0L, trackRecordingDistance = 0.0, trackRecordingDuration = 0.0) }
+        } else {
+            getBackend(context).saveTrackRecording(context, name)
+        }
+    }
+
+    /** Stop the current recording and discard it (clear, no save). Local when standalone, else phone. */
+    fun discardTrackRecording(context: Context) {
+        val navState = NavigationStateHolder.state.value
+        if (navState.standaloneMode || !navState.isPhoneConnected) {
+            if (TrackRecorder.nativeIsTrackRecordingEnabled()) {
+                TrackRecorder.nativeClearTrackRecording()
+                TrackRecorder.nativeStopTrackRecording()
+            }
+            NavigationStateHolder.update { it.copy(isTrackRecording = false, trackRecordingStartTime = 0L, trackRecordingDistance = 0.0, trackRecordingDuration = 0.0) }
+        } else {
+            getBackend(context).discardTrackRecording(context)
+        }
+    }
     fun requestBookmarks(context: Context) = getBackend(context).requestBookmarks(context)
     fun toggleBookmarkCategory(context: Context, categoryName: String) {
         // Apply on the watch's own native DB first so visibility flips even when the phone transport
@@ -289,16 +347,23 @@ object WearCommandService {
             try {
                 // If native framework is not ready, we might need a fallback or wait, 
                 // but usually it's initialized if we are seeing bookmarks locally.
-                BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId)
-                NavigationStateHolder.emitEvent(UiEvent.OpenMap)
-                // Force lock map to center on bookmark
-                NavigationStateHolder.update { it.copy(isMapUnlocked = false) }
+                val info = BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
+                if (info != null) {
+                    BookmarkManager.INSTANCE.showBookmarkOnMap(bmkId)
+                    NavigationStateHolder.emitEvent(UiEvent.OpenMap)
+                    // Force lock map to center on bookmark
+                    NavigationStateHolder.update { it.copy(isMapUnlocked = false) }
+                }
             } catch (e: Throwable) {
                 Log.e(TAG, "Failed to show bookmark $bmkId locally", e)
             }
         } else {
             // Companion mode: Request phone to show it
-            getBackend(context).showBookmarkOnPhone(context, bmkId)
+            val info = BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
+            if (info != null) {
+                val catName = BookmarkManager.INSTANCE.categories.find { it.id == info.categoryId }?.name ?: ""
+                getBackend(context).showBookmarkOnPhone(context, info.name, catName, info.lat, info.lon)
+            }
         }
     }
 
@@ -307,8 +372,23 @@ object WearCommandService {
         val info = BookmarkManager.INSTANCE.getBookmarkInfo(bmkId)
         // Preserve the existing description — update("", …) would wipe it on a rename/recolor.
         info?.update(name, app.organicmaps.sdk.bookmarks.data.Icon(color, info.icon.type), info.description)
-        if (categoryId != -1L && info != null && info.categoryId != categoryId) {
-            info.changeCategory(categoryId)
+        if (categoryId != -1L && info != null) {
+            // IDs from the NavigationState may be phone IDs (private to the phone's engine).
+            // Resolve the destination to a local ID by name before passing it to our engine.
+            val catName = NavigationStateHolder.state.value.bookmarkCategories.find { it.id == categoryId }?.name
+            if (catName != null) {
+                val manager = BookmarkManager.INSTANCE
+                val localCatId = manager.categories.find { it.name.equals(catName, ignoreCase = true) }?.id
+                    ?: manager.createCategory(catName)
+                if (info.categoryId != localCatId) {
+                    info.changeCategory(localCatId)
+                }
+            } else {
+                // If we can't find it by ID in our UI state, try using the ID as-is (might already be local)
+                if (info.categoryId != categoryId) {
+                    info.changeCategory(categoryId)
+                }
+            }
         }
         // Propagate through the content-addressed channel (tombstone the old identity + upsert the new
         // one), NOT the legacy PATH_BOOKMARK_UPDATE: that carried the watch's local bookmark id, which

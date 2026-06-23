@@ -38,6 +38,17 @@ public class TrackRecordingService extends Service implements LocationListener
   public static final String STOP_TRACK_RECORDING = "STOP_TRACK_RECORDING";
   public static final int TRACK_REC_NOTIFICATION_ID = 54321;
   private static long sRecordingStartTime = 0;
+  // Latest live stats for the in-progress recording, so the watch can show distance/duration while
+  // the phone does the actual recording. Cached here (not the native single stats-listener slot) so
+  // any sync layer can read them when pushing status to the watch.
+  private static volatile double sLength = 0;   // metres
+  private static volatile double sDuration = 0; // seconds
+  // Pending stop disposition consumed by saveAndStop(): discard clears the recording, otherwise it is
+  // saved under sPendingName (empty = auto-named). Defaults reproduce the legacy "save on stop".
+  private static volatile boolean sDiscard = false;
+  private static volatile String sPendingName = "";
+  private Location mLastLocation = null;
+  private long mLastWatchPushMs = 0;
   private NotificationCompat.Builder mNotificationBuilder;
   private static final String TAG = TrackRecordingService.class.getSimpleName();
   private boolean mWarningNotification = false;
@@ -49,6 +60,19 @@ public class TrackRecordingService extends Service implements LocationListener
   {
     return sRecordingStartTime;
   }
+
+  /** Live recorded distance in metres (0 when not recording). */
+  public static double getRecordedLength()
+  {
+    return sLength;
+  }
+
+  /** Live recorded duration in seconds (0 when not recording). */
+  public static double getRecordedDuration()
+  {
+    return sDuration;
+  }
+
 
   @Nullable
   @Override
@@ -144,16 +168,40 @@ public class TrackRecordingService extends Service implements LocationListener
     // The notification is cancelled automatically by the system.
   }
 
+  /** Stop the recording, saving it (optional name; empty = auto-named). */
+  public static void saveRecording(@NonNull Context context, @Nullable String name)
+  {
+    sDiscard = false;
+    sPendingName = (name == null) ? "" : name;
+    stopService(context);
+  }
+
+  /** Stop the recording, discarding (clearing) the recorded track without saving. */
+  public static void discardRecording(@NonNull Context context)
+  {
+    sDiscard = true;
+    sPendingName = "";
+    stopService(context);
+  }
+
   private void saveAndStop() {
     sRecordingStartTime = 0;
+    sLength = 0;
+    sDuration = 0;
+    mLastLocation = null;
     if (TrackRecorder.nativeIsTrackRecordingEnabled())
     {
-      if (!TrackRecorder.nativeIsTrackRecordingEmpty()) {
-          Logger.i(TAG, "Saving track recording");
-          TrackRecorder.nativeSaveTrackRecordingWithName("");
+      if (sDiscard) {
+        Logger.i(TAG, "Discarding track recording");
+        TrackRecorder.nativeClearTrackRecording();
+      } else if (!TrackRecorder.nativeIsTrackRecordingEmpty()) {
+        Logger.i(TAG, "Saving track recording" + (sPendingName.isEmpty() ? "" : " as '" + sPendingName + "'"));
+        TrackRecorder.nativeSaveTrackRecordingWithName(sPendingName);
       }
       TrackRecorder.nativeStopTrackRecording();
     }
+    sDiscard = false;
+    sPendingName = "";
   }
 
   @Override
@@ -265,6 +313,25 @@ public class TrackRecordingService extends Service implements LocationListener
   public void onLocationUpdated(@NonNull Location location)
   {
     Logger.i(TAG, "Location is being updated in Track Recording service");
+
+    // Accumulate live distance/duration ourselves from the location stream (the native stats listener
+    // is unreliable here) so the watch can show recording stats. Duration is wall-clock from start.
+    if (mLastLocation != null)
+    {
+      float seg = mLastLocation.distanceTo(location);
+      if (seg > 0 && seg < 10000) // ignore GPS jumps
+        sLength += seg;
+    }
+    mLastLocation = location;
+    if (sRecordingStartTime > 0)
+      sDuration = (System.currentTimeMillis() - sRecordingStartTime) / 1000.0;
+
+    long now = System.currentTimeMillis();
+    if (now - mLastWatchPushMs >= 2000)
+    {
+      mLastWatchPushMs = now;
+      WearSyncService.sendTrackRecordingStatus(this, true);
+    }
 
     if (mWarningNotification)
     {

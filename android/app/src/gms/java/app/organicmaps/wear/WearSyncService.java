@@ -196,6 +196,11 @@ public class WearSyncService {
             android.content.SharedPreferences snap = context.getSharedPreferences(SNAP_PREFS, Context.MODE_PRIVATE);
             android.content.SharedPreferences.Editor editor = snap.edit();
             long now = System.currentTimeMillis();
+            // Positions of every live bookmark: a rename or category-move leaves the pin at the same
+            // spot under a new identity. Such an identity must NOT be tombstoned — a tombstone would
+            // race ahead of the upsert (sent ~1s later) and delete the pin before the upsert can
+            // relocate it. Only a genuine delete (no pin left at that position) gets a tombstone.
+            Set<String> livePositions = app.organicmaps.sdk.sync.BookmarkTombstoneStore.allCurrentPositions(manager);
             for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : manager.getCategories()) {
                 Set<String> current = app.organicmaps.sdk.sync.BookmarkTombstoneStore.currentIdentities(manager, cat);
                 String key = "snap_" + cat.getName();
@@ -203,10 +208,16 @@ public class WearSyncService {
                 if (previous != null) {
                     for (String gone : previous) {
                         if (!current.contains(gone)) {
+                            String pos = app.organicmaps.sdk.sync.BookmarkTombstoneStore.positionOfKey(gone);
+                            if (pos != null && livePositions.contains(pos)) {
+                                Log.d("WearSync", "Identity gone but pin still at position (move/rename) -> no tombstone: " + gone);
+                                continue;
+                            }
+                            // Genuine deletion: tombstone the old location so the peer removes it.
                             app.organicmaps.sdk.sync.BookmarkTombstoneStore.record(context, gone, now);
                             byte[] payload = app.organicmaps.sdk.sync.BookmarkTombstoneStore.encodeFromKey(gone, now);
                             if (payload != null) {
-                                Log.d("WearSync", "Bookmark deleted locally -> tombstone " + gone);
+                                Log.d("WearSync", "Bookmark deleted locally (from category '" + cat.getName() + "') -> tombstone " + gone);
                                 getSyncLayer().sendRawMessage(context, app.organicmaps.sdk.sync.WearProtocol.TYPE_BOOKMARK_TOMBSTONE, payload);
                             }
                         }
@@ -409,8 +420,24 @@ public class WearSyncService {
         
         for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat : categories) {
             String name = cat.getName();
-            // Create a fingerprint of the category to detect renames, edits, and count changes
-            String fingerprint = name + ":" + cat.getBookmarksCount() + ":" + cat.getTracksCount() + ":" + cat.isVisible();
+            // Fingerprint the category by its full per-bookmark content, not just counts: a rename,
+            // recolor, re-description or move leaves the bookmark/track counts unchanged, so a
+            // count-only fingerprint never fired and the edit was never pushed to the watch (the new
+            // name vanished — only the old-identity tombstone went out). Fold every bookmark's
+            // identity + editable fields in so any in-place edit changes the fingerprint.
+            int contentSig = 0;
+            int bCount = cat.getBookmarksCount();
+            for (int i = 0; i < bCount; i++) {
+                long bid = cat.getBookmarkIdByPosition(i);
+                app.organicmaps.sdk.bookmarks.data.BookmarkInfo info =
+                    app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.getBookmarkInfo(bid);
+                if (info == null) continue;
+                app.organicmaps.sdk.bookmarks.data.Icon icon = info.getIcon();
+                contentSig = 31 * contentSig + java.util.Objects.hash(
+                    info.getName(), info.getLat(), info.getLon(),
+                    icon.getColor(), icon.getType(), info.getDescription());
+            }
+            String fingerprint = name + ":" + bCount + ":" + cat.getTracksCount() + ":" + cat.isVisible() + ":" + contentSig;
             String lastFingerprint = syncPrefs.getString("fp_" + name, "");
             
             if (!fingerprint.equals(lastFingerprint)) {
@@ -537,6 +564,16 @@ public class WearSyncService {
         }
 
         if (!sListenersRegistered && context != null) {
+            // Materialize the Wear OS preference defaults into DefaultSharedPreferences at startup.
+            // Otherwise they only exist after the user opens Settings -> Wear OS for the first time
+            // (that fragment runs setDefaultValues), so until then getAllSettings() returned nothing
+            // and the phone's initial settings never seeded/synced to the watch. Done BEFORE the
+            // change-listener is registered so the seed writes stay quiet (no version inflation).
+            // readAgain=true is REQUIRED: the global _has_set_default_values guard is already set by the
+            // main settings XML's setDefaultValues at startup, so a false here would skip prefs_wear_os
+            // entirely (only pref_wear_os_backend, set explicitly elsewhere, would exist). true bypasses
+            // the guard; it never overwrites a key that already has a value, so it's safe to repeat.
+            androidx.preference.PreferenceManager.setDefaultValues(context, app.organicmaps.R.xml.prefs_wear_os, true);
             app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addCategoriesUpdatesListener(sBookmarkListener);
             app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addSharingListener(sSharingListener);
             app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE.addLoadingListener(sBookmarkLoadingListener);

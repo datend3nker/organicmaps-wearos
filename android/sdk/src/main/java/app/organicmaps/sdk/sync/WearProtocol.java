@@ -27,6 +27,10 @@ public class WearProtocol {
     public static final String PATH_LAUNCH = "/launch";
     public static final String PATH_TRACK_RECORDING = "/track/recording";
     public static final String PATH_TRACK_RECORDING_TOGGLE = "/track/recording/toggle";
+    // Explicit recording controls (path-routed, no dedicated message type): save the current
+    // recording (optional UTF-8 name payload) or discard it.
+    public static final String PATH_TRACK_RECORDING_SAVE = "/track/recording/save";
+    public static final String PATH_TRACK_RECORDING_DISCARD = "/track/recording/discard";
     public static final String PATH_BOOKMARKS = "/bookmarks";
     public static final String PATH_BOOKMARKS_REQUEST = "/bookmarks/request";
     public static final String PATH_BOOKMARKS_METADATA = "/bookmarks/metadata";

@@ -195,17 +195,54 @@ public final class BookmarkTombstoneStore
     {
       long id = category.getBookmarkIdByPosition(i);
       BookmarkInfo info = mgr.getBookmarkInfo(id);
-      if (info == null)
+      if (info == null || info.getCategoryId() != category.getId())
         continue;
       String key = identityKey(category.getName(), info.getName(), info.getLat(), info.getLon());
-      if (tombstones.containsKey(key))
-        toDelete.add(id);
+      Long tombTs = tombstones.get(key);
+      if (tombTs == null)
+        continue;
+      // Respect last-writer-wins: a bookmark revived by a strictly-newer upsert (its stored LWW ts >
+      // the tombstone) must survive an older, now-obsolete tombstone. Delete wins on an exact tie,
+      // matching applyUpsertBatch's tomb >= ts suppression.
+      if (BookmarkSyncCore.lwwTimestamp(c, key) > tombTs)
+        continue;
+      toDelete.add(id);
     }
     for (long id : toDelete)
       mgr.deleteBookmark(id);
     if (!toDelete.isEmpty())
       Log.d(TAG, "Applied tombstones to '" + category.getName() + "': removed " + toDelete.size() + " bookmark(s)");
     return toDelete.size();
+  }
+
+  /** Quantized position ("latQ|lonQ") of every bookmark across all categories. */
+  @NonNull
+  public static Set<String> allCurrentPositions(@NonNull BookmarkManager mgr)
+  {
+    Set<String> positions = new HashSet<>();
+    for (BookmarkCategory cat : mgr.getCategories())
+    {
+      int count = cat.getBookmarksCount();
+      for (int i = 0; i < count; i++)
+      {
+        long id = cat.getBookmarkIdByPosition(i);
+        BookmarkInfo info = mgr.getBookmarkInfo(id);
+        if (info != null)
+          positions.add(quant(info.getLat()) + "|" + quant(info.getLon()));
+      }
+    }
+    return positions;
+  }
+
+  /** Extract the "latQ|lonQ" position suffix from an identity key (cat|name|latQ|lonQ), or null. */
+  @Nullable
+  public static String positionOfKey(@NonNull String key)
+  {
+    int lo = key.lastIndexOf('|');
+    if (lo <= 0) return null;
+    int la = key.lastIndexOf('|', lo - 1);
+    if (la <= 0) return null;
+    return key.substring(la + 1);
   }
 
   /** Current identity set of a category (for snapshot/diff-based deletion detection). */

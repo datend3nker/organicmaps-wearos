@@ -162,6 +162,12 @@ object WatchBookmarkSyncManager {
             val manager = BookmarkManager.INSTANCE
             val snap = context.getSharedPreferences(SNAP_PREFS, Context.MODE_PRIVATE)
             val now = System.currentTimeMillis()
+
+            // Positions of every live bookmark: a rename or category-move leaves the pin at the same
+            // spot under a new identity, which must NOT be tombstoned (the tombstone would race ahead
+            // of the upsert and delete the pin before it can be relocated). Only a genuine delete
+            // (no pin left at that position) tombstones.
+            val livePositions = BookmarkTombstoneStore.allCurrentPositions(manager)
             snap.edit {
                 for (cat in manager.categories) {
                     val current = BookmarkTombstoneStore.currentIdentities(manager, cat)
@@ -169,9 +175,14 @@ object WatchBookmarkSyncManager {
                     val previous = snap.getStringSet(key, null)
                     if (previous != null && isUserAction) {
                         for (gone in (previous - current)) {
+                            val pos = BookmarkTombstoneStore.positionOfKey(gone)
+                            if (pos != null && livePositions.contains(pos)) {
+                                Log.d(TAG, "Identity gone but pin still at position (move/rename) → no tombstone: $gone")
+                                continue
+                            }
                             BookmarkTombstoneStore.record(context, gone, now)
                             BookmarkTombstoneStore.encodeFromKey(gone, now)?.let {
-                                Log.d(TAG, "Bookmark deleted locally → tombstone $gone")
+                                Log.d(TAG, "Bookmark deleted locally (from category '${cat.name}') → tombstone $gone")
                                 WearCommandService.sendBookmarkTombstone(context, it)
                             }
                         }
