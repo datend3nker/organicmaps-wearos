@@ -7,12 +7,13 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.flavor }}
+    name: Build ${{ matrix.app }} ${{ matrix.flavor }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         flavor: [google, fdroid, oss]
+        app: [phone, watch]
         include:
           - flavor: google
             taskFlavor: Google
@@ -58,28 +59,36 @@ jobs:
       - name: Configure ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ github.workflow }}-${{ matrix.flavor }}
+          key: ${{ github.workflow }}-${{ matrix.app }}-${{ matrix.flavor }}
 
-      - name: Build Phone and Watch APKs
+      - name: Build APK
         working-directory: android
         env:
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: |
-          # Build Phone app and Watch app debug APKs with arm32 + arm64 ABIs
-          ./gradlew :app:assemble${{ matrix.taskFlavor }}Debug :app:omaps:assemble${{ matrix.taskFlavor }}Debug -Parm32 -Parm64
+          # Build Phone or Watch app debug APK with arm32 + arm64 ABIs
+          # Limit C++ compilation threads to 2 and disable task-parallelism to prevent OOM
+          if [ "${{ matrix.app }}" = "phone" ]; then
+            ./gradlew :app:assemble${{ matrix.taskFlavor }}Debug -Parm32 -Parm64 -Pnjobs=2 --no-parallel
+          else
+            ./gradlew :app:omaps:assemble${{ matrix.taskFlavor }}Debug -Parm32 -Parm64 -Pnjobs=2 --no-parallel
+          fi
 
       - name: Prepare assets
         shell: bash
         run: |
           mkdir -p build_output
-          cp android/app/build/outputs/apk/${{ matrix.flavor }}/debug/app-${{ matrix.flavor }}-debug.apk build_output/OrganicMaps-Phone-${{ matrix.flavor }}-debug.apk
-          cp android/app/omaps/build/outputs/apk/${{ matrix.flavor }}/debug/omaps-${{ matrix.flavor }}-debug.apk build_output/OrganicMaps-Watch-${{ matrix.flavor }}-debug.apk
+          if [ "${{ matrix.app }}" = "phone" ]; then
+            cp android/app/build/outputs/apk/${{ matrix.flavor }}/debug/app-${{ matrix.flavor }}-debug.apk build_output/OrganicMaps-Phone-${{ matrix.flavor }}-debug.apk
+          else
+            cp android/app/omaps/build/outputs/apk/${{ matrix.flavor }}/debug/omaps-${{ matrix.flavor }}-debug.apk build_output/OrganicMaps-Watch-${{ matrix.flavor }}-debug.apk
+          fi
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sideload-apks-${{ matrix.flavor }}
+          name: sideload-apks-${{ matrix.app }}-${{ matrix.flavor }}
           path: build_output/*
           if-no-files-found: error
 
