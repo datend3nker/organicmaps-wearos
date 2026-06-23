@@ -585,7 +585,7 @@
     <string name="nav_auto">Nav Auto</string>
     <string name="long_tap_toast">Long tap on map</string>
     <string name="unknown_file_type">Unknown file type: %s</string>
-    <string name="failed_to_open_file">Failed to open file: %s (%s)</string>
+    <string name="failed_to_open_file">Failed to open file: %1$s (%2$s)</string>
     <string name="uri_open_location_failed">Failed to open URI</string>
     <string name="load_kmz_title">Load KMZ</string>
     <string name="load_kmz_successful">KMZ loaded successfully</string>
