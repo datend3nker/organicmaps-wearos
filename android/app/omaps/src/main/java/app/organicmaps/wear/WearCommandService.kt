@@ -284,11 +284,13 @@ object WearCommandService {
         if (navState.standaloneMode || !navState.isPhoneConnected) {
             val isRecording = TrackRecorder.nativeIsTrackRecordingEnabled()
             if (isRecording) {
-                if (!TrackRecorder.nativeIsTrackRecordingEmpty()) {
+                val saved = !TrackRecorder.nativeIsTrackRecordingEmpty()
+                if (saved) {
                     TrackRecorder.nativeSaveTrackRecordingWithName("")
                 }
                 TrackRecorder.nativeStopTrackRecording()
                 NavigationStateHolder.update { it.copy(isTrackRecording = false, trackRecordingStartTime = 0L) }
+                if (saved) WatchTrackSyncManager.onLocalTracksChanged(context)
             } else {
                 TrackRecorder.nativeStartTrackRecording()
                 NavigationStateHolder.update { it.copy(isTrackRecording = true, trackRecordingStartTime = System.currentTimeMillis()) }
@@ -302,14 +304,57 @@ object WearCommandService {
     fun saveTrackRecording(context: Context, name: String = "") {
         val navState = NavigationStateHolder.state.value
         if (navState.standaloneMode || !navState.isPhoneConnected) {
+            var saved = false
             if (TrackRecorder.nativeIsTrackRecordingEnabled()) {
-                if (!TrackRecorder.nativeIsTrackRecordingEmpty())
+                if (!TrackRecorder.nativeIsTrackRecordingEmpty()) {
                     TrackRecorder.nativeSaveTrackRecordingWithName(name)
+                    saved = true
+                }
                 TrackRecorder.nativeStopTrackRecording()
             }
             NavigationStateHolder.update { it.copy(isTrackRecording = false, trackRecordingStartTime = 0L, trackRecordingDistance = 0.0, trackRecordingDuration = 0.0) }
+            if (saved) WatchTrackSyncManager.onLocalTracksChanged(context)
         } else {
             getBackend(context).saveTrackRecording(context, name)
+        }
+    }
+
+    // ---- saved-track sync + management -------------------------------------
+
+    fun sendTrackManifest(context: Context, payload: ByteArray) = getBackend(context).sendTrackManifest(context, payload)
+    fun sendTrackTombstone(context: Context, payload: ByteArray) = getBackend(context).sendTrackTombstone(context, payload)
+    fun requestTrackBlob(context: Context, payload: ByteArray) = getBackend(context).requestTrackBlob(context, payload)
+    fun sendTrackBlob(context: Context, payload: ByteArray) = getBackend(context).sendTrackBlob(context, payload)
+
+    /** Pull saved tracks from the phone (manifest-driven) and push ours. Phone reconciles on connect too. */
+    fun requestTracks(context: Context) {
+        getBackend(context).requestBookmarks(context) // phone answers with bookmark + track manifests
+        WatchTrackSyncManager.requestSync(context)
+    }
+
+    /** Rename a saved track on the watch, then propagate via the track manifest (LWW). */
+    fun renameTrack(context: Context, trackId: Long, name: String) {
+        val mgr = BookmarkManager.INSTANCE
+        val t = try { mgr.getTrack(trackId) } catch (e: Exception) { null } ?: return
+        // Preserve the embedded sync uuid (it lives in the description) on rename.
+        t.update(name, t.color, t.description)
+        WatchTrackSyncManager.onLocalTracksChanged(context)
+    }
+
+    /** Delete a saved track on the watch, then propagate a tombstone. */
+    fun deleteTrack(context: Context, trackId: Long) {
+        try { BookmarkManager.INSTANCE.deleteTrack(trackId) } catch (e: Exception) { Log.e(TAG, "deleteTrack failed", e) }
+        WatchTrackSyncManager.onLocalTracksChanged(context)
+    }
+
+    /** Center the watch's own map on a saved track. */
+    fun showTrackOnWatch(context: Context, trackId: Long) {
+        try {
+            BookmarkManager.INSTANCE.showBookmarkCategoryOnMap(BookmarkManager.INSTANCE.getTrack(trackId).categoryId)
+            NavigationStateHolder.emitEvent(UiEvent.OpenMap)
+            NavigationStateHolder.update { it.copy(isMapUnlocked = false) }
+        } catch (e: Exception) {
+            Log.e(TAG, "showTrackOnWatch failed", e)
         }
     }
 

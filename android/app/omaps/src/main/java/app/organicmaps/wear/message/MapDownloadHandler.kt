@@ -23,9 +23,9 @@ class MapDownloadHandler : WearMessageHandler {
         val countryId = String(data, StandardCharsets.UTF_8)
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         
-        val mapEnabled = prefs.getBoolean("mapEnabled", false)
-        val mapDownloadMode = prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC"
-        if (!mapEnabled || mapDownloadMode != "DIRECT_DOWNLOAD") {
+        val mapEnabled = prefs.getBoolean("pref_wear_os_map_enabled", true)
+        val mapDownloadMode = prefs.getString("pref_wear_os_map_download_mode", "PHONE_SYNC") ?: "PHONE_SYNC"
+        if (!mapEnabled || mapDownloadMode != "INTERNET") {
             Log.d(TAG, "Ignoring map push/download request due to sync mode: $mapDownloadMode")
             return
         }

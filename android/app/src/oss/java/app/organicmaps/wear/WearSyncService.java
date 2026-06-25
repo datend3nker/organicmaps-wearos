@@ -369,6 +369,14 @@ public class WearSyncService {
         // Stub for OSS
     }
 
+    // ---- saved-track sync (OSS stubs) --------------------------------------
+    public static void syncTracksNow() { /* Stub for OSS */ }
+    public static void syncTracksForced() { /* Stub for OSS */ }
+    public static void handleIncomingTrackManifest(Context context, byte[] payload) { /* Stub for OSS */ }
+    public static void handleIncomingTrackTombstone(Context context, byte[] payload) { /* Stub for OSS */ }
+    public static void handleIncomingTrackBlobRequest(Context context, byte[] payload) { /* Stub for OSS */ }
+    public static void handleIncomingTrackBlob(Context context, byte[] payload) { /* Stub for OSS */ }
+
     public static void syncBookmarksNow() {
         android.util.Log.d("WearSync", "syncBookmarksNow stub called");
         Context context = app.organicmaps.MwmApplication.sInstance;

@@ -75,12 +75,24 @@ class NavStatusHandler : WearMessageHandler {
                         // Automatically request/mount MWM even when not navigating
                         if (!newState.watchLocalMode && newState.isPhoneConnected) {
                             val countryId = app.organicmaps.sdk.downloader.MapManager.nativeFindCountry(lat, lon)
-                            if (!countryId.isNullOrEmpty() &&
-                                app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId) != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE &&
-                                !app.organicmaps.wear.VirtualMwmManager.isMounted(countryId)
-                            ) {
-                                Log.d("NavStatusHandler", "Requesting metadata for virtual MWM (idle): $countryId")
-                                app.organicmaps.wear.WearCommandService.requestMwmMetadata(context, countryId)
+                            if (!countryId.isNullOrEmpty()) {
+                                val stateName = app.organicmaps.wear.WearMapDownloader.downloadState.value.name
+                                val isDownloading = app.organicmaps.wear.WearMapDownloader.currentMap.value == countryId && 
+                                    (stateName == "DOWNLOADING" || stateName == "STREAMING_FROM_PHONE" || stateName == "VALIDATING")
+                                     
+                                val nativeStatus = app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId)
+                                val isNativeDownloading = nativeStatus == app.organicmaps.sdk.downloader.CountryItem.STATUS_PROGRESS ||
+                                                          nativeStatus == app.organicmaps.sdk.downloader.CountryItem.STATUS_ENQUEUED ||
+                                                          nativeStatus == app.organicmaps.sdk.downloader.CountryItem.STATUS_APPLYING
+
+                                if (!isDownloading && !isNativeDownloading &&
+                                    nativeStatus != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE &&
+                                    !app.organicmaps.wear.VirtualMwmManager.isMounted(countryId) &&
+                                    app.organicmaps.wear.VirtualMwmManager.shouldRequestMetadata(countryId)
+                                ) {
+                                    Log.d("NavStatusHandler", "Requesting metadata for virtual MWM (idle): $countryId")
+                                    app.organicmaps.wear.WearCommandService.requestMwmMetadata(context, countryId)
+                                }
                             }
                         }
                     } catch (_: Throwable) {}
@@ -159,20 +171,33 @@ class NavStatusHandler : WearMessageHandler {
                     // COMPANION MODE: Automatically request/mount MWM for current location
                     if (!newState.watchLocalMode && newState.isPhoneConnected) {
                         val countryId = app.organicmaps.sdk.downloader.MapManager.nativeFindCountry(lat, lon)
-                        if (!countryId.isNullOrEmpty() &&
-                            app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId) != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE &&
-                            !app.organicmaps.wear.VirtualMwmManager.isMounted(countryId)
-                        ) {
-                            Log.d("NavStatusHandler", "Requesting metadata for virtual MWM: $countryId")
-                            app.organicmaps.wear.WearCommandService.requestMwmMetadata(context, countryId)
+                        if (!countryId.isNullOrEmpty()) {
+                            val stateName = app.organicmaps.wear.WearMapDownloader.downloadState.value.name
+                            val isDownloading = app.organicmaps.wear.WearMapDownloader.currentMap.value == countryId && 
+                                (stateName == "DOWNLOADING" || stateName == "STREAMING_FROM_PHONE" || stateName == "VALIDATING")
+                                 
+                            val nativeStatus = app.organicmaps.sdk.downloader.MapManager.nativeGetStatus(countryId)
+                            val isNativeDownloading = nativeStatus == app.organicmaps.sdk.downloader.CountryItem.STATUS_PROGRESS ||
+                                                      nativeStatus == app.organicmaps.sdk.downloader.CountryItem.STATUS_ENQUEUED ||
+                                                      nativeStatus == app.organicmaps.sdk.downloader.CountryItem.STATUS_APPLYING
+
+                            if (!isDownloading && !isNativeDownloading &&
+                                nativeStatus != app.organicmaps.sdk.downloader.CountryItem.STATUS_DONE &&
+                                !app.organicmaps.wear.VirtualMwmManager.isMounted(countryId) &&
+                                app.organicmaps.wear.VirtualMwmManager.shouldRequestMetadata(countryId)
+                            ) {
+                                Log.d("NavStatusHandler", "Requesting metadata for virtual MWM: $countryId")
+                                app.organicmaps.wear.WearCommandService.requestMwmMetadata(context, countryId)
+                            }
                         }
                     }
                 } catch (_: Throwable) {}
             }
 
             // Companion mode: draw the route polyline the phone computed (energy-efficient — phone
-            // already routed; watch only renders). Geometry arrives once on startNavigation, so draw
-            // only when it's present in this frame. DrapeApi line keyed "route" → replaced, not stacked.
+            // already routed; watch only renders). Phone sends geometry at start, on every route
+            // rebuild (recalculation), and periodically (late-join safety), so draw whenever it's
+            // present in this frame. DrapeApi line keyed "route" → replaced, not stacked.
             if (routePoints.isNotEmpty()) {
                 val rp = routePoints
                 CoroutineScope(Dispatchers.Main).launch {

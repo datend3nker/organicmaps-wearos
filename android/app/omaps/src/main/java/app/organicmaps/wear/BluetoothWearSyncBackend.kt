@@ -283,6 +283,22 @@ class BluetoothWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_TOMBSTONE, payload, WearProtocol.TYPE_BOOKMARK_TOMBSTONE)
     }
 
+    override fun sendTrackManifest(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_TRACK_MANIFEST, payload, WearProtocol.TYPE_TRACK_MANIFEST)
+    }
+
+    override fun sendTrackTombstone(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_TRACK_TOMBSTONE, payload, WearProtocol.TYPE_TRACK_TOMBSTONE)
+    }
+
+    override fun requestTrackBlob(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_TRACK_BLOB_REQUEST, payload, WearProtocol.TYPE_TRACK_BLOB_REQUEST)
+    }
+
+    override fun sendTrackBlob(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_TRACK_BLOB, payload, WearProtocol.TYPE_TRACK_BLOB)
+    }
+
     override fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) {
         val nameBytes = mwmName.toByteArray(StandardCharsets.UTF_8)
         val buffer = ByteBuffer.allocate(4 + nameBytes.size + 8 + 4)

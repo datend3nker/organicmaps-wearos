@@ -62,6 +62,17 @@ class VirtualMwmMountHandler : WearMessageHandler {
         
         // FIX: native core initialization and mount checks must be on UI thread
         CoroutineScope(Dispatchers.Main).launch {
+            // Skip mounting if this map is currently being fully downloaded/pulled, to prevent
+            // link congestion and rendering conflicts.
+            val stateName = app.organicmaps.wear.WearMapDownloader.downloadState.value.name
+            val normalizedMwmName = app.organicmaps.sdk.util.MapIdUtils.normalize(mwmName)
+            val normalizedCurrentMap = app.organicmaps.wear.WearMapDownloader.currentMap.value?.let { app.organicmaps.sdk.util.MapIdUtils.normalize(it) }
+            val isDownloading = normalizedCurrentMap != null && normalizedMwmName == normalizedCurrentMap && 
+                (stateName == "DOWNLOADING" || stateName == "STREAMING_FROM_PHONE" || stateName == "VALIDATING")
+            if (isDownloading) {
+                android.util.Log.d("VirtualMwmMountHandler", "Skipping virtual mount for $mwmName as it is actively downloading")
+                return@launch
+            }
             VirtualMwmManager.mount(context, mwmName, totalSize, headerData, footerData)
         }
     }

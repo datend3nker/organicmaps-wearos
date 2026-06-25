@@ -41,6 +41,14 @@ public class GmsSyncLayer implements ISyncLayer {
     private String mActivePeerId;
     private static volatile String sLocalNodeId;
 
+    // Companion route geometry resend: the watch draws the route from junction points the phone
+    // sends. Geometry must be (re)sent not only at start but on every route REBUILD
+    // (recalculation, e.g. after going off-route) and periodically — otherwise the watch keeps
+    // drawing the stale original line, and a watch that restarts/joins mid-nav never gets a line.
+    private int mLastRouteSig = 0;
+    private int mFramesSinceGeometry = 0;
+    private static final int GEOMETRY_RESEND_FRAMES = 20; // ~one resend per 20 GPS fixes (late-join safety)
+
     public GmsSyncLayer() {
         startHeartbeat();
         if (sLocalNodeId == null) {
@@ -175,31 +183,48 @@ public class GmsSyncLayer implements ISyncLayer {
 
     @Override
     public void updateNavigation(@NonNull Context context, @Nullable RoutingInfo info, @Nullable Location location) {
-        byte[] payload = WearProtocolDataConverter.encodeNavigationStatus(context, 
-            app.organicmaps.sdk.routing.RoutingController.get().isNavigating(), 
-            info, location, null, null);
+        boolean navigating = app.organicmaps.sdk.routing.RoutingController.get().isNavigating();
+
+        // Piggyback the route geometry onto the regular status frame whenever the route changed
+        // (recalculation → different junction signature) or the periodic safety interval elapsed
+        // (so a watch that joined/restarted mid-nav re-receives the line). Unchanged frames send
+        // no geometry, keeping the per-fix payload small.
+        float[] routeLats = null;
+        float[] routeLons = null;
+        if (navigating) {
+            float[][] geometry = extractRouteGeometry();
+            if (geometry != null) {
+                int sig = java.util.Arrays.hashCode(geometry[0]) * 31 + java.util.Arrays.hashCode(geometry[1]);
+                mFramesSinceGeometry++;
+                if (sig != mLastRouteSig || mFramesSinceGeometry >= GEOMETRY_RESEND_FRAMES) {
+                    routeLats = geometry[0];
+                    routeLons = geometry[1];
+                    mLastRouteSig = sig;
+                    mFramesSinceGeometry = 0;
+                }
+            }
+        }
+
+        byte[] payload = WearProtocolDataConverter.encodeNavigationStatus(context,
+            navigating, info, location, routeLats, routeLons);
         sendMessage(context, WearProtocol.PATH_NAVIGATION_STATUS, payload);
     }
 
     @Override
     public void startNavigation(@NonNull Context context) {
         syncPreferences(context);
-        
+
         float[] routeLats = null;
         float[] routeLons = null;
-        try {
-            app.organicmaps.sdk.routing.JunctionInfo[] junctions = app.organicmaps.sdk.Framework.nativeGetRouteJunctionPoints(20.0);
-            if (junctions != null && junctions.length > 0) {
-                routeLats = new float[junctions.length];
-                routeLons = new float[junctions.length];
-                for (int i = 0; i < junctions.length; i++) {
-                    routeLats[i] = (float) junctions[i].mLat;
-                    routeLons[i] = (float) junctions[i].mLon;
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to extract route junctions", e);
+        float[][] geometry = extractRouteGeometry();
+        if (geometry != null) {
+            routeLats = geometry[0];
+            routeLons = geometry[1];
+            mLastRouteSig = java.util.Arrays.hashCode(routeLats) * 31 + java.util.Arrays.hashCode(routeLons);
+        } else {
+            mLastRouteSig = 0;
         }
+        mFramesSinceGeometry = 0;
 
         byte[] payload = WearProtocolDataConverter.encodeNavigationStatus(context, true, null, null, routeLats, routeLons);
         sendMessage(context, WearProtocol.PATH_NAVIGATION_STATUS, payload);
@@ -207,8 +232,30 @@ public class GmsSyncLayer implements ISyncLayer {
 
     @Override
     public void stopNavigation(@NonNull Context context) {
+        mLastRouteSig = 0;
+        mFramesSinceGeometry = 0;
         byte[] payload = WearProtocolDataConverter.encodeNavigationStatus(context, false, null, null, null, null);
         sendMessage(context, WearProtocol.PATH_NAVIGATION_STATUS, payload);
+    }
+
+    /** Current route as parallel [lats, lons] junction arrays (interpolated ≤20 m apart), or null. */
+    @Nullable
+    private static float[][] extractRouteGeometry() {
+        try {
+            app.organicmaps.sdk.routing.JunctionInfo[] junctions = app.organicmaps.sdk.Framework.nativeGetRouteJunctionPoints(20.0);
+            if (junctions == null || junctions.length == 0)
+                return null;
+            float[] lats = new float[junctions.length];
+            float[] lons = new float[junctions.length];
+            for (int i = 0; i < junctions.length; i++) {
+                lats[i] = (float) junctions[i].mLat;
+                lons[i] = (float) junctions[i].mLon;
+            }
+            return new float[][]{lats, lons};
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to extract route junctions", e);
+            return null;
+        }
     }
 
     @Override
@@ -309,7 +356,7 @@ public class GmsSyncLayer implements ISyncLayer {
         payload.put((byte) (compressed ? 1 : 0));
         payload.put(dataToSend);
 
-        sendMessage(context, WearProtocol.PATH_VIRTUAL_MWM_DATA, payload.array());
+        sendBytesViaChannel(context, WearProtocol.PATH_VIRTUAL_MWM_DATA, payload.array());
     }
 
     @Override
@@ -326,7 +373,60 @@ public class GmsSyncLayer implements ISyncLayer {
         buffer.putInt(footerLen);
         if (footer != null) buffer.put(footer);
 
-        sendMessage(context, WearProtocol.PATH_VIRTUAL_MWM_MOUNT, buffer.array());
+        sendBytesViaChannel(context, WearProtocol.PATH_VIRTUAL_MWM_MOUNT, buffer.array());
+    }
+
+    /**
+     * Send a bulk payload (viewport MWM data ~64KB, mount header/footer ~82KB) over a ChannelClient
+     * stream instead of MessageClient. MessageClient silently drops frames this large on the GMS
+     * bridge (emulator drops them outright; real devices sit near the ~100KB ceiling) — the root
+     * cause of "watch map stays blank, every block times out" while small control messages flowed.
+     * Channels are socket-backed: no size cap, reliable delivery. The watch side reads the stream in
+     * {@code WearDataListenerService.onChannelOpened} and routes it through the normal handler. The
+     * payload is the raw self-describing frame (no protocol-version prefix — point-to-point past
+     * handshake). Write runs on a worker thread; closing the OutputStream signals EOF to the reader.
+     */
+    private void sendBytesViaChannel(Context context, String path, byte[] payload) {
+        if (context == null) return;
+        app.organicmaps.wear.WearSyncService.onLocalTrafficSent();
+
+        String peer = mActivePeerId;
+        if (peer != null && !peer.equals(sLocalNodeId)) {
+            openChannelAndWrite(context, peer, path, payload);
+            return;
+        }
+        // No known peer yet — resolve a connected non-local node, then stream.
+        Wearable.getNodeClient(context).getConnectedNodes().addOnSuccessListener(nodes -> {
+            for (Node node : nodes) {
+                if (sLocalNodeId != null && node.getId().equals(sLocalNodeId)) continue;
+                openChannelAndWrite(context, node.getId(), path, payload);
+                return;
+            }
+            Log.w(TAG, "DEBUG_WEAR_PIPELINE: No peer node to stream " + path + " over channel");
+        }).addOnFailureListener(e -> Log.w(TAG, "DEBUG_WEAR_PIPELINE: getConnectedNodes failed for channel " + path + ": " + e.getMessage()));
+    }
+
+    private void openChannelAndWrite(Context context, String nodeId, String path, byte[] payload) {
+        app.organicmaps.sdk.sync.WearLog.logSent("PHONE", "GMS-CH", path, payload.length);
+        com.google.android.gms.wearable.ChannelClient channelClient = Wearable.getChannelClient(context);
+        channelClient.openChannel(nodeId, path).addOnSuccessListener(channel ->
+            channelClient.getOutputStream(channel).addOnSuccessListener(os ->
+                new Thread(() -> {
+                    try {
+                        os.write(payload);
+                        os.flush();
+                    } catch (Exception e) {
+                        Log.w(TAG, "DEBUG_WEAR_PIPELINE: channel write failed for " + path + ": " + e.getMessage());
+                    } finally {
+                        try { os.close(); } catch (Exception ignored) {}
+                        channelClient.close(channel);
+                    }
+                }, "MwmChannelWrite").start()
+            ).addOnFailureListener(e -> {
+                Log.w(TAG, "DEBUG_WEAR_PIPELINE: getOutputStream failed for " + path + ": " + e.getMessage());
+                channelClient.close(channel);
+            })
+        ).addOnFailureListener(e -> Log.w(TAG, "DEBUG_WEAR_PIPELINE: openChannel failed for " + path + ": " + e.getMessage()));
     }
 
     @Override

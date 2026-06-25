@@ -22,8 +22,16 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 object VirtualMwmManager {
     private const val TAG = "VirtualMwmManager"
-    private const val BLOCK_SIZE = 64 * 1024 
-    private const val READ_AHEAD_BLOCKS = 3
+    // 512KB blocks (was 64KB). Bulk data now rides a ChannelClient stream (no message-size cap), so
+    // bigger blocks mean ~8x fewer per-block channel opens. The per-block channel-open latency was
+    // the throughput bottleneck: under 64KB the offsets-table region (~13MB) needed 200+ opens and
+    // blocks landed AFTER the native WaitForData 20s budget expired → features_offsets_table.Load
+    // gave up → map never rendered. Native availability bitmap is 1KB-granular and range-marked, so
+    // block size is decoupled from it. Changing this invalidates existing .bits (blank-install OK).
+    private const val BLOCK_SIZE = 512 * 1024
+    // 1 (was 3). With 512KB blocks, read-ahead 3 burst 2MB of concurrent transfers onto the single
+    // GMS channel → congestion → individual feature blocks miss the native 20s WaitForData window.
+    private const val READ_AHEAD_BLOCKS = 1
     
     private val mwmFiles = ConcurrentHashMap<String, RandomAccessFile>()
     private val mwmPaths = ConcurrentHashMap<String, String>()
@@ -36,6 +44,15 @@ object VirtualMwmManager {
     
     private val saveHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val saveRunnables = ConcurrentHashMap<String, Runnable>()
+
+    // Per-block stream-request timeouts run here, NOT on the main looper. Under the streaming
+    // flood there are hundreds of in-flight blocks, each arming a 4.5s timeout; posting those to
+    // main jammed the UI thread (the "Request TIMEOUT" log storm on the main tid = watch lag).
+    // The callback only touches synchronized pending/tracker maps + logs — no UI — so a dedicated
+    // background looper is safe.
+    private val timeoutHandler = android.os.Handler(
+        android.os.HandlerThread("VirtualMwmTimeout").apply { start() }.looper
+    )
 
     private val mScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val nativeLibraryLoaded = CompletableDeferred<Unit>()
@@ -194,6 +211,15 @@ object VirtualMwmManager {
         return normalized != null && mountedMwms.contains(normalized)
     }
 
+    // Cached: the Map Manager calls this per-item on the main thread every 500ms poll. A direct
+    // findSparseFile() here would re-list the version dirs for every region on every recomposition.
+    // listPartialShadowIds caches the disk scan for 2s, so per-item calls are O(1) set lookups.
+    fun isVirtual(context: Context, mwmNameWithExt: String): Boolean {
+        val normalized = MapIdUtils.normalize(mwmNameWithExt) ?: return false
+        if (mountedMwms.contains(normalized)) return true
+        return normalized in listPartialShadowIds(context)
+    }
+
     @JvmStatic
     @Suppress("UNUSED")
     fun onDataRequired(mwmNameWithExt: String, offset: Long, size: Int) {
@@ -256,12 +282,19 @@ object VirtualMwmManager {
                         markPending(mwmName, blockOffset, blockSize)
                         WearCommandService.requestMwmBytes(WearApplication.instance, mwmName, blockOffset, blockSize)
                         
-                        saveHandler.postDelayed({
+                        // 20s (was 4500ms). A 512KB block compresses to ~488KB and takes several
+                        // seconds to stream over the GMS channel; a 4.5s clear fired BEFORE the block
+                        // arrived → pending cleared → the same block re-requested while still in
+                        // flight → phone re-sent it → channel congested → blocks never landed within
+                        // the native 20s WaitForData budget. Match that budget so an in-flight block
+                        // isn't duplicated; native re-requests are deduped by the still-set pending bit.
+                        // 40s (was 20s). Match the native 40s (8 attempts * 5s) WaitForData budget.
+                        timeoutHandler.postDelayed({
                             if (isPending(mwmName, blockOffset, blockSize)) {
                                 Log.w(TAG, "DEBUG_WEAR_PIPELINE: Request TIMEOUT for $mwmName at $blockOffset ($blockSize)")
                                 clearPending(mwmName, blockOffset, blockSize)
                             }
-                        }, 4500)
+                        }, 40000)
                     }
                 }
             } catch (e: Throwable) {
@@ -477,6 +510,9 @@ object VirtualMwmManager {
             mwmPinnedBlocks.remove(mwmName)
             nativeMountedMwms.remove(mwmName)
             saveRunnables.remove(mwmName)?.let { saveHandler.removeCallbacks(it) }
+
+            // Notify native core that it is unmounted so that the reader drops it
+            runCatching { nativeNotifyUnmounted(mwmName) }
         } catch (e: Exception) {
             Log.e(TAG, "Error during unmount of $mwmName: ${e.message}")
         }
@@ -490,7 +526,7 @@ object VirtualMwmManager {
      * (issue #7: "app won't start after removing a partial map"). This leaves no leftovers.
      * Returns true if a virtual map was found and handled.
      */
-    fun deleteVirtual(context: Context, mwmNameWithExt: String): Boolean {
+    fun deleteVirtual(context: Context, mwmNameWithExt: String, setBackoff: Boolean = false): Boolean {
         val mwmName = MapIdUtils.normalize(mwmNameWithExt) ?: return false
         val path = mwmPaths[mwmName] ?: findSparseFile(context, mwmName)?.absolutePath ?: return false
         Log.i(TAG, "DEBUG_WEAR_PIPELINE: Deleting virtual MWM $mwmName at $path")
@@ -518,7 +554,13 @@ object VirtualMwmManager {
         mwmPinnedBlocks.remove(mwmName)
         nativeMountedMwms.remove(mwmName)
         saveRunnables.remove(mwmName)?.let { saveHandler.removeCallbacks(it) }
-        metadataFailures.remove(mwmName)
+        
+        if (setBackoff) {
+            metadataFailures[mwmName] = System.currentTimeMillis()
+        }
+
+        // Notify native core that it is unmounted so that the reader drops it
+        runCatching { nativeNotifyUnmounted(mwmName) }
 
         // Remove the sparse cache files so nothing is left to restore on next launch.
         runCatching { File(path).delete() }
@@ -527,6 +569,49 @@ object VirtualMwmManager {
         // Re-scan so the engine drops the now-missing map within this session.
         runCatching { ReloadWorldMapsDebouncer.reload() }
         return true
+    }
+
+    // Cache for listPartialShadowIds: the MapManager polls every 500ms, but the on-disk set of
+    // sparse files changes rarely, so a short TTL avoids re-listing the version dirs each tick.
+    @Volatile private var partialIdsCache: Set<String> = emptySet()
+    @Volatile private var partialIdsComputedAt = 0L
+
+    /**
+     * Authoritative set of map ids that are partial/streamed shadows — a sparse `.mwm` paired with
+     * a `.bits` sidecar on disk, OR a currently-mounted virtual mwm. Used by the Map Manager to
+     * decide "partial vs fully installed": native registers ANY sparse `.mwm` as STATUS_DONE +
+     * present=true (it can't tell a holey file from a real one), and the in-memory `mountedMwms`
+     * set can be momentarily empty (e.g. before `restoreMountsEarly` finishes, or a mount torn down
+     * with files left). The `.bits` sidecar is the durable on-disk marker of "this is partial".
+     * Returns normalized ids (no extension) matching CountryItem.id. Cached 2s.
+     */
+    fun listPartialShadowIds(context: Context): Set<String> {
+        val now = System.currentTimeMillis()
+        if (now - partialIdsComputedAt < 2000) return partialIdsCache
+        val ids = HashSet<String>()
+        // In-memory mounts are already normalized ids.
+        ids.addAll(mountedMwms)
+        try {
+            val storagePath = StoragePathManager.findMapsStorage(context)
+            if (!storagePath.isNullOrEmpty()) {
+                File(storagePath)
+                    .listFiles { f -> f.isDirectory && f.name.all { it.isDigit() } }
+                    ?.forEach { versionDir ->
+                        versionDir.listFiles { f -> f.name.endsWith(".mwm.bits") }
+                            ?.forEach { bits ->
+                                val mwm = File(bits.absolutePath.removeSuffix(".bits"))
+                                if (mwm.exists()) {
+                                    MapIdUtils.normalize(mwm.name)?.let { ids.add(it) }
+                                }
+                            }
+                    }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "listPartialShadowIds failed: ${e.message}")
+        }
+        partialIdsCache = ids
+        partialIdsComputedAt = now
+        return ids
     }
 
     /** Locate an on-disk sparse file (with sibling .bits) for a not-currently-mounted map. */
@@ -627,6 +712,16 @@ object VirtualMwmManager {
                                     runCatching { file.delete() }
                                     runCatching { bitsFile.delete() }
                                 }
+                            } else {
+                                // A sparse .mwm with NO sibling .bits is an orphan (e.g. process
+                                // killed mid-stream before the debounced .bits flush). It can't be
+                                // restored as a virtual mount, and if left on disk the native
+                                // RegisterLocalFile scan registers it as a normal STATUS_DONE map —
+                                // the engine then reads holes (zeros) / blocks forever on WaitForData
+                                // and the viewport mount-loop never re-streams it (gate skips DONE).
+                                // Delete it here, before init, so native never sees it.
+                                Log.w(TAG, "DEBUG_WEAR_PIPELINE: removing orphan sparse .mwm (no .bits): $mwmName")
+                                runCatching { file.delete() }
                             }
                         } else if (file.name.endsWith(".bits")) {
                             val mwmFile = File(file.absolutePath.substringBeforeLast("."))
@@ -646,7 +741,21 @@ object VirtualMwmManager {
     private suspend fun doMount(mwmName: String, mwmFile: File, totalSize: Long, headerData: ByteArray?, footerData: ByteArray?): String? {
         try {
             val path = mwmFile.absolutePath
-            
+
+            // Register the virtual mapping FIRST — before the sparse file is created/sized on disk —
+            // so the country's FIRST MwmSet registration opens a VirtualModelReader, never a plain
+            // FileReader over the holey 137MB file. Reader choice is driven by GetVirtualMwmPath
+            // (platform_android.cpp) at MwmValue creation, and MwmSet caches that reader + reuses it
+            // for the same version (Register → VersionAlreadyExists; Deregister is skipped while
+            // refs>0). If a plain reader binds first (the old order created the file before
+            // RegisterVirtualMwm), reads return zeroed holes silently → no block fault → no stream →
+            // blank map until an app restart (where restoreMountsEarly already registers virtual
+            // before the framework's first registration). Doing it first here closes that mid-run
+            // window so a map obtained on the phone while running renders without a watch restart.
+            nativeLibraryLoaded.await()
+            nativeNotifyMounted(mwmName, path, totalSize)
+            nativeMountedMwms.getOrPut(mwmName) { CompletableDeferred() }.complete(Unit)
+
             if (mwmFile.exists() && mwmFile.length() != totalSize) {
                 mwmFiles.remove(mwmName)?.let { raf ->
                     try { withContext(Dispatchers.IO) { raf.close() } } catch (_: Exception) {}
@@ -683,12 +792,22 @@ object VirtualMwmManager {
                 synchronized(pinned) { pinned.set(0); pinned.set(lastBlk) }
             }
             
+            // Header/footer are SUB-BLOCK ranges (16KB / 64KB inside a 512KB block). markDataReceived
+            // is block-granular (ceil(start)..floor(end)) so a partial first/last block sets no bit and
+            // — critically — never reaches the nativeDataArrived replay below. The native availability
+            // bitmap (1KB-granular) then has no entry for offset 0, so the post-footer reload's
+            // RegisterMap reads offset 0, WaitForData finds nothing, and on the UI thread it can't block
+            // → "Virtual MWM data unavailable (timeout) pos:0" → registration fails → blank map that
+            // looks STATUS_DONE+mounted (full-size sparse file) and gates off every retry until restart.
+            // Signal these ranges to native EXPLICITLY, right after the disk write, independent of the
+            // block tracker, so offset-0 (and the footer) are available the moment RegisterMap runs.
             if (headerData != null && headerData.isNotEmpty()) {
                 synchronized(raf) {
                     raf.seek(0)
                     raf.write(headerData)
                 }
                 markDataReceived(mwmName, 0, headerData.size)
+                runCatching { nativeDataArrived(mwmName, 0, headerData.size) }
             }
 
             if (footerData != null && footerData.isNotEmpty()) {
@@ -698,18 +817,10 @@ object VirtualMwmManager {
                     raf.write(footerData)
                 }
                 markDataReceived(mwmName, footerOffset, footerData.size)
+                runCatching { nativeDataArrived(mwmName, footerOffset, footerData.size) }
             }
 
-            // Await native library before notifications
-            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Awaiting native library for $mwmName")
-            nativeLibraryLoaded.await()
-            Log.d(TAG, "DEBUG_WEAR_PIPELINE: Native library ready, notifying mount for $mwmName")
-
-            val mountedDeferred = nativeMountedMwms.getOrPut(mwmName) { CompletableDeferred() }
-            
-            // Native notification and replay tracker
-            nativeNotifyMounted(mwmName, path, totalSize)
-            mountedDeferred.complete(Unit)
+            // (Virtual mapping + mount completion already done at the top, before file creation.)
 
             // Pin header/footer natively too (RegisterVirtualMwm has now sized the pinned bitmap),
             // so they are protected even if read via a direct mmap on some path.
@@ -793,6 +904,8 @@ object VirtualMwmManager {
     external fun nativeDataArrived(mwmName: String, offset: Long, size: Int)
     @JvmStatic
     external fun nativeNotifyMounted(mwmName: String, path: String, totalSize: Long)
+    @JvmStatic
+    external fun nativeNotifyUnmounted(mwmName: String)
     @JvmStatic
     external fun nativePinData(mwmName: String, offset: Long, size: Long)
     @JvmStatic

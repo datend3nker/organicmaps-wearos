@@ -74,14 +74,17 @@ object WearMapDownloader {
     fun onDownloadCompleted() {
         _downloadState.value = DownloadState.COMPLETED
         _downloadProgress.value = 1.0f
+        _currentMap.value = null
         currentDownloadJob = null
         watchdogJob?.cancel()
         WearNotificationManager.hideSyncNotification(WearApplication.instance)
+        NavigationStateHolder.update { it.copy(missingMapId = null) }
     }
 
     fun onDownloadCancelled() {
         _downloadState.value = DownloadState.CANCELLED
         _downloadProgress.value = 0f
+        _currentMap.value = null
         currentDownloadJob = null
         watchdogJob?.cancel()
         WearNotificationManager.hideSyncNotification(WearApplication.instance)
@@ -104,6 +107,7 @@ object WearMapDownloader {
             }
         }
         _downloadState.value = DownloadState.CANCELLED
+        _currentMap.value = null
         WearNotificationManager.hideSyncNotification(context)
     }
 
@@ -138,6 +142,9 @@ object WearMapDownloader {
         val normalizedMapId = MapIdUtils.normalize(mapId)!!
         _currentMap.value = normalizedMapId
         NavigationStateHolder.update { it.copy(missingMapId = null) }
+
+        // Clean up any existing virtual map first so the download starts fresh
+        app.organicmaps.wear.VirtualMwmManager.deleteVirtual(context, "$normalizedMapId.mwm")
         
         val dataVersion = app.organicmaps.sdk.Framework.nativeGetDataVersion()
         // The download CDN uses underscores in URLs; everywhere else the map id
@@ -150,7 +157,7 @@ object WearMapDownloader {
         }
         
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val mode = if (forceInternet) "INTERNET" else (prefs.getString("mapDownloadMode", "PHONE_SYNC") ?: "PHONE_SYNC")
+        val mode = if (forceInternet) "INTERNET" else (prefs.getString("pref_wear_os_map_download_mode", "PHONE_SYNC") ?: "PHONE_SYNC")
 
         Log.d(TAG, "Configured mapDownloadMode is $mode (forceInternet=$forceInternet)")
 
@@ -228,6 +235,7 @@ object WearMapDownloader {
             if (!versionedPath.exists()) versionedPath.mkdirs()
             
             val file = File(versionedPath, "$mapId.mwm")
+            VirtualMwmManager.deleteVirtual(context, "$mapId.mwm")
             connection.getInputStream().use { input ->
                 FileOutputStream(file).use { output ->
                     val data = ByteArray(4096)

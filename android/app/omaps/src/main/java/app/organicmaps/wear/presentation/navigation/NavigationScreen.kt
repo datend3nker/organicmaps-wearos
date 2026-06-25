@@ -14,7 +14,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -43,7 +42,6 @@ fun NavigationScreen(
     turnIcon: ImageVector,
     remainingTime: String,
     onCancelClick: () -> Unit,
-    deviceRotation: Float = 0f,
     exitNum: Int = 0,
 ) {
     val listState = rememberScalingLazyListState()
@@ -78,9 +76,12 @@ fun NavigationScreen(
                     Icon(
                         imageVector = turnIcon,
                         contentDescription = "Turn icon",
+                        // The maneuver glyph (ArrowForward=right, ArrowBack=left, ArrowUpward=
+                        // straight) already encodes the turn direction. Do NOT rotate it by the
+                        // device compass heading — that spun an already-correct icon to a wrong
+                        // angle. Keep it upright so it always matches the real maneuver.
                         modifier = Modifier
-                            .size(56.dp)
-                            .rotate(deviceRotation),
+                            .size(56.dp),
                         tint = MaterialTheme.colors.onBackground
                     )
                     if (exitNum > 0) {
@@ -143,6 +144,5 @@ fun NavigationScreenPreview() {
         turnIcon = Icons.Default.ArrowUpward,
         remainingTime = "Avenue de l'Opéra",
         onCancelClick = { },
-        deviceRotation = 45f
     )
 }

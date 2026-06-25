@@ -196,6 +196,36 @@ class WearDataListenerService : WearableListenerService() {
     }
 
     override fun onChannelOpened(channel: com.google.android.gms.wearable.ChannelClient.Channel) {
+        // Bulk viewport-streaming data + mount now arrive over a ChannelClient stream instead of
+        // MessageClient: the ~64KB data frames (and ~82KB mount) exceed what the GMS message
+        // transport reliably delivers — emulator silently drops them, real devices flirt with the
+        // ~100KB MessageClient ceiling — so every block timed out and the map stayed blank while
+        // small control messages flowed fine. Channels are socket-backed (no size cap, no drops).
+        // Payload is the SAME self-describing frame the sender built (no protocol-version prefix —
+        // channels are point-to-point past handshake); route it through the normal path so the
+        // existing VirtualMwmDataHandler / VirtualMwmMountHandler parse it.
+        if (channel.path == WearProtocol.PATH_VIRTUAL_MWM_DATA ||
+            channel.path == WearProtocol.PATH_VIRTUAL_MWM_MOUNT) {
+            val channelClient = Wearable.getChannelClient(this)
+            val path = channel.path
+            val sourceNodeId = channel.nodeId
+            scope.launch {
+                try {
+                    val input = channelClient.getInputStream(channel).await()
+                    val bytes = input.readBytes()
+                    input.close()
+                    WearMessageRouter.onMessageReceived(
+                        this@WearDataListenerService, path, bytes, sourceNodeId,
+                        GmsWearSyncBackend.sLocalNodeId
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "DEBUG_GMS_PIPELINE: channel read failed for $path: ${e.message}")
+                } finally {
+                    channelClient.close(channel)
+                }
+            }
+            return
+        }
         if (channel.path.startsWith("/map/stream/data/")) {
             val mapId = channel.path.substringAfterLast("/")
             val channelClient = Wearable.getChannelClient(this)
@@ -222,6 +252,7 @@ class WearDataListenerService : WearableListenerService() {
                     channelClient.receiveFile(channel, android.net.Uri.fromFile(tempFile), false).await()
                     
                     Log.d(TAG, "GMS Pull completed, renaming $mapId to ${finalFile.name}")
+                    VirtualMwmManager.deleteVirtual(this@WearDataListenerService, "$mapId.mwm")
                     if (finalFile.exists()) finalFile.delete()
                     tempFile.renameTo(finalFile)
                     

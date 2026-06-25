@@ -31,6 +31,15 @@ public class WearProtocol {
     // recording (optional UTF-8 name payload) or discard it.
     public static final String PATH_TRACK_RECORDING_SAVE = "/track/recording/save";
     public static final String PATH_TRACK_RECORDING_DISCARD = "/track/recording/discard";
+    // Saved-track sync (distinct from the live recording controls above). Two tiers:
+    //   - manifest/tombstone: lightweight per-track metadata + deletions (LWW), reconciled both ways.
+    //   - blob request/blob: heavy KMZ geometry, fetched on demand only for tracks a device lacks.
+    // Identity is a UUID minted at save time and embedded in the track description (survives app
+    // restart AND the KMZ round-trip), the track analog of the bookmark content-addressed id.
+    public static final String PATH_TRACK_MANIFEST = "/track/manifest";
+    public static final String PATH_TRACK_TOMBSTONE = "/track/tombstone";
+    public static final String PATH_TRACK_BLOB_REQUEST = "/track/blob/request";
+    public static final String PATH_TRACK_BLOB = "/track/blob";
     public static final String PATH_BOOKMARKS = "/bookmarks";
     public static final String PATH_BOOKMARKS_REQUEST = "/bookmarks/request";
     public static final String PATH_BOOKMARKS_METADATA = "/bookmarks/metadata";
@@ -115,11 +124,15 @@ public class WearProtocol {
     public static final byte TYPE_BOOKMARK_TOMBSTONE = 23;
     public static final byte TYPE_BOOKMARK_CATEGORY_CREATE = 24;
     public static final byte TYPE_BOOKMARK_UPSERT = 25;
+    public static final byte TYPE_TRACK_MANIFEST = 26;
+    public static final byte TYPE_TRACK_TOMBSTONE = 27;
+    public static final byte TYPE_TRACK_BLOB_REQUEST = 28;
+    public static final byte TYPE_TRACK_BLOB = 29;
 
     // Highest valid message type id. The Bluetooth framing layer uses this as a desync sanity
     // bound when parsing headers; keep it >= the largest TYPE_* above (with a little headroom).
     // MUST be updated when new TYPE_* values are added, or BT will reject them as "invalid header".
-    public static final byte MAX_MESSAGE_TYPE = 26;
+    public static final byte MAX_MESSAGE_TYPE = 30;
 
     // Priorities
     public static final int PRIORITY_HIGH = 0;
@@ -150,6 +163,10 @@ public class WearProtocol {
         register(PATH_BOOKMARK_TOMBSTONE, TYPE_BOOKMARK_TOMBSTONE);
         register(PATH_BOOKMARK_CATEGORY_CREATE, TYPE_BOOKMARK_CATEGORY_CREATE);
         register(PATH_BOOKMARK_UPSERT, TYPE_BOOKMARK_UPSERT);
+        register(PATH_TRACK_MANIFEST, TYPE_TRACK_MANIFEST);
+        register(PATH_TRACK_TOMBSTONE, TYPE_TRACK_TOMBSTONE);
+        register(PATH_TRACK_BLOB_REQUEST, TYPE_TRACK_BLOB_REQUEST);
+        register(PATH_TRACK_BLOB, TYPE_TRACK_BLOB);
         register(PATH_MAP_PHONE_DOWNLOADED, TYPE_MAP_PHONE_DOWNLOADED);
         register(PATH_VIRTUAL_MWM_REQUEST, TYPE_VIRTUAL_MWM_REQUEST);
         register(PATH_VIRTUAL_MWM_DATA, TYPE_VIRTUAL_MWM_DATA);
@@ -178,9 +195,11 @@ public class WearProtocol {
             case TYPE_SEARCH_RESULTS, TYPE_SEARCH_HISTORY, TYPE_PREFERENCES, TYPE_PREFERENCES_UPDATES,
                  TYPE_TRACK_RECORDING, TYPE_BOOKMARKS, TYPE_BOOKMARKS_METADATA, TYPE_BOOKMARK_RENAME,
                  TYPE_BOOKMARK_DELETE, TYPE_BOOKMARK_UPSERT, TYPE_MAP_DOWNLOAD_PROGRESS,
-                 TYPE_ROUTE_BUILD_PROGRESS, TYPE_MAP_PHONE_DOWNLOADED -> PRIORITY_MEDIUM;
+                 TYPE_ROUTE_BUILD_PROGRESS, TYPE_MAP_PHONE_DOWNLOADED,
+                 TYPE_TRACK_MANIFEST, TYPE_TRACK_TOMBSTONE, TYPE_TRACK_BLOB_REQUEST -> PRIORITY_MEDIUM;
             case TYPE_MAP_CHUNK, TYPE_BOOKMARK_FILE, TYPE_VIRTUAL_MWM_REQUEST, TYPE_VIRTUAL_MWM_DATA,
-                 TYPE_VIRTUAL_MWM_MOUNT, TYPE_MAP_TILE_RESPONSE, TYPE_MAP_DOWNLOAD_REQUEST -> PRIORITY_LOW;
+                 TYPE_VIRTUAL_MWM_MOUNT, TYPE_MAP_TILE_RESPONSE, TYPE_MAP_DOWNLOAD_REQUEST,
+                 TYPE_TRACK_BLOB -> PRIORITY_LOW;
             default -> PRIORITY_MEDIUM;
         };
     }

@@ -179,8 +179,9 @@ fun BookmarkCategoryChip(category: BookmarkCategoryItem, onClick: () -> Unit, on
 @Composable
 fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
     val context = LocalContext.current
-    
+
     var bookmarks by remember { mutableStateOf<List<app.organicmaps.sdk.bookmarks.data.BookmarkInfo>>(emptyList()) }
+    var tracks by remember { mutableStateOf<List<app.organicmaps.sdk.bookmarks.data.Track>>(emptyList()) }
 
     fun refreshBookmarks() {
         val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
@@ -192,8 +193,14 @@ fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
                 manager.getBookmarkInfo(bmkId)?.let { list.add(it) }
             }
             bookmarks = list
+            val trackList = mutableListOf<app.organicmaps.sdk.bookmarks.data.Track>()
+            for (i in 0 until cat.tracksCount) {
+                try { trackList.add(manager.getTrack(cat.getTrackIdByPosition(i))) } catch (_: Exception) {}
+            }
+            tracks = trackList
         } else {
             bookmarks = emptyList()
+            tracks = emptyList()
         }
     }
 
@@ -226,10 +233,16 @@ fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
     }
 
     var editingBookmark by remember { mutableStateOf<app.organicmaps.sdk.bookmarks.data.BookmarkInfo?>(null) }
+    var editingTrackId by remember { mutableStateOf<Long?>(null) }
     var showingCategorySettings by remember { mutableStateOf(false) }
 
     if (editingBookmark != null) {
         BookmarkEditScreen(bookmark = editingBookmark!!, onBack = { editingBookmark = null })
+        return
+    }
+
+    if (editingTrackId != null) {
+        TrackEditScreen(trackId = editingTrackId!!, onBack = { editingTrackId = null; refreshBookmarks() })
         return
     }
 
@@ -311,7 +324,109 @@ fun BookmarkListScreen(category: BookmarkCategoryItem, onBack: () -> Unit) {
                 )
             }
         }
-        
+
+        if (tracks.isNotEmpty()) {
+            item {
+                ListHeader { Text("Tracks", textAlign = TextAlign.Center, style = MaterialTheme.typography.caption1) }
+            }
+            items(tracks) { track ->
+                Chip(
+                    onClick = { editingTrackId = track.trackId },
+                    label = { Text(track.name, maxLines = 1) },
+                    secondaryLabel = {
+                        Text(track.length.toString(context), maxLines = 1, style = MaterialTheme.typography.caption3)
+                    },
+                    icon = {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .background(Color(track.color or (0xFF shl 24)), CircleShape)
+                        )
+                    },
+                    colors = ChipDefaults.secondaryChipColors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        item {
+            CompactChip(
+                onClick = onBack,
+                label = { Text("Back") },
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun TrackEditScreen(trackId: Long, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val manager = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE
+    val track = remember(trackId) { try { manager.getTrack(trackId) } catch (e: Exception) { null } }
+
+    if (track == null) {
+        LaunchedEffect(Unit) { onBack() }
+        return
+    }
+
+    var showRenameDialog by remember { mutableStateOf(false) }
+
+    if (showRenameDialog) {
+        TextInputDialog(
+            title = "Rename Track",
+            initialValue = track.name,
+            onDismiss = { showRenameDialog = false },
+            onDone = { newName ->
+                if (newName.isNotEmpty()) {
+                    WearCommandService.renameTrack(context, trackId, newName)
+                }
+                showRenameDialog = false
+                onBack()
+            }
+        )
+    }
+
+    ScalingLazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        autoCentering = AutoCenteringParams(itemIndex = 0)
+    ) {
+        item {
+            ListHeader { Text("Edit Track", textAlign = TextAlign.Center) }
+        }
+        item {
+            Chip(
+                onClick = { showRenameDialog = true },
+                label = { Text(track.name, maxLines = 1) },
+                secondaryLabel = { Text("Rename", style = MaterialTheme.typography.caption3) },
+                icon = { Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                colors = ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        item {
+            Chip(
+                onClick = {
+                    WearCommandService.showTrackOnWatch(context, trackId)
+                },
+                label = { Text("Show on Watch") },
+                icon = { Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                colors = ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        item {
+            Chip(
+                onClick = {
+                    WearCommandService.deleteTrack(context, trackId)
+                    onBack()
+                },
+                label = { Text("Delete") },
+                icon = { Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                colors = ChipDefaults.chipColors(backgroundColor = Color(0xFFB00020), contentColor = Color.White),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         item {
             CompactChip(
                 onClick = onBack,

@@ -35,7 +35,7 @@ object WearNotificationManager {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                android.util.Log.w("WearNotif", "DEBUG_NOTIF: POST_NOTIFICATIONS permission missing")
+                android.util.Log.d("WearNotif", "DEBUG_NOTIF: POST_NOTIFICATIONS permission missing")
                 return
             }
         }

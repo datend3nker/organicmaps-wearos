@@ -48,23 +48,35 @@ object WearMessageRouter {
         }
 
         val payload = data ?: ByteArray(0)
-        
-        val hash = path.hashCode() xor java.util.Arrays.hashCode(payload)
-        val now = System.currentTimeMillis()
-        
-        val lastHash = sLastMsgHashes[path]
-        val lastTime = sLastMsgTimes[path]
-        
-        var window = 500L
-        if (path.endsWith("/request") || path.endsWith("/trigger") || path == PATH_PONG || path == WearProtocol.PATH_PING) window = 50L
-        
-        // Robust deduplication to ignore redundant listeners
-        if (lastHash == hash && lastTime != null && (now - lastTime) < window) {
-            app.organicmaps.sdk.sync.WearLog.d("onMessageReceived IGNORED (Deduplication): $path")
-            return
+
+        // Bulk data-plane paths must SKIP the dedup. It keys a single last-hash PER PATH, so under
+        // the streaming flood the two delivery threads (manualListener + onMessageReceived) race
+        // that one slot and collapse DISTINCT frames (different byte offsets) → blocks silently
+        // dropped → perpetual WaitForData timeout → blank map. These handlers are idempotent
+        // (onBytesReceived seeks+writes the exact offset; double-apply is harmless), so just let
+        // every copy through. Dedup stays for the chatty control-plane (ping/pong/request/trigger).
+        val isBulkDataPath = path == WearProtocol.PATH_VIRTUAL_MWM_DATA ||
+                             path == WearProtocol.PATH_VIRTUAL_MWM_MOUNT ||
+                             path == WearProtocol.PATH_TRACK_BLOB ||
+                             path.startsWith(WearProtocol.PATH_MAP_STREAM_DATA)
+        if (!isBulkDataPath) {
+            val hash = path.hashCode() xor java.util.Arrays.hashCode(payload)
+            val now = System.currentTimeMillis()
+
+            val lastHash = sLastMsgHashes[path]
+            val lastTime = sLastMsgTimes[path]
+
+            var window = 500L
+            if (path.endsWith("/request") || path.endsWith("/trigger") || path == PATH_PONG || path == WearProtocol.PATH_PING) window = 50L
+
+            // Robust deduplication to ignore redundant listeners
+            if (lastHash == hash && lastTime != null && (now - lastTime) < window) {
+                app.organicmaps.sdk.sync.WearLog.d("onMessageReceived IGNORED (Deduplication): $path")
+                return
+            }
+            sLastMsgHashes[path] = hash
+            sLastMsgTimes[path] = now
         }
-        sLastMsgHashes[path] = hash
-        sLastMsgTimes[path] = now
 
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         val backend = prefs.getString("pref_wear_os_backend", "GMS") ?: "GMS"
@@ -126,6 +138,8 @@ object WearMessageRouter {
                 prefRequestDebouncer.request(context)
                 // Also push our bookmark metadata so the phone reconciles to a full mirror on connect.
                 WatchBookmarkSyncManager.requestSync(context)
+                // Reconcile saved tracks too (push our manifest; phone pushes its in parallel).
+                WatchTrackSyncManager.requestSync(context)
                 return
             }
             WearProtocol.PATH_NAVIGATION_START -> {
@@ -179,6 +193,22 @@ object WearMessageRouter {
             }
             WearProtocol.PATH_BOOKMARK_TOMBSTONE -> {
                 WatchBookmarkSyncManager.applyIncomingTombstone(context, payload)
+                return
+            }
+            WearProtocol.PATH_TRACK_MANIFEST -> {
+                WatchTrackSyncManager.handleIncomingManifest(context, payload)
+                return
+            }
+            WearProtocol.PATH_TRACK_TOMBSTONE -> {
+                WatchTrackSyncManager.handleIncomingTombstone(context, payload)
+                return
+            }
+            WearProtocol.PATH_TRACK_BLOB_REQUEST -> {
+                WatchTrackSyncManager.handleIncomingBlobRequest(context, payload)
+                return
+            }
+            WearProtocol.PATH_TRACK_BLOB -> {
+                WatchTrackSyncManager.handleIncomingBlob(context, payload)
                 return
             }
         }

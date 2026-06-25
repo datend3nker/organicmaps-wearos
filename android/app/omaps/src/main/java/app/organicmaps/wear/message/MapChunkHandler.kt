@@ -67,8 +67,8 @@ class MapChunkHandler : WearMessageHandler {
                     if (currentSize >= totalSize) {
                         Log.d(TAG, "Map transfer complete: $mapId. Finalizing...")
                         
-                        // Ensure the file is not busy before renaming
-                        app.organicmaps.wear.VirtualMwmManager.unmount(mapId)
+                        // Ensure the file is not busy before renaming and delete virtual map metadata/sidecar files
+                        app.organicmaps.wear.VirtualMwmManager.deleteVirtual(context, "$mapId.mwm")
                         
                         val finalFile = File(versionedPath, "$mapId.mwm")
                         if (finalFile.exists()) finalFile.delete()

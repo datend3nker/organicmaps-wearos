@@ -165,7 +165,7 @@ bool WaitForData(std::string const & mwmNameWithExt, uint64_t offset, size_t siz
     return false;
   }
 
-  for (int attempt = 1; attempt <= 4; ++attempt)
+  for (int attempt = 1; attempt <= 8; ++attempt)
   {
     {
       std::lock_guard<std::mutex> lock(info.m_mutex);
@@ -247,6 +247,24 @@ void RegisterVirtualMwm(std::string const & mwmName, std::string const & path, u
   }
 
   LOG(LINFO, ("Registered virtual MWM:", mwmName, "path:", path, "size:", totalSize));
+}
+
+void UnregisterVirtualMwm(std::string const & mwmName)
+{
+  std::string name = mwmName;
+  base::GetNameFromFullPath(name);
+  if (name.size() > 4 && name.substr(name.size() - 4) == ".mwm")
+    name = name.substr(0, name.size() - 4);
+
+  {
+    std::lock_guard<std::mutex> lock(g_waitInfosMutex);
+    g_waitInfos.erase(name);
+    auto it = std::find(g_allVirtualMwms.begin(), g_allVirtualMwms.end(), name);
+    if (it != g_allVirtualMwms.end())
+      g_allVirtualMwms.erase(it);
+  }
+
+  LOG(LINFO, ("Unregistered virtual MWM:", mwmName));
 }
 
 std::string GetVirtualMwmPath(std::string const & mwmName)

@@ -7,6 +7,7 @@ import android.media.AudioManager;
 import android.os.Bundle;
 import android.view.MenuItem;
 import androidx.activity.EdgeToEdge;
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.SystemBarStyle;
 import androidx.annotation.CallSuper;
 import androidx.annotation.NonNull;
@@ -69,6 +70,17 @@ public abstract class BaseMwmFragmentActivity extends AppCompatActivity
 
     attachDefaultFragment();
     mSafeCreated = true;
+
+    getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true)
+    {
+      @Override
+      public void handleOnBackPressed()
+      {
+        setEnabled(false);
+        onBackPressed();
+        setEnabled(true);
+      }
+    });
   }
 
   @CallSuper

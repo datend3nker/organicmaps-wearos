@@ -30,11 +30,9 @@ import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.UiEvent
 import app.organicmaps.wear.WearCommandService
 import app.organicmaps.wear.presentation.navigation.NavigationScreen
-import app.organicmaps.wear.presentation.navigation.SensorViewModel
 import app.organicmaps.wear.presentation.navigation.StatsScreen
 import app.organicmaps.wear.presentation.search.SearchScreen
 import app.organicmaps.wear.presentation.theme.OrganicMapsTheme
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -58,38 +56,33 @@ import app.organicmaps.sdk.routing.RoutingOptions
 import app.organicmaps.wear.presentation.navigation.RoutingOptionsRow
 
 import androidx.wear.input.WearableButtons
-import androidx.wear.ambient.AmbientModeSupport
+import androidx.wear.ambient.AmbientLifecycleObserver
 import androidx.compose.runtime.CompositionLocalProvider
 import app.organicmaps.wear.LocalAmbientMode
 import androidx.fragment.app.FragmentActivity
 
 class Omaps : FragmentActivity() {
     private var availableButtons = emptySet<Int>()
-    private var ambientController: Any? = null
+
+    private val ambientCallback = object : AmbientLifecycleObserver.AmbientLifecycleCallback {
+        override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
+            NavigationStateHolder.update { it.copy(isAmbient = true) }
+        }
+        override fun onExitAmbient() {
+            NavigationStateHolder.update { it.copy(isAmbient = false) }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setTheme(android.R.style.Theme_DeviceDefault)
 
-        // SAFE AMBIENT ATTACH: Use reflection to avoid class-loading crash on generic emulators
+        // Ambient mode via AmbientLifecycleObserver (no AmbientCallbackProvider interface needed,
+        // unlike the deprecated AmbientModeSupport). Guarded by FEATURE_WATCH + try/catch so the
+        // wear runtime never class-loads on a generic (non-watch) emulator.
         try {
-            val isWatch = packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)
-            if (isWatch) {
-                Class.forName("com.google.android.wearable.compat.WearableActivityController")
-                val ambientClass = Class.forName("androidx.wear.ambient.AmbientModeSupport")
-                
-                // We need to implement AmbientCallbackProvider to use attach(Activity)
-                // but we can't do it statically if the interface refers to missing classes.
-                // However, AmbientModeSupport.attach(FragmentActivity) requires the activity
-                // to implement AmbientCallbackProvider.
-                
-                // Workaround: Use the attach method that takes a callback directly if available,
-                // or just skip it if we can't safely implement the interface.
-                // For this project, we'll assume a real watch HAS the library.
-                // Generic emulators will catch the ClassNotFoundException above.
-                
-                val attachMethod = ambientClass.getMethod("attach", FragmentActivity::class.java)
-                ambientController = attachMethod.invoke(null, this)
+            if (packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)) {
+                lifecycle.addObserver(AmbientLifecycleObserver(this, ambientCallback))
             }
         } catch (e: Throwable) {
             android.util.Log.w("Omaps", "AmbientMode not available or library missing: ${e.message}")
@@ -121,6 +114,9 @@ class Omaps : FragmentActivity() {
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
             permissions.add(Manifest.permission.BLUETOOTH_SCAN)
             permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         
         val missingPermissions = permissions.filter { 
@@ -201,23 +197,6 @@ class Omaps : FragmentActivity() {
         }
     }
 
-    fun getAmbientCallback(): AmbientModeSupport.AmbientCallback? {
-        return try {
-            object : AmbientModeSupport.AmbientCallback() {
-                override fun onEnterAmbient(ambientDetails: Bundle?) {
-                    NavigationStateHolder.update { it.copy(isAmbient = true) }
-                }
-                override fun onExitAmbient() {
-                    NavigationStateHolder.update { it.copy(isAmbient = false) }
-                }
-            }
-        } catch (e: NoClassDefFoundError) {
-            null
-        } catch (e: Exception) {
-            null
-        }
-    }
-
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val navState = NavigationStateHolder.state.value
         if (navState.mapEnabled) {
@@ -273,7 +252,11 @@ fun WearApp() {
         NavigationStateHolder.events.collect { event ->
             when (event) {
                 is UiEvent.OpenMap -> {
-                    if (!isNavigating) {
+                    // Read nav state live: this collector lives in LaunchedEffect(Unit), so the
+                    // captured `isNavigating` is frozen at first composition. A stale `true` would
+                    // silently swallow every OpenMap (e.g. "Show on Watch" never leaving the
+                    // bookmarks page). Page 1 is the map in both nav and non-nav layouts.
+                    if (!NavigationStateHolder.state.value.isNavigating) {
                         pagerState.animateScrollToPage(1)
                     }
                 }
@@ -551,17 +534,14 @@ fun StatusIndicators(navState: app.organicmaps.wear.NavigationState) {
 @Composable
 fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
     val context = LocalContext.current
-    val sensorViewModel: SensorViewModel = viewModel()
-    val deviceRotation by sensorViewModel.heading.collectAsState()
-    
+
     NavigationScreen(
         distanceToNextTurn = navState.distToTurn,
-        turnIcon = getTurnIcon(navState.carDirection, navState.pedestrianDirection, navState.exitNum), 
+        turnIcon = getTurnIcon(navState.carDirection, navState.pedestrianDirection, navState.exitNum),
         remainingTime = navState.nextStreet,
         onCancelClick = {
             WearCommandService.cancelNavigation(context)
         },
-        deviceRotation = deviceRotation,
         exitNum = navState.exitNum
     )
 }

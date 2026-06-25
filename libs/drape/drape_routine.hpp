@@ -1,6 +1,8 @@
 #pragma once
 
 #include "base/assert.hpp"
+#include "base/exception.hpp"
+#include "base/logging.hpp"
 #include "base/thread_pool_delayed.hpp"
 
 #include <algorithm>
@@ -56,7 +58,7 @@ public:
     ResultPtr result(new Result(Instance().GetNextId()));
     auto const pushResult = Instance().m_workerThread.Push([result, t = std::forward<Task>(t)]() mutable
     {
-      t();
+      RunGuarded(t);
       Instance().Notify(result->Finish());
     });
 
@@ -73,7 +75,7 @@ public:
     auto const pushResult =
         Instance().m_workerThread.PushDelayed(duration, [result, t = std::forward<Task>(t)]() mutable
     {
-      t();
+      RunGuarded(t);
       Instance().Notify(result->Finish());
     });
 
@@ -90,7 +92,7 @@ public:
     ResultPtr result(new Result(Instance().GetNextId()));
     auto const pushResult = Instance().m_sequentialWorkerThread.Push([result, t = std::forward<Task>(t)]() mutable
     {
-      t();
+      RunGuarded(t);
       Instance().Notify(result->Finish());
     });
 
@@ -101,6 +103,24 @@ public:
   }
 
 private:
+  // A drape async task (feature/metaline read) can throw Reader::ReadException when a virtual
+  // (streamed) MWM's bytes never arrive in time (watch companion streaming timeout). Uncaught on a
+  // DrapeRoutine worker this terminates the whole process (observed: ReadMetalineTask SIGABRT via
+  // VirtualModelReader::Read). Log and drop the task instead; the read re-faults once the data
+  // lands. Mirrors the RootException guard in base/thread_pool.cpp for the other reading pool.
+  template <typename Task>
+  static void RunGuarded(Task & t)
+  {
+    try
+    {
+      t();
+    }
+    catch (RootException const & e)
+    {
+      LOG(LWARNING, ("DrapeRoutine task threw, skipping:", e.Msg()));
+    }
+  }
+
   static DrapeRoutine & Instance(bool reinitialize = false)
   {
     static std::unique_ptr<DrapeRoutine> instance;

@@ -7,6 +7,8 @@
 #include "indexer/categories_holder.hpp"
 #include "indexer/search_string_utils.hpp"
 
+#include "base/exception.hpp"
+#include "base/logging.hpp"
 #include "base/scope_guard.hpp"
 #include "base/timer.hpp"
 
@@ -243,7 +245,19 @@ void Engine::MainLoop(Context & context)
 
     while (!messages.empty())
     {
-      messages.front()(*context.m_processor);
+      try
+      {
+        messages.front()(*context.m_processor);
+      }
+      catch (RootException const & e)
+      {
+        // A search task reads MWM features. For a virtual (streamed) MWM the bytes may not have
+        // arrived yet — VirtualModelReader::Read throws Reader::ReadException on timeout. Without
+        // this guard that exception escapes the search thread's run loop and std::terminate()s the
+        // whole app (observed on the Wear companion when the phone is briefly unreachable). Skip
+        // the task instead; the next search re-reads once the bytes land.
+        LOG(LWARNING, ("Search task aborted (likely streamed MWM data unavailable):", e.Msg()));
+      }
       messages.pop();
     }
   }

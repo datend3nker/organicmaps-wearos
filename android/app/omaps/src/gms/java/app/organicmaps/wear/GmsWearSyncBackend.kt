@@ -331,6 +331,22 @@ class GmsWearSyncBackend : IWearSyncBackend {
         sendMessage(context, WearProtocol.PATH_BOOKMARK_TOMBSTONE, payload)
     }
 
+    override fun sendTrackManifest(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_TRACK_MANIFEST, payload)
+    }
+
+    override fun sendTrackTombstone(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_TRACK_TOMBSTONE, payload)
+    }
+
+    override fun requestTrackBlob(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_TRACK_BLOB_REQUEST, payload)
+    }
+
+    override fun sendTrackBlob(context: Context, payload: ByteArray) {
+        sendMessage(context, WearProtocol.PATH_TRACK_BLOB, payload)
+    }
+
     override fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int) {
         val nameBytes = mwmName.toByteArray(StandardCharsets.UTF_8)
         val buffer = ByteBuffer.allocate(4 + nameBytes.size + 8 + 4)

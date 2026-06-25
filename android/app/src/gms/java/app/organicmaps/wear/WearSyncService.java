@@ -51,6 +51,15 @@ public class WearSyncService {
 
     private static byte[] sLastSentBookmarkUpsert = null;
 
+    // ---- saved-track sync state (see TrackSyncCore) ------------------------
+    private static byte[] sLastSentTrackManifest = null;
+    private static final Map<String, FileOutputStream> sTrackOutputStreams = new HashMap<>();
+    // FIFO of pending track exports awaiting the shared sharing callback: each entry = {uuid, catName}.
+    private static final java.util.ArrayDeque<String[]> sPendingTrackExports = new java.util.ArrayDeque<>();
+    // uuid -> the manifest ts to stamp once the requested blob finishes importing.
+    private static final Map<String, Long> sPendingImportTs = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Runnable sSyncTracksRunnable = WearSyncService::syncTracksNow;
+
     public static void syncBookmarksNow() {
         Context context = app.organicmaps.MwmApplication.sInstance;
         if (!isFrameworkReady()) return;
@@ -82,6 +91,212 @@ public class WearSyncService {
     public static void syncBookmarksMetadataForced() {
         sLastSentBookmarkUpsert = null;
         syncBookmarksNow();
+    }
+
+    // ===================== saved-track sync ==================================
+
+    /** Build + push the saved-track manifest (uuid/name/color/category + LWW ts), deduped. */
+    public static void syncTracksNow() {
+        Context context = app.organicmaps.MwmApplication.sInstance;
+        if (!isFrameworkReady()) return;
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            sHandler.post(WearSyncService::syncTracksNow);
+            return;
+        }
+        byte[] payload;
+        setApplyingRemoteUpdate(true); // buildManifest may mint uuids (mutates descriptions)
+        try {
+            payload = app.organicmaps.sdk.sync.TrackSyncCore.buildManifest(
+                context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE);
+        } finally {
+            setApplyingRemoteUpdate(false);
+        }
+        if (java.util.Arrays.equals(sLastSentTrackManifest, payload)) return;
+        sLastSentTrackManifest = payload;
+        Log.d("WearSync", "Sending track manifest to watch");
+        getSyncLayer().sendRawMessage(context, app.organicmaps.sdk.sync.WearProtocol.TYPE_TRACK_MANIFEST, payload);
+    }
+
+    /** Force a track manifest push regardless of the unchanged-dedup (used on connect). */
+    public static void syncTracksForced() {
+        sLastSentTrackManifest = null;
+        syncTracksNow();
+    }
+
+    /** Apply a track manifest from the watch; request the blob of any track we don't have yet. */
+    public static void handleIncomingTrackManifest(Context context, byte[] payload) {
+        sHandler.post(() -> {
+            if (!isFrameworkReady()) return;
+            java.util.List<app.organicmaps.sdk.sync.TrackSyncCore.Missing> missing;
+            setApplyingRemoteUpdate(true);
+            try {
+                missing = app.organicmaps.sdk.sync.TrackSyncCore.applyManifest(
+                    context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE, payload);
+            } finally {
+                setApplyingRemoteUpdate(false);
+            }
+            for (app.organicmaps.sdk.sync.TrackSyncCore.Missing m : missing) {
+                sPendingImportTs.put(m.uuid, m.ts);
+                getSyncLayer().sendRawMessage(context,
+                    app.organicmaps.sdk.sync.WearProtocol.TYPE_TRACK_BLOB_REQUEST, encodeTrackBlobRequest(m.uuid));
+            }
+        });
+    }
+
+    /** Apply a single track tombstone from the watch. */
+    public static void handleIncomingTrackTombstone(Context context, byte[] payload) {
+        sHandler.post(() -> {
+            if (!isFrameworkReady()) return;
+            setApplyingRemoteUpdate(true);
+            try {
+                app.organicmaps.sdk.sync.TrackSyncCore.applyTombstone(
+                    context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE, payload);
+            } finally {
+                setApplyingRemoteUpdate(false);
+            }
+        });
+    }
+
+    /** Watch asked for a track's geometry: export it to KMZ (shipped via the shared sharing listener). */
+    public static void handleIncomingTrackBlobRequest(Context context, byte[] payload) {
+        ByteBuffer b = ByteBuffer.wrap(payload);
+        final String uuid = readWireString(b);
+        if (uuid == null) return;
+        sHandler.post(() -> {
+            if (!isFrameworkReady()) return;
+            app.organicmaps.sdk.bookmarks.data.BookmarkManager mgr = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE;
+            long trackId = app.organicmaps.sdk.sync.TrackSyncCore.findTrackByUuid(mgr, uuid);
+            if (trackId == -1) {
+                Log.w("WearSync", "Track blob requested for unknown uuid " + uuid);
+                return;
+            }
+            app.organicmaps.sdk.bookmarks.data.Track t = mgr.getTrack(trackId);
+            app.organicmaps.sdk.bookmarks.data.BookmarkCategory cat = (t != null) ? mgr.getCategoryById(t.getCategoryId()) : null;
+            String catName = (cat != null) ? cat.getName() : "Tracks";
+            sPendingTrackExports.addLast(new String[] { uuid, catName });
+            mgr.prepareTrackForSharing(trackId, app.organicmaps.sdk.bookmarks.data.KmlFileType.Text);
+        });
+    }
+
+    /** Receive a track blob (chunked KMZ), merge it into its target category, stamp its LWW ts. */
+    public static void handleIncomingTrackBlob(Context context, byte[] payload) {
+        ByteBuffer b = ByteBuffer.wrap(payload);
+        if (b.remaining() < 1) return;
+        byte flags = b.get();
+        boolean isLast = (flags & 1) != 0;
+        final String uuid = readWireString(b);
+        final String catName = readWireString(b);
+        if (uuid == null || catName == null) return;
+        byte[] chunk = new byte[b.remaining()];
+        b.get(chunk);
+        try {
+            String safe = uuid.replaceAll("[\\\\/:*?\"<>|]", "_");
+            File tmpFile = new File(context.getCacheDir(), "trk_" + safe + ".part");
+            FileOutputStream fos = sTrackOutputStreams.get(uuid);
+            if (fos == null) {
+                fos = new FileOutputStream(tmpFile);
+                sTrackOutputStreams.put(uuid, fos);
+            }
+            fos.write(chunk);
+            if (!isLast) return;
+            fos.close();
+            sTrackOutputStreams.remove(uuid);
+
+            boolean isZip = false;
+            try (java.io.FileInputStream sigIn = new java.io.FileInputStream(tmpFile)) {
+                byte[] sig = new byte[4];
+                isZip = sigIn.read(sig) == 4 && sig[0] == 0x50 && sig[1] == 0x4B && sig[2] == 0x03 && sig[3] == 0x04;
+            } catch (Exception ignored) {}
+            File finalFile = new File(context.getCacheDir(), "trk_" + safe + (isZip ? ".kmz" : ".kml"));
+            if (finalFile.exists() && !finalFile.delete())
+                Log.w("WearSync", "Failed to delete existing track file: " + finalFile.getName());
+            if (!tmpFile.renameTo(finalFile))
+                Log.e("WearSync", "Failed to rename track tmp file");
+
+            final long ts = sPendingImportTs.getOrDefault(uuid, System.currentTimeMillis());
+            sHandler.post(() -> {
+                if (!isFrameworkReady()) return;
+                setApplyingRemoteUpdate(true);
+                try {
+                    app.organicmaps.sdk.bookmarks.data.BookmarkManager mgr = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE;
+                    app.organicmaps.sdk.bookmarks.data.BookmarkCategory existing = null;
+                    for (app.organicmaps.sdk.bookmarks.data.BookmarkCategory c : mgr.getCategories()) {
+                        if (c.getName().equalsIgnoreCase(catName)) { existing = c; break; }
+                    }
+                    long catId = (existing != null) ? existing.getId() : mgr.createCategory(catName);
+                    // Native merges the imported temp category into catId and deletes the leftover; the
+                    // track's uuid rides along in its description.
+                    mgr.loadBookmarksFile(finalFile.getAbsolutePath(), true, catId);
+                } finally {
+                    setApplyingRemoteUpdate(false);
+                }
+                // The import is async; stamp the LWW ts once it has settled so we don't bounce it back.
+                sHandler.postDelayed(() -> {
+                    setApplyingRemoteUpdate(true);
+                    try {
+                        app.organicmaps.sdk.sync.TrackSyncCore.recordImported(
+                            context, app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE, uuid, ts);
+                    } finally {
+                        setApplyingRemoteUpdate(false);
+                    }
+                    sPendingImportTs.remove(uuid);
+                }, 1500);
+            });
+        } catch (Exception e) {
+            Log.e("WearSync", "Failed to handle incoming track blob", e);
+            FileOutputStream fos = sTrackOutputStreams.remove(uuid);
+            if (fos != null) try { fos.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    /** Stream a prepared track KMZ to the watch as chunked TYPE_TRACK_BLOB messages. */
+    private static void shipTrackBlob(@NonNull String uuid, @NonNull String catName, @NonNull String path) {
+        File file = new File(path);
+        long length = file.length();
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+            byte[] buffer = new byte[32 * 1024];
+            int read;
+            long sent = 0;
+            while ((read = fis.read(buffer)) != -1) {
+                sent += read;
+                boolean isLast = sent >= length;
+                byte[] chunk = (read == buffer.length) ? buffer : java.util.Arrays.copyOf(buffer, read);
+                getSyncLayer().sendRawMessage(app.organicmaps.MwmApplication.sInstance,
+                    app.organicmaps.sdk.sync.WearProtocol.TYPE_TRACK_BLOB, encodeTrackBlob(uuid, catName, chunk, isLast));
+                if (isLast) break;
+            }
+            Log.i("WearSync", "Shipped track blob " + uuid + " (" + length + " bytes)");
+        } catch (java.io.IOException e) {
+            Log.e("WearSync", "Failed to ship track blob", e);
+        }
+    }
+
+    private static byte[] encodeTrackBlobRequest(@NonNull String uuid) {
+        byte[] u = uuid.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer b = ByteBuffer.allocate(4 + u.length);
+        b.putInt(u.length); b.put(u);
+        return b.array();
+    }
+
+    private static byte[] encodeTrackBlob(@NonNull String uuid, @NonNull String catName, @NonNull byte[] chunk, boolean isLast) {
+        byte[] u = uuid.getBytes(StandardCharsets.UTF_8);
+        byte[] c = catName.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer b = ByteBuffer.allocate(1 + 4 + u.length + 4 + c.length + chunk.length);
+        b.put((byte) (isLast ? 1 : 0));
+        b.putInt(u.length); b.put(u);
+        b.putInt(c.length); b.put(c);
+        b.put(chunk);
+        return b.array();
+    }
+
+    @Nullable
+    private static String readWireString(@NonNull ByteBuffer b) {
+        if (b.remaining() < 4) return null;
+        int len = b.getInt();
+        if (len < 0 || b.remaining() < len) return null;
+        byte[] bytes = new byte[len];
+        b.get(bytes);
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /** Apply a per-bookmark LWW upsert batch received from the watch (content-addressed, no KMZ). */
@@ -343,6 +558,16 @@ public class WearSyncService {
     }
 
     private static final app.organicmaps.sdk.bookmarks.data.BookmarkManager.BookmarksSharingListener sSharingListener = (result) -> {
+        // A pending track export claims this callback first. The bookmark KMZ export path is dormant
+        // (bookmarks sync per-item via upsert), so a pending track export is unambiguous here.
+        if (!sPendingTrackExports.isEmpty()) {
+            String[] exp = sPendingTrackExports.pollFirst();
+            if (result.getCode() == app.organicmaps.sdk.bookmarks.data.BookmarkSharingResult.SUCCESS)
+                shipTrackBlob(exp[0], exp[1], result.getSharingPath());
+            else
+                Log.w("WearSync", "Track export failed for " + exp[0] + ": code " + result.getCode());
+            return;
+        }
         long[] catIds = result.getCategoriesIds();
         boolean isSilent;
         long targetCatId = (catIds != null && catIds.length > 0) ? catIds[0] : -1;
@@ -452,6 +677,27 @@ public class WearSyncService {
             sHandler.removeCallbacks(sSyncBookmarksRunnable);
             sHandler.postDelayed(sSyncBookmarksRunnable, 1000);
         }
+
+        // Saved tracks live in these same categories. Reconcile them independently of the bookmark
+        // fingerprint (a track rename/delete leaves bookmark counts + content untouched): stamp local
+        // track edits, tombstone vanished tracks, and debounce a manifest push. The mint inside
+        // stampLocalChange mutates descriptions, so guard against re-entering this listener.
+        setApplyingRemoteUpdate(true);
+        try {
+            app.organicmaps.sdk.bookmarks.data.BookmarkManager mgr = app.organicmaps.sdk.bookmarks.data.BookmarkManager.INSTANCE;
+            app.organicmaps.sdk.sync.TrackSyncCore.stampLocalChange(context, mgr);
+            java.util.List<String> removedTracks = app.organicmaps.sdk.sync.TrackSyncCore.detectDeletions(context, mgr);
+            long tnow = System.currentTimeMillis();
+            for (String uuid : removedTracks) {
+                Log.d("WearSync", "Track deleted locally -> tombstone " + uuid);
+                getSyncLayer().sendRawMessage(context, app.organicmaps.sdk.sync.WearProtocol.TYPE_TRACK_TOMBSTONE,
+                    app.organicmaps.sdk.sync.TrackSyncCore.encodeTombstone(uuid, tnow));
+            }
+        } finally {
+            setApplyingRemoteUpdate(false);
+        }
+        sHandler.removeCallbacks(sSyncTracksRunnable);
+        sHandler.postDelayed(sSyncTracksRunnable, 1200);
     };
 
     private static Location sLastSentLocation = null;
@@ -651,6 +897,7 @@ public class WearSyncService {
             getSyncLayer().syncPreferences(context);
         }
         syncBookmarksNow();
+        syncTracksForced();
     }
 
     public static void sendHandshakeToWatch(@NonNull Context context) {

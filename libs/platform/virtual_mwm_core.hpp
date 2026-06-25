@@ -30,6 +30,9 @@ bool InvalidateData(std::string const & mwmName, uint64_t offset, size_t size);
 // Registers a virtual MWM with its local sparse path and total size.
 void RegisterVirtualMwm(std::string const & mwmName, std::string const & path, uint64_t totalSize);
 
+// Unregisters a virtual MWM.
+void UnregisterVirtualMwm(std::string const & mwmName);
+
 // Returns the local sparse path for a registered virtual MWM, or empty string if not virtual.
 std::string GetVirtualMwmPath(std::string const & mwmName);
 

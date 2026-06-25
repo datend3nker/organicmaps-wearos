@@ -83,4 +83,10 @@ Java_app_organicmaps_wear_VirtualMwmManager_nativeNotifyMounted(JNIEnv * env, jc
   }
   wear::RegisterVirtualMwm(jni::ToNativeString(env, name), jni::ToNativeString(env, path), (uint64_t)totalSize);
 }
+
+JNIEXPORT void JNICALL
+Java_app_organicmaps_wear_VirtualMwmManager_nativeNotifyUnmounted(JNIEnv * env, jclass, jstring name)
+{
+  wear::UnregisterVirtualMwm(jni::ToNativeString(env, name));
+}
 }

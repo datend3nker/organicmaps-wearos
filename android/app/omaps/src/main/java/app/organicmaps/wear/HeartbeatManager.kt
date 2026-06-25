@@ -30,11 +30,9 @@ class HeartbeatManager(private val context: Context) {
                 }
 
                 val now = SystemClock.elapsedRealtime()
-                val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-                val isStandaloneSetting = prefs.getBoolean("disconnectFromPhone", false)
                 val currentState = NavigationStateHolder.state.value
                 
-                if (isStandaloneSetting) {
+                if (currentState.standaloneMode) {
                     if (currentState.isPhoneConnected) {
                         NavigationStateHolder.update(currentState.copy(isPhoneConnected = false))
                     }

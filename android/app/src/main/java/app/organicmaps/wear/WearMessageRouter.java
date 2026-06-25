@@ -95,6 +95,8 @@ public class WearMessageRouter {
                 // Force a bookmark-metadata push once per connect so both sides reconcile to a full
                 // mirror. (Self-guards on framework readiness.)
                 sMainHandler.post(WearSyncService::syncBookmarksMetadataForced);
+                // Reconcile saved tracks too (manifest-driven; blobs fetched on demand).
+                sMainHandler.post(WearSyncService::syncTracksForced);
                 // Push the phone's current downloaded-maps list on every connect. The StorageCallback
                 // only fires on a STATUS_DONE *transition*, so a map already downloaded before the
                 // watch connected produced no event — the watch never learned the phone had it and its
@@ -104,8 +106,9 @@ public class WearMessageRouter {
                 // Re-send the current track-recording status on every connect so a recording started
                 // while the watch was disconnected (the foreground service keeps running) is reflected
                 // on the watch the moment it reconnects.
-                sMainHandler.post(() -> WearSyncService.sendTrackRecordingStatus(context,
-                        app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled()));
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () ->
+                        WearSyncService.sendTrackRecordingStatus(context,
+                                app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled())));
                 break;
             case PATH_STOP_NAVIGATION:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_STOP_NAVIGATION");
@@ -243,7 +246,7 @@ public class WearMessageRouter {
                 break;
             case PATH_TRACK_RECORDING_TOGGLE:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_TRACK_RECORDING_TOGGLE");
-                sMainHandler.post(() -> {
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
                     boolean isRecording = app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled();
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Watch toggling track recording. Current: " + isRecording);
                     if (isRecording) {
@@ -253,24 +256,24 @@ public class WearMessageRouter {
                     } else {
                         Log.w(TAG, "DEBUG_WEAR_PIPELINE: Cannot start track recording: permission missing");
                     }
-                });
+                }));
                 break;
             case WearProtocol.PATH_TRACK_RECORDING_SAVE: {
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_TRACK_RECORDING_SAVE");
                 final String saveName = finalPayload != null && finalPayload.length > 0
                         ? new String(finalPayload, StandardCharsets.UTF_8) : "";
-                sMainHandler.post(() -> {
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
                     if (app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled())
                         TrackRecordingService.saveRecording(context, saveName);
-                });
+                }));
                 break;
             }
             case WearProtocol.PATH_TRACK_RECORDING_DISCARD:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_TRACK_RECORDING_DISCARD");
-                sMainHandler.post(() -> {
+                sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
                     if (app.organicmaps.sdk.location.TrackRecorder.nativeIsTrackRecordingEnabled())
                         TrackRecordingService.discardRecording(context);
-                });
+                }));
                 break;
             case PATH_BOOKMARKS_REQUEST:
                 Log.d(TAG, "DEBUG_WEAR_PIPELINE: Handling PATH_BOOKMARKS_REQUEST");
@@ -279,6 +282,8 @@ public class WearMessageRouter {
                     // Push bookmark metadata (deduped — unchanged metadata is skipped, so the watch's
                     // periodic requests don't cause a resend storm). Per-connect force is on HANDSHAKE.
                     WearSyncService.syncBookmarksNow();
+                    // Reconcile saved tracks too (manifest-driven; blobs fetched on demand).
+                    WearSyncService.syncTracksNow();
                 }));
                 break;
             case PATH_BOOKMARK_SHOW: {
@@ -582,7 +587,11 @@ public class WearMessageRouter {
                 int size = buffer.getInt();
 
                 sMainHandler.post(() -> ensureFrameworkInitialized(context, () -> {
-                    int safeSize = Math.min(size, 85 * 1024);
+                    // Cap was 85KB for the old MessageClient (~100KB limit). Data now streams over a
+                    // ChannelClient (no size cap), and the watch requests up to 512KB blocks, so allow
+                    // a larger serve. Bigger serves = fewer round-trips = streaming finishes inside the
+                    // native WaitForData budget.
+                    int safeSize = Math.min(size, 1024 * 1024);
                     byte[] mwmData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(mwmName, offset, safeSize);
                     if (mwmData != null && mwmData.length > 0) {
                         Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending MWM bytes: " + mwmName + " offset: " + offset + " size: " + mwmData.length + " (requested: " + size + ")");
@@ -620,6 +629,18 @@ public class WearMessageRouter {
                 break;
             case WearProtocol.PATH_BOOKMARK_TOMBSTONE:
                 WearSyncService.applyIncomingTombstone(context, finalPayload);
+                break;
+            case WearProtocol.PATH_TRACK_MANIFEST:
+                WearSyncService.handleIncomingTrackManifest(context, finalPayload);
+                break;
+            case WearProtocol.PATH_TRACK_TOMBSTONE:
+                WearSyncService.handleIncomingTrackTombstone(context, finalPayload);
+                break;
+            case WearProtocol.PATH_TRACK_BLOB_REQUEST:
+                WearSyncService.handleIncomingTrackBlobRequest(context, finalPayload);
+                break;
+            case WearProtocol.PATH_TRACK_BLOB:
+                WearSyncService.handleIncomingTrackBlob(context, finalPayload);
                 break;
             case PATH_BACKEND_SWITCH: {
                 String newBackend = new String(finalPayload, StandardCharsets.UTF_8);

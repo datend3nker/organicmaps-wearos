@@ -320,7 +320,7 @@ public class StoragePathManager
       }
       else
       {
-        Logger.w(TAG, "No map files found at the currenly configured " + path);
+        Logger.i(TAG, "No map files found at the currently configured " + path);
       }
     }
 

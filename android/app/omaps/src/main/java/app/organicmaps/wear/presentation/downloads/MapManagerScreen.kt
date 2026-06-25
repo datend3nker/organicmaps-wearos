@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -124,6 +125,10 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                         a.name.compareTo(b.name)
                     }
                     
+                    // Warm the partial-shadow disk cache off the main thread so the per-item
+                    // isVirtual() lookups during recomposition stay O(1).
+                    VirtualMwmManager.listPartialShadowIds(context)
+
                     withContext(Dispatchers.Main) {
                         countries = sorted
                         loading = false
@@ -132,6 +137,20 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                 }
             } catch (_: Throwable) {
                 withContext(Dispatchers.Main) { loading = false }
+            }
+        }
+    }
+
+    val missingMapId = navState.missingMapId
+    if (missingMapId != null) {
+        val isDownloaded = remember(missingMapId, countries) {
+            countries.any { it.id == missingMapId && (it.status == CountryItem.STATUS_DONE || it.present) } ||
+            (try { MapManager.nativeGetStatus(missingMapId) == CountryItem.STATUS_DONE } catch(_: Throwable) { false }) ||
+            VirtualMwmManager.isVirtual(context, missingMapId)
+        }
+        if (isDownloaded) {
+            LaunchedEffect(missingMapId) {
+                NavigationStateHolder.update { it.copy(missingMapId = null) }
             }
         }
     }
@@ -265,7 +284,7 @@ fun MapManagerScreen(isVisible: Boolean = true) {
         if (loading) {
             item { CircularProgressIndicator() }
         } else {
-            val downloadedItems = countries.filter { it.present }
+            val downloadedItems = countries.filter { it.present && !VirtualMwmManager.isVirtual(context, it.id) }
             if (currentRoot == null && downloadedItems.isNotEmpty() && searchQuery.isEmpty()) {
                 item {
                     Text("Downloaded", style = MaterialTheme.typography.caption1, color = Color(0xFF00FF00), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
@@ -279,7 +298,7 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                 }
             }
 
-            val groups = countries.filter { currentRoot != null || !it.present || searchQuery.isNotEmpty() }.groupBy { it.category }
+            val groups = countries.filter { currentRoot != null || !it.present || VirtualMwmManager.isVirtual(context, it.id) || searchQuery.isNotEmpty() }.groupBy { it.category }
             val categories = groups.keys.sorted()
             
             for (cat in categories) {
@@ -309,85 +328,197 @@ fun MapManagerScreen(isVisible: Boolean = true) {
 fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChanged: (List<String>) -> Unit, scope: CoroutineScope) {
     val context = LocalContext.current
     val navState by NavigationStateHolder.state.collectAsState()
+    
+    val activeDownloadMap by WearMapDownloader.currentMap.collectAsState()
+    val activeDownloadState by WearMapDownloader.downloadState.collectAsState()
+    val activeDownloadProgress by WearMapDownloader.downloadProgress.collectAsState()
+
+    val isThisDownloading = activeDownloadMap == item.id && 
+        (activeDownloadState.name == "DOWNLOADING" || 
+         activeDownloadState.name == "STREAMING_FROM_PHONE" || 
+         activeDownloadState.name == "VALIDATING")
+
     val isDownloading = (item.status == CountryItem.STATUS_PROGRESS ||
                         item.status == CountryItem.STATUS_ENQUEUED ||
-                        item.status == CountryItem.STATUS_APPLYING)
-    val isInstalled = item.status == CountryItem.STATUS_DONE || item.status == CountryItem.STATUS_PARTLY || item.present
+                        item.status == CountryItem.STATUS_APPLYING) || isThisDownloading
+                        
+    val isVirtual = VirtualMwmManager.isVirtual(context, item.id)
+    val isInstalled = !isVirtual && (item.status == CountryItem.STATUS_DONE || item.status == CountryItem.STATUS_PARTLY || item.present)
     val isOnPhone = navState.phoneDownloadedMaps.contains(item.id)
     
+    val progressPercent = if (isThisDownloading) (activeDownloadProgress * 100).toInt() else item.progress.toInt()
+    
     val statusText = when {
-        item.status == CountryItem.STATUS_DONE -> "Installed"
-        isDownloading -> "Downloading ${item.progress.toInt()}%"
+        isDownloading -> "Downloading $progressPercent%"
         item.status == CountryItem.STATUS_ENQUEUED -> "Enqueued"
         item.status == CountryItem.STATUS_FAILED -> "Error - Tap to retry"
         isOnPhone -> "Pull from Phone (${String.format(Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
         item.status == CountryItem.STATUS_DOWNLOADABLE -> "Download (${String.format(Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
+        isVirtual -> "Companion Map (Streamed)"
+        item.status == CountryItem.STATUS_DONE -> "Installed"
         else -> if (item.isExpandable) "${item.totalChildCount} regions" else "Status: ${item.status}"
     }
 
-    Chip(
-        onClick = {
-            if (item.isExpandable) {
-                onPathStackChanged(pathStack + item.id)
-            } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED || isOnPhone) {
-                // Storage guard: a full Copy to Watch needs room for the whole region. If it won't
-                // fit comfortably, steer the user to bounded viewport streaming instead of filling
-                // the disk (streaming serves the map on demand when navigated to).
-                if (item.totalSize > 0 && !WatchStorage.fitsComfortably(context, item.totalSize)) {
-                    val free = WatchStorage.formatBytes(WatchStorage.freeBytes(context))
-                    val size = WatchStorage.formatBytes(item.totalSize)
-                    NavigationStateHolder.emitEvent(UiEvent.ShowToast(
-                        "$size won't fit ($free free). It will stream on demand instead.",
-                        Toast.LENGTH_LONG,
-                    ))
-                } else {
-                    scope.launch(Dispatchers.Main) {
-                        WearMapDownloader.downloadOrStreamMap(context, item.id)
-                    }
-                }
-            }
-        },
-        label = { Text(item.name, maxLines = 1) },
-        secondaryLabel = { 
-            Column {
-                Text(statusText, color = if (isInstalled) Color.Green else Color.LightGray)
-                if (isDownloading && item.progress > 0) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(2.dp)
-                            .padding(top = 2.dp)
-                            .background(Color.Gray.copy(alpha = 0.3f))
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(item.progress / 100f)
-                                .fillMaxHeight()
-                                .background(Color(0xFF00E5FF))
-                        )
-                    }
-                }
-            }
-        },
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        colors = ChipDefaults.secondaryChipColors(),
-        icon = {
-            if (item.isExpandable) {
-                Icon(Icons.Default.ChevronRight, contentDescription = null)
-            } else if (isInstalled) {
-                // Using Button as a wrapper for Delete icon to make it clickable independently is tricky in Chip icon.
-                // We'll use the chip's icon slot for the status or action.
-                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(24.dp).clickable {
-                    // A streamed (virtual/partial) map must be torn down through VirtualMwmManager so
-                    // its sparse .mwm/.bits are removed cleanly. MapManager.delete is not virtual-aware
-                    // and leaves a corrupt cache that crashes startup (#7).
-                    if (VirtualMwmManager.isMounted(item.id)) {
-                        VirtualMwmManager.deleteVirtual(context, item.id)
+    if (!item.isExpandable && (isInstalled || isVirtual)) {
+        CustomSplitChip(
+            onClick = {
+                if (isVirtual) {
+                    if (item.totalSize > 0 && !WatchStorage.fitsComfortably(context, item.totalSize)) {
+                        val free = WatchStorage.formatBytes(WatchStorage.freeBytes(context))
+                        val size = WatchStorage.formatBytes(item.totalSize)
+                        NavigationStateHolder.emitEvent(UiEvent.ShowToast(
+                            "$size won't fit ($free free). It will stream on demand instead.",
+                            Toast.LENGTH_LONG,
+                        ))
                     } else {
-                        MapManager.delete(item.id)
+                        scope.launch(Dispatchers.Main) {
+                            WearMapDownloader.downloadOrStreamMap(context, item.id)
+                        }
                     }
-                })
+                }
+            },
+            onDeleteClick = {
+                if (VirtualMwmManager.isVirtual(context, item.id)) {
+                    VirtualMwmManager.deleteVirtual(context, item.id, setBackoff = true)
+                } else {
+                    MapManager.delete(item.id)
+                }
+            },
+            label = { Text(item.name, maxLines = 1) },
+            secondaryLabel = {
+                Column {
+                    Text(statusText, color = if (isInstalled) Color.Green else if (isVirtual) Color(0xFF00E5FF) else Color.LightGray)
+                    if (isDownloading) {
+                        val progressValue = if (isThisDownloading) activeDownloadProgress else (item.progress / 100f)
+                        if (progressValue > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(2.dp)
+                                    .padding(top = 2.dp)
+                                    .background(Color.Gray.copy(alpha = 0.3f))
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(progressValue)
+                                        .fillMaxHeight()
+                                        .background(Color(0xFF00E5FF))
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            enabled = isVirtual,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        )
+    } else {
+        Chip(
+            onClick = {
+                if (item.isExpandable) {
+                    onPathStackChanged(pathStack + item.id)
+                } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED || isOnPhone) {
+                    if (item.totalSize > 0 && !WatchStorage.fitsComfortably(context, item.totalSize)) {
+                        val free = WatchStorage.formatBytes(WatchStorage.freeBytes(context))
+                        val size = WatchStorage.formatBytes(item.totalSize)
+                        NavigationStateHolder.emitEvent(UiEvent.ShowToast(
+                            "$size won't fit ($free free). It will stream on demand instead.",
+                            Toast.LENGTH_LONG,
+                        ))
+                    } else {
+                        scope.launch(Dispatchers.Main) {
+                            WearMapDownloader.downloadOrStreamMap(context, item.id)
+                        }
+                    }
+                }
+            },
+            label = { Text(item.name, maxLines = 1) },
+            secondaryLabel = {
+                Column {
+                    Text(statusText, color = if (isInstalled) Color.Green else if (isVirtual) Color(0xFF00E5FF) else Color.LightGray)
+                    if (isDownloading) {
+                        val progressValue = if (isThisDownloading) activeDownloadProgress else (item.progress / 100f)
+                        if (progressValue > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(2.dp)
+                                    .padding(top = 2.dp)
+                                    .background(Color.Gray.copy(alpha = 0.3f))
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(progressValue)
+                                        .fillMaxHeight()
+                                        .background(Color(0xFF00E5FF))
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            colors = ChipDefaults.secondaryChipColors(),
+            icon = {
+                if (item.isExpandable) {
+                    Icon(Icons.Default.ChevronRight, contentDescription = null)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun CustomSplitChip(
+    onClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    label: @Composable () -> Unit,
+    secondaryLabel: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    Row(
+        modifier = modifier
+            .height(52.dp)
+            .clip(RoundedCornerShape(26.dp))
+            .background(MaterialTheme.colors.onSurface.copy(alpha = 0.1f)),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clickable(enabled = enabled, onClick = onClick)
+                .padding(start = 14.dp, top = 4.dp, bottom = 4.dp, end = 8.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            ProvideTextStyle(value = MaterialTheme.typography.button.copy(color = if (enabled) Color.White else Color.LightGray)) {
+                label()
+            }
+            Spacer(modifier = Modifier.height(1.dp))
+            ProvideTextStyle(value = MaterialTheme.typography.caption2) {
+                secondaryLabel()
             }
         }
-    )
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(1.dp)
+                .background(Color.Gray.copy(alpha = 0.2f))
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(48.dp)
+                .clickable(onClick = onDeleteClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Delete",
+                tint = Color.Red,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
 }

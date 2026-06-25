@@ -349,7 +349,7 @@ class WearApplication : Application() {
         try {
             organicMaps.locationHelper.start()
         } catch (_: SecurityException) {
-            Log.e("WearApplication", "Location permission missing at startup")
+            Log.d("WearApplication", "Location permission missing at startup")
         }
     }
     

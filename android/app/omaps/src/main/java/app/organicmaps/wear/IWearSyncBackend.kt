@@ -40,6 +40,11 @@ interface IWearSyncBackend {
     fun sendBookmarksMetadata(context: Context, payload: ByteArray)
     fun sendBookmarkUpsert(context: Context, payload: ByteArray)
     fun sendBookmarkTombstone(context: Context, payload: ByteArray)
+    // Saved-track sync (see TrackSyncCore): lightweight manifest/tombstone + on-demand KMZ blob.
+    fun sendTrackManifest(context: Context, payload: ByteArray)
+    fun sendTrackTombstone(context: Context, payload: ByteArray)
+    fun requestTrackBlob(context: Context, payload: ByteArray)
+    fun sendTrackBlob(context: Context, payload: ByteArray)
     fun requestMwmBytes(context: Context, mwmName: String, offset: Long, size: Int)
     fun launchPhoneApp(context: Context)
     fun sendHandshake(context: Context)

@@ -252,6 +252,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
   private ImageView mWearStatusIcon;
   private TextView mWearStatusText;
   private boolean mIsWearConnected = false;
+  private boolean mWearPostNotificationPermissionRequested = false;
   private final Handler mWearStatusHandler = new Handler(Looper.getMainLooper());
   private final Runnable mContractWearStatusTask = new Runnable() {
     @Override
@@ -1208,6 +1209,10 @@ public class MwmActivity extends BaseMwmFragmentActivity
     
     if (isLinked && !mIsWearConnected) {
       expandWearStatus();
+      if (!mWearPostNotificationPermissionRequested && PreferenceManager.getDefaultSharedPreferences(this).getBoolean("pref_sync_notifications", true)) {
+        mWearPostNotificationPermissionRequested = true;
+        requestPostNotificationsPermission();
+      }
     }
     mIsWearConnected = isLinked;
 

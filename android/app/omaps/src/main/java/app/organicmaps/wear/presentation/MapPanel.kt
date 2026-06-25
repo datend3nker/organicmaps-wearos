@@ -225,7 +225,10 @@ fun MapPanel(
         val (lat, lon, _) = location
         if (lat != 0.0 && state.missingMapId != null) {
             val currentCountry = withContext(Dispatchers.Default) { MapManager.nativeFindCountry(lat, lon) }
-            if (currentCountry != null && (currentCountry != state.missingMapId || VirtualMwmManager.isMounted(currentCountry))) {
+            val isDownloaded = withContext(Dispatchers.Default) {
+                MapManager.nativeGetStatus(currentCountry) == CountryItem.STATUS_DONE
+            }
+            if (currentCountry != null && (currentCountry != state.missingMapId || VirtualMwmManager.isMounted(currentCountry) || isDownloaded)) {
                 NavigationStateHolder.update { it.copy(missingMapId = null) }
             }
         }
@@ -283,6 +286,7 @@ fun MapPanel(
     val currentCountry = remember(clat, clon) {
         if (clat != 0.0) MapManager.nativeFindCountry(clat, clon) else null
     }
+
     val isMapNotOnPhone = currentCountry != null &&
             currentCountry == state.missingMapId &&
             !VirtualMwmManager.isMounted(currentCountry)
@@ -905,17 +909,33 @@ private fun computeRouteTurns(points: List<Pair<Double, Double>>): Triple<Double
 }
 
 private fun maybeRequestMount(context: Context, countryId: String?, trigger: String) {
-    if (!countryId.isNullOrEmpty() &&
-        MapManager.nativeGetStatus(countryId) != CountryItem.STATUS_DONE &&
+    if (countryId.isNullOrEmpty()) {
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger skip — nativeFindCountry returned null/empty")
+        return
+    }
+
+    val nativeStatus = MapManager.nativeGetStatus(countryId)
+    val stateName = WearMapDownloader.downloadState.value.name
+    val isDownloading = WearMapDownloader.currentMap.value == countryId && 
+        (stateName == "DOWNLOADING" || stateName == "STREAMING_FROM_PHONE" || stateName == "VALIDATING")
+         
+    val isNativeDownloading = nativeStatus == CountryItem.STATUS_PROGRESS ||
+                              nativeStatus == CountryItem.STATUS_ENQUEUED ||
+                              nativeStatus == CountryItem.STATUS_APPLYING
+
+    if (isDownloading || isNativeDownloading) {
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger skip $countryId — map is currently downloading")
+        return
+    }
+
+    if (nativeStatus != CountryItem.STATUS_DONE &&
         !VirtualMwmManager.isMounted(countryId) &&
         VirtualMwmManager.shouldRequestMetadata(countryId)
     ) {
         Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger MWM mount request: $countryId")
         WearCommandService.requestMwmMetadata(context, countryId)
-    } else if (countryId.isNullOrEmpty()) {
-        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger skip — nativeFindCountry returned null/empty")
     } else {
-        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger skip $countryId — status=${MapManager.nativeGetStatus(countryId)} " +
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger skip $countryId — status=$nativeStatus " +
                 "mounted=${VirtualMwmManager.isMounted(countryId)} shouldReq=${VirtualMwmManager.shouldRequestMetadata(countryId)}")
     }
 }
