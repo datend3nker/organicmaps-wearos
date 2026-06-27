@@ -914,6 +914,15 @@ private fun maybeRequestMount(context: Context, countryId: String?, trigger: Str
         return
     }
 
+    // Honor pull settings: companion shadow-streaming requires a phone to pull bytes from. In
+    // standalone mode (watch independent from phone) or with no phone connected there is nothing to
+    // stream from, so never auto-mount a shadow — this also stops a just-deleted shadow re-appearing.
+    val s = NavigationStateHolder.state.value
+    if (s.standaloneMode || !s.isPhoneConnected) {
+        Log.d("MapPanel", "DEBUG_WEAR_PIPELINE: $trigger skip $countryId — standalone=${s.standaloneMode} phoneConnected=${s.isPhoneConnected}")
+        return
+    }
+
     val nativeStatus = MapManager.nativeGetStatus(countryId)
     val stateName = WearMapDownloader.downloadState.value.name
     val isDownloading = WearMapDownloader.currentMap.value == countryId && 

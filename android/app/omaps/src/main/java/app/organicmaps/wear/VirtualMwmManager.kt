@@ -713,15 +713,38 @@ object VirtualMwmManager {
                                     runCatching { bitsFile.delete() }
                                 }
                             } else {
-                                // A sparse .mwm with NO sibling .bits is an orphan (e.g. process
-                                // killed mid-stream before the debounced .bits flush). It can't be
-                                // restored as a virtual mount, and if left on disk the native
-                                // RegisterLocalFile scan registers it as a normal STATUS_DONE map —
-                                // the engine then reads holes (zeros) / blocks forever on WaitForData
-                                // and the viewport mount-loop never re-streams it (gate skips DONE).
-                                // Delete it here, before init, so native never sees it.
-                                Log.w(TAG, "DEBUG_WEAR_PIPELINE: removing orphan sparse .mwm (no .bits): $mwmName")
-                                runCatching { file.delete() }
+                                // No .bits sidecar. This is EITHER a fully-downloaded real map (a full
+                                // "Copy to Watch" pull writes a complete file with no .bits) OR a holey
+                                // sparse orphan (streamed, then the process was killed before the
+                                // debounced .bits flush). Both lack .bits, so we cannot key off that.
+                                // Distinguish by ACTUAL disk allocation: a complete file's on-disk blocks
+                                // are ~= its logical size, while a sparse file's are far smaller (holes).
+                                // Keeping a real map here is critical — deleting it was the "map shows as
+                                // not downloaded after restart" bug. A holey orphan must still be removed
+                                // before init, else native registers it STATUS_DONE and the renderer reads
+                                // holes / blocks forever on WaitForData.
+                                val logical = file.length()
+                                val onDisk = try {
+                                    // st_blocks = number of 512-byte blocks actually allocated; far smaller
+                                    // than st_size for a sparse/holey file. (java.nio "unix:blocks" throws
+                                    // on Android, so use the libcore Os.stat syscall wrapper directly.)
+                                    android.system.Os.stat(file.absolutePath).st_blocks * 512L
+                                } catch (e: Throwable) { -1L }
+                                when {
+                                    logical == 0L -> {
+                                        Log.w(TAG, "DEBUG_WEAR_PIPELINE: removing 0-byte .mwm (failed transfer): $mwmName")
+                                        runCatching { file.delete() }
+                                    }
+                                    onDisk in 0 until (logical * 9L / 10L) -> {
+                                        Log.w(TAG, "DEBUG_WEAR_PIPELINE: removing orphan sparse .mwm (no .bits, holey onDisk=$onDisk logical=$logical): $mwmName")
+                                        runCatching { file.delete() }
+                                    }
+                                    else -> {
+                                        // Complete (onDisk ~= logical) OR allocation unreadable (onDisk<0):
+                                        // err toward KEEP so a real download is never nuked.
+                                        Log.i(TAG, "DEBUG_WEAR_PIPELINE: keeping complete downloaded map (no .bits, onDisk=$onDisk logical=$logical): $mwmName")
+                                    }
+                                }
                             }
                         } else if (file.name.endsWith(".bits")) {
                             val mwmFile = File(file.absolutePath.substringBeforeLast("."))

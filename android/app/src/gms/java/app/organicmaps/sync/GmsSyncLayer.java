@@ -634,25 +634,60 @@ public class GmsSyncLayer implements ISyncLayer {
         try {
             com.google.android.gms.wearable.ChannelClient channelClient = Wearable.getChannelClient(context);
             channelClient.openChannel(targetNodeId, WearProtocol.PATH_MAP_STREAM_DATA + mapId)
-                    .addOnSuccessListener(channel -> {
-                        android.net.Uri uri = android.net.Uri.fromFile(file);
-                        mStreamingThreads.put(mapId, Thread.currentThread());
-                        app.organicmaps.wear.WearCompanionNotificationManager.showSearchNotification(context, mapId);
-
-                        channelClient.sendFile(channel, uri)
-                                .addOnFailureListener(e -> {
-                                    sendMapNotFound(context, mapId);
+                    .addOnSuccessListener(channel ->
+                        channelClient.getOutputStream(channel).addOnSuccessListener(os -> {
+                            app.organicmaps.wear.WearCompanionNotificationManager.showServingNotification(context, mapId, 0);
+                            Thread worker = new Thread(() -> {
+                                mStreamingThreads.put(mapId, Thread.currentThread());
+                                // Stream the file manually instead of ChannelClient.sendFile(): on the watch
+                                // side receiveFile()'s Task completes when receiving is merely SET UP (not when
+                                // the transfer finishes), so the watch renamed an empty temp and closed the
+                                // channel before any bytes flowed -> "sendFile on closed channel" -> 0-byte map.
+                                // A plain output stream the watch drains to EOF is deterministic. First 8 bytes
+                                // = total length (big-endian) so the watch can show progress + verify completeness.
+                                try (java.io.InputStream in = new java.io.BufferedInputStream(new java.io.FileInputStream(file), 512 * 1024)) {
+                                    long len = file.length();
+                                    byte[] header = java.nio.ByteBuffer.allocate(8).putLong(len).array();
+                                    os.write(header);
+                                    byte[] buf = new byte[512 * 1024];
+                                    int n;
+                                    long sent = 0;
+                                    long lastTick = 0;
+                                    int lastPct = -1;
+                                    while ((n = in.read(buf)) != -1) {
+                                        if (Thread.currentThread().isInterrupted()) throw new java.io.IOException("cancelled");
+                                        os.write(buf, 0, n);
+                                        sent += n;
+                                        // Update the serving progress notification at most every ~2MB / 1%.
+                                        if (len > 0 && sent - lastTick >= 2L * 1024 * 1024) {
+                                            lastTick = sent;
+                                            int pct = (int) (sent * 100 / len);
+                                            if (pct != lastPct) {
+                                                lastPct = pct;
+                                                app.organicmaps.wear.WearCompanionNotificationManager.showServingNotification(context, mapId, pct);
+                                            }
+                                        }
+                                    }
+                                    os.flush();
+                                    app.organicmaps.wear.WearCompanionNotificationManager.showServingNotification(context, mapId, 100);
+                                } catch (Exception e) {
+                                    Log.e(TAG, "GMS map stream write failed for " + mapId + ": " + e.getMessage());
+                                } finally {
+                                    try { os.close(); } catch (Exception ignored) {}
                                     channelClient.close(channel);
-                                });
-
-                        channelClient.registerChannelCallback(channel, new com.google.android.gms.wearable.ChannelClient.ChannelCallback() {
-                            @Override
-                            public void onChannelClosed(com.google.android.gms.wearable.ChannelClient.Channel c, int closeReason, int errorCode) {
-                                mStreamingThreads.remove(mapId);
-                                app.organicmaps.wear.WearCompanionNotificationManager.hideNotification(context, app.organicmaps.wear.WearCompanionNotificationManager.NOTIFICATION_ID_SEARCH);
-                                channelClient.unregisterChannelCallback(c, this);
-                            }
-                        });
+                                    mStreamingThreads.remove(mapId);
+                                    app.organicmaps.wear.WearCompanionNotificationManager.hideNotification(context, app.organicmaps.wear.WearCompanionNotificationManager.NOTIFICATION_ID_MAP_SYNC);
+                                }
+                            }, "MapStreamWrite");
+                            worker.start();
+                        }).addOnFailureListener(e -> {
+                            Log.w(TAG, "GMS getOutputStream failed for map " + mapId + ": " + e.getMessage());
+                            sendMapNotFound(context, mapId);
+                            channelClient.close(channel);
+                        })
+                    ).addOnFailureListener(e -> {
+                        Log.w(TAG, "GMS openChannel failed for map " + mapId + ": " + e.getMessage());
+                        sendMapNotFound(context, mapId);
                     });
         } catch (Exception e) {
             Log.e(TAG, "GMS Channel streaming failed", e);

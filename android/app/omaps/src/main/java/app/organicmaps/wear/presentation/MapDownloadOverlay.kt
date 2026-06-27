@@ -140,13 +140,20 @@ fun MapDownloadOverlay() {
 
             Spacer(modifier = Modifier.height(8.dp))
             
-            val backendName = if (navState.backend == "GMS") "Google Play" else "Bluetooth"
-            val progressText = if (downloadState == WearMapDownloader.DownloadState.FAILED) "Map not found on phone" 
-                              else if (progress > 0) "${(progress * 100).toInt()}%" 
+            val backendName = if (navState.backend == "GMS") "GMS" else "Bluetooth"
+            val progressText = if (downloadState == WearMapDownloader.DownloadState.FAILED) "Map not found on phone"
+                              else if (progress > 0) "${(progress * 100).toInt()}%"
                               else "Starting..."
-            
+            // Make the source explicit: a phone pull names the transport (GMS/Bluetooth); a direct
+            // download names the internet.
+            val sourceText = when (downloadState) {
+                WearMapDownloader.DownloadState.DOWNLOADING -> "from Internet"
+                WearMapDownloader.DownloadState.STREAMING_FROM_PHONE -> "from Phone · $backendName"
+                else -> "via $backendName"
+            }
+
             Text(
-                text = if (downloadState == WearMapDownloader.DownloadState.FAILED) progressText else "via $backendName ($progressText)",
+                text = if (downloadState == WearMapDownloader.DownloadState.FAILED) progressText else "$sourceText ($progressText)",
                 style = MaterialTheme.typography.caption3,
                 textAlign = TextAlign.Center,
                 color = if (downloadState == WearMapDownloader.DownloadState.FAILED) Color.Red.copy(alpha = 0.8f) else Color.LightGray

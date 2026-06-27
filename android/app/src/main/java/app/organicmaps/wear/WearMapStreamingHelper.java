@@ -31,19 +31,12 @@ public class WearMapStreamingHelper {
 
         Log.d(TAG, "DEBUG_WEAR_PIPELINE: Successfully found map file for streaming: " + mapFile.getAbsolutePath());
 
-        // Send metadata first to allow watch to "mount" the virtual MWM (ghost file).
-        // Include header and footer for immediate registration success.
-        Log.d(TAG, "DEBUG_WEAR_PIPELINE: Sending MWM metadata (mount) for " + normalizedMapId + " size: " + mapFile.length());
-        
-        int footerSize = (int) Math.min(mapFile.length(), 64 * 1024);
-        long footerOffset = mapFile.length() - footerSize;
-        byte[] footerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(normalizedMapId, footerOffset, footerSize);
-        
-        int headerSize = (int) Math.min(mapFile.length(), 16 * 1024);
-        byte[] headerData = app.organicmaps.sdk.Framework.nativeGetMwmBytes(normalizedMapId, 0, headerSize);
-        
-        syncLayer.sendMwmMetadata(context, normalizedMapId, mapFile.length(), headerData, footerData);
-
+        // Full-pull ("Copy to Watch") transfers the complete file over the channel into a temp file
+        // that the watch atomically renames into place. Do NOT also send mount metadata here: that
+        // makes the watch create a sparse VIRTUAL .mwm at the SAME destination path, which races the
+        // channel rename and leaves a holey/truncated container -> FilesContainerR aborts
+        // (AssertPosition) on ReloadWorldMaps. On-demand viewport streaming has its own mount path
+        // (PATH_VIRTUAL_MWM_METADATA_REQUEST); a full pull must never mount a shadow.
         syncLayer.streamMapFile(context, nodeId, normalizedMapId, mapFile, offset);
     }
 

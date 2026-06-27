@@ -248,18 +248,59 @@ class WearDataListenerService : WearableListenerService() {
                     // Ensure the parent directory exists for the temp file
                     tempFile.parentFile?.mkdirs()
 
+                    // Drain the channel input to EOF ourselves. ChannelClient.receiveFile()'s Task
+                    // completes when receiving is merely SET UP (not when the transfer finishes), so the
+                    // old code renamed an empty temp and closed the channel before any bytes arrived ->
+                    // 0-byte map. The phone writes an 8-byte big-endian length header, then the file bytes.
                     Log.d(TAG, "DEBUG_GMS_PIPELINE: GMS Receiving file into: ${tempFile.absolutePath}")
-                    channelClient.receiveFile(channel, android.net.Uri.fromFile(tempFile), false).await()
-                    
-                    Log.d(TAG, "GMS Pull completed, renaming $mapId to ${finalFile.name}")
+                    val input = java.io.BufferedInputStream(channelClient.getInputStream(channel).await(), 512 * 1024)
+                    var expected = -1L
+                    var received = 0L
+                    java.io.BufferedOutputStream(java.io.FileOutputStream(tempFile), 512 * 1024).use { out ->
+                        val header = ByteArray(8)
+                        var got = 0
+                        while (got < 8) {
+                            val r = input.read(header, got, 8 - got)
+                            if (r == -1) break
+                            got += r
+                        }
+                        if (got == 8) {
+                            expected = java.nio.ByteBuffer.wrap(header).long
+                            val buf = ByteArray(512 * 1024)
+                            var lastTick = 0L
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n == -1) break
+                                out.write(buf, 0, n)
+                                received += n
+                                // Feed the download watchdog (60s no-progress => FAILED) and the UI.
+                                if (expected > 0 && received - lastTick >= 1_048_576L) {
+                                    lastTick = received
+                                    WearMapDownloader.setStreamingProgress((received.toFloat() / expected).coerceIn(0f, 0.99f))
+                                }
+                            }
+                        }
+                    }
+                    input.close()
+
+                    if (expected <= 0L || received < expected) {
+                        Log.e(TAG, "DEBUG_GMS_PIPELINE: Incomplete pull for $mapId (got $received / $expected) — discarding")
+                        tempFile.delete()
+                        WearMapDownloader.onDownloadCancelled()
+                        return@launch
+                    }
+
+                    Log.d(TAG, "GMS Pull completed ($received bytes), renaming $mapId to ${finalFile.name}")
+                    // Tear down any streamed shadow (sparse .mwm + .bits) at this path first so the real
+                    // file replaces it cleanly and nothing stale is restored on next launch.
                     VirtualMwmManager.deleteVirtual(this@WearDataListenerService, "$mapId.mwm")
                     if (finalFile.exists()) finalFile.delete()
                     tempFile.renameTo(finalFile)
-                    
-                     WearMapDownloader.onDownloadCompleted()
+
+                    WearMapDownloader.onDownloadCompleted()
                     ReloadWorldMapsDebouncer.reload()
-                } catch (_: Exception) {
-                    Log.e(TAG, "DEBUG_GMS_PIPELINE: Failed to pull map $mapId")
+                } catch (e: Exception) {
+                    Log.e(TAG, "DEBUG_GMS_PIPELINE: Failed to pull map $mapId: ${e.message}")
                     WearMapDownloader.onDownloadCancelled()
                 } finally {
                     channelClient.close(channel)

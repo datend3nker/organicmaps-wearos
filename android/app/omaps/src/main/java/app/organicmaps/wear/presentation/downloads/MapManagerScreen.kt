@@ -10,6 +10,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
@@ -298,7 +299,15 @@ fun MapManagerScreen(isVisible: Boolean = true) {
                 }
             }
 
-            val groups = countries.filter { currentRoot != null || !it.present || VirtualMwmManager.isVirtual(context, it.id) || searchQuery.isNotEmpty() }.groupBy { it.category }
+            val groups = countries
+                .filter { currentRoot != null || !it.present || VirtualMwmManager.isVirtual(context, it.id) || searchQuery.isNotEmpty() }
+                // Streamed shadows are, by definition, the region under you — surface them in "Near Me"
+                // (native reports them as present=DOWNLOADED, which would otherwise bury them headerless).
+                .groupBy {
+                    if (currentRoot == null && searchQuery.isEmpty() && VirtualMwmManager.isVirtual(context, it.id))
+                        CountryItem.CATEGORY_NEAR_ME
+                    else it.category
+                }
             val categories = groups.keys.sorted()
             
             for (cat in categories) {
@@ -352,64 +361,31 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
         isDownloading -> "Downloading $progressPercent%"
         item.status == CountryItem.STATUS_ENQUEUED -> "Enqueued"
         item.status == CountryItem.STATUS_FAILED -> "Error - Tap to retry"
+        // A streamed shadow is also "on phone" (that's where it streams from); show its streamed
+        // identity first so it never reads as a plain pull/download target.
+        isVirtual -> "Companion Map (Streamed) — tap to download"
         isOnPhone -> "Pull from Phone (${String.format(Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
         item.status == CountryItem.STATUS_DOWNLOADABLE -> "Download (${String.format(Locale.US, "%.1f MB", item.totalSize / 1024.0 / 1024.0)})"
-        isVirtual -> "Companion Map (Streamed)"
         item.status == CountryItem.STATUS_DONE -> "Installed"
         else -> if (item.isExpandable) "${item.totalChildCount} regions" else "Status: ${item.status}"
     }
 
-    if (!item.isExpandable && (isInstalled || isVirtual)) {
+    // Only fully-installed (real) maps get the split chip with the delete action. A streamed shadow
+    // is NOT deletable here — tapping its row upgrades it to a full download (downloadOrStreamMap
+    // tears the shadow down then full-pulls), so it falls through to the plain Chip branch below.
+    if (!item.isExpandable && isInstalled) {
         CustomSplitChip(
-            onClick = {
-                if (isVirtual) {
-                    if (item.totalSize > 0 && !WatchStorage.fitsComfortably(context, item.totalSize)) {
-                        val free = WatchStorage.formatBytes(WatchStorage.freeBytes(context))
-                        val size = WatchStorage.formatBytes(item.totalSize)
-                        NavigationStateHolder.emitEvent(UiEvent.ShowToast(
-                            "$size won't fit ($free free). It will stream on demand instead.",
-                            Toast.LENGTH_LONG,
-                        ))
-                    } else {
-                        scope.launch(Dispatchers.Main) {
-                            WearMapDownloader.downloadOrStreamMap(context, item.id)
-                        }
-                    }
-                }
-            },
+            onClick = {},
             onDeleteClick = {
-                if (VirtualMwmManager.isVirtual(context, item.id)) {
-                    VirtualMwmManager.deleteVirtual(context, item.id, setBackoff = true)
-                } else {
-                    MapManager.delete(item.id)
-                }
+                MapManager.delete(item.id)
             },
             label = { Text(item.name, maxLines = 1) },
             secondaryLabel = {
                 Column {
-                    Text(statusText, color = if (isInstalled) Color.Green else if (isVirtual) Color(0xFF00E5FF) else Color.LightGray)
-                    if (isDownloading) {
-                        val progressValue = if (isThisDownloading) activeDownloadProgress else (item.progress / 100f)
-                        if (progressValue > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(2.dp)
-                                    .padding(top = 2.dp)
-                                    .background(Color.Gray.copy(alpha = 0.3f))
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(progressValue)
-                                        .fillMaxHeight()
-                                        .background(Color(0xFF00E5FF))
-                                )
-                            }
-                        }
-                    }
+                    Text(statusText, color = Color.Green)
                 }
             },
-            enabled = isVirtual,
+            enabled = false,
             modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         )
     } else {
@@ -417,7 +393,7 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
             onClick = {
                 if (item.isExpandable) {
                     onPathStackChanged(pathStack + item.id)
-                } else if (item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED || isOnPhone) {
+                } else if (isVirtual || item.status == CountryItem.STATUS_DOWNLOADABLE || item.status == CountryItem.STATUS_FAILED || isOnPhone) {
                     if (item.totalSize > 0 && !WatchStorage.fitsComfortably(context, item.totalSize)) {
                         val free = WatchStorage.formatBytes(WatchStorage.freeBytes(context))
                         val size = WatchStorage.formatBytes(item.totalSize)
@@ -462,6 +438,8 @@ fun CountryItemRow(item: CountryItem, pathStack: List<String>, onPathStackChange
             icon = {
                 if (item.isExpandable) {
                     Icon(Icons.Default.ChevronRight, contentDescription = null)
+                } else if (isVirtual) {
+                    Icon(Icons.Default.CloudDownload, contentDescription = "Download full map", tint = Color(0xFF00E5FF))
                 }
             }
         )

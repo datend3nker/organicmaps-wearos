@@ -38,7 +38,9 @@ This module contains the Wear OS application for Organic Maps. It provides a ric
 ### 3. Independent Search & Management
 - **Search Everywhere**: Find destinations directly on the watch using voice input or the keyboard.
 - **Region Search**: Easily find map regions to download via a substring-search bar in the Map Manager.
-- **Map Management**: Downloaded regions are automatically sorted to the top for easy removal or updates.
+- **Map Management**: Fully-downloaded regions are sorted to the top with a delete action; streamed/companion shadows are not deletable (they cost almost nothing on disk).
+- **Streamed maps in "Near Me"**: A region currently being viewport-streamed from the phone shows as **"Companion Map (Streamed)"** under **Near Me**. Tap it to **upgrade to a full download** (the shadow is torn down and the complete file is pulled) — there is no separate delete button for it.
+- **Pull from Phone (full copy)**: Tapping a downloadable/streamed region copies the complete `.mwm` from the phone over the active backend. The watch shows a progress overlay (**"from Phone · GMS/Bluetooth"**) and the phone shows a matching **"Serving Map" progress notification**. Honors the **Download Policy** (Phone Sync vs Internet) and mobile-data setting.
 - **Auto-availability**: A region downloaded on the phone becomes streamable on the watch without restarting the watch app — the phone announces its downloaded-maps set on every connect and whenever a download completes, and the watch re-scans immediately.
 - **History**: View search history synced from the phone.
 - **Instant Start**: Launch navigation immediately from any search result.
@@ -116,9 +118,13 @@ JNI bridge, and talks to the phone through a transport-agnostic message protocol
   `WearProtocol` keeps the bijective registry so both transports converge on the same `WearMessageRouter`.
 - **Unidirectional UI state**: The Compose UI renders a single `NavigationStateHolder` `StateFlow`; inbound
   handlers mutate that one state object.
-- **Bounded map streaming**: In Companion mode the watch mounts a **sparse** `.mwm` and faults 64 KB blocks
+- **Bounded map streaming**: In Companion mode the watch mounts a **sparse** `.mwm` and faults **512 KB blocks**
   on demand via the native `VirtualModelReader`; a free-space-derived LRU cache evicts cold blocks
   (`fallocate(PUNCH_HOLE)`) so disk use stays bounded.
+- **Full-copy pull**: A full "Copy to Watch" streams the complete `.mwm` over a **ChannelClient socket**
+  (no `MessageClient` size cap): the phone writes an 8-byte length header + file bytes; the watch drains the
+  stream to EOF, verifies `received == expected`, then atomically renames it into place and reloads the engine.
+  It never mounts a shadow at the destination (doing so raced the rename and produced a corrupt container).
 - **Per-bookmark LWW sync**: Bookmarks sync as individual content-addressed records via `BookmarkSyncCore`
   (identity = `category|name|latQ|lonQ`), reconciled last-writer-wins per identity, with **tombstones** so
   deletions propagate instead of being resurrected. This replaced the old category-grained KMZ/KML
