@@ -39,6 +39,9 @@ object VirtualMwmManager {
     private val mountedMwms = ConcurrentHashMap.newKeySet<String>()
     private val mwmBlockTrackers = ConcurrentHashMap<String, BitSet>()
     private val mwmPendingTrackers = ConcurrentHashMap<String, BitSet>()
+    // MWMs whose render-gating sections (index / feature-offsets) have been eagerly prefetched, so
+    // we don't re-issue the priority fetch on every block/footer arrival. Cleared on unmount.
+    private val criticalSectionsPrefetched = ConcurrentHashMap.newKeySet<String>()
 
     private val metadataFailures = ConcurrentHashMap<String, Long>()
     
@@ -303,6 +306,73 @@ object VirtualMwmManager {
         }
     }
 
+    /**
+     * Optimizations B + A: eagerly fetch the render-priority sections returned by native, in order:
+     *  - B: the small render-gating sections (data header, version, scale index, feature-offsets
+     *    table). Tiny vs geometry but every viewport query and feature lookup touches them; once
+     *    cached, those reads resolve locally instead of one slow Bluetooth round-trip each.
+     *  - A: the coarsest geometry/triangle buckets (geom0/trg0) — the most simplified LOD — so the
+     *    region draws a coarse overview quickly before finer geometry streams in on demand.
+     *
+     * Net effect on a slow link: the visible area paints as a batch and gains a coarse fallback,
+     * instead of dribbling in block by block.
+     *
+     * Needs the container TOC (header + footer) resident to resolve section ranges; if it isn't yet,
+     * the prefetch flag is cleared so a later footer/block arrival retries. Idempotent per MWM.
+     */
+    private fun prefetchCriticalSections(mwmName: String) {
+        if (!criticalSectionsPrefetched.add(mwmName)) return
+        mScope.launch {
+            try {
+                nativeLibraryLoaded.await()
+                nativeMountedMwms[mwmName]?.await()
+                val totalSize = mwmTotalSizes[mwmName]
+                if (totalSize == null || totalSize <= 0) {
+                    criticalSectionsPrefetched.remove(mwmName)
+                    return@launch
+                }
+                val ranges = runCatching { nativeGetCriticalSectionRanges(mwmName) }.getOrNull()
+                if (ranges == null || ranges.isEmpty()) {
+                    // TOC not parseable yet (footer still in flight) — allow a retry on next arrival.
+                    criticalSectionsPrefetched.remove(mwmName)
+                    return@launch
+                }
+
+                val tracker = mwmBlockTrackers.getOrPut(mwmName) { BitSet() }
+                val pending = mwmPendingTrackers.getOrPut(mwmName) { BitSet() }
+                var requested = 0
+                var i = 0
+                while (i + 1 < ranges.size) {
+                    val secOffset = ranges[i]
+                    val secSize = ranges[i + 1]
+                    i += 2
+                    if (secOffset < 0 || secSize <= 0 || secOffset >= totalSize) continue
+
+                    val startBlock = (secOffset / BLOCK_SIZE).toInt()
+                    val endBlock = ((secOffset + secSize - 1).coerceAtMost(totalSize - 1) / BLOCK_SIZE).toInt()
+                    for (b in startBlock..endBlock) {
+                        val isMissing = synchronized(tracker) { !tracker.get(b) }
+                        val isActuallyPending = synchronized(pending) { pending.get(b) }
+                        if (isMissing && !isActuallyPending) {
+                            val blockOffset = b.toLong() * BLOCK_SIZE
+                            val blockSize = BLOCK_SIZE.toLong().coerceAtMost(totalSize - blockOffset).toInt()
+                            markPending(mwmName, blockOffset, blockSize)
+                            WearCommandService.requestMwmBytes(WearApplication.instance, mwmName, blockOffset, blockSize)
+                            timeoutHandler.postDelayed({
+                                if (isPending(mwmName, blockOffset, blockSize)) clearPending(mwmName, blockOffset, blockSize)
+                            }, 40000)
+                            requested++
+                        }
+                    }
+                }
+                Log.d(TAG, "DEBUG_WEAR_PIPELINE: Prefetch critical sections for $mwmName: ${ranges.size / 2} sections, $requested blocks requested")
+            } catch (e: Throwable) {
+                Log.e(TAG, "prefetchCriticalSections failed for $mwmName: ${e.message}")
+                criticalSectionsPrefetched.remove(mwmName)
+            }
+        }
+    }
+
     @JvmStatic
     @Synchronized
     fun onBytesReceived(mwmNameWithExt: String, offset: Long, data: ByteArray) {
@@ -330,6 +400,9 @@ object VirtualMwmManager {
                 
                 if (totalSize > 0 && end >= totalSize) {
                     Log.d(TAG, "DEBUG_WEAR_PIPELINE: Footer arrived for $mwmName, triggering reload")
+                    // Footer just landed → container TOC is now resident → prefetch the render-gating
+                    // index/feature-offsets sections (retries here if the mount-time attempt was too early).
+                    prefetchCriticalSections(mwmName)
                     ReloadWorldMapsDebouncer.reload()
                 }
 
@@ -506,6 +579,7 @@ object VirtualMwmManager {
             mountedMwms.remove(mwmName)
             mwmBlockTrackers.remove(mwmName)
             mwmPendingTrackers.remove(mwmName)
+            criticalSectionsPrefetched.remove(mwmName)
             mwmBlockAccess.remove(mwmName)
             mwmPinnedBlocks.remove(mwmName)
             nativeMountedMwms.remove(mwmName)
@@ -550,6 +624,7 @@ object VirtualMwmManager {
         mountedMwms.remove(mwmName)
         mwmBlockTrackers.remove(mwmName)
         mwmPendingTrackers.remove(mwmName)
+        criticalSectionsPrefetched.remove(mwmName)
         mwmBlockAccess.remove(mwmName)
         mwmPinnedBlocks.remove(mwmName)
         nativeMountedMwms.remove(mwmName)
@@ -883,9 +958,13 @@ object VirtualMwmManager {
                 markPending(mwmName, footerOffset, footerSize)
                 WearCommandService.requestMwmBytes(WearApplication.instance, mwmName, footerOffset, footerSize)
             } else {
+                // Footer (and thus the container TOC) is already resident — kick off the priority
+                // prefetch of the index/feature-offsets sections so the first paint isn't gated on
+                // per-query Bluetooth round-trips.
+                prefetchCriticalSections(mwmName)
                 ReloadWorldMapsDebouncer.reload()
             }
-            
+
             return path
         } catch (e: Exception) {
             Log.e(TAG, "DEBUG_WEAR_PIPELINE: doMount failed for $mwmName: ${e.message}")
@@ -929,10 +1008,20 @@ object VirtualMwmManager {
     external fun nativeNotifyMounted(mwmName: String, path: String, totalSize: Long)
     @JvmStatic
     external fun nativeNotifyUnmounted(mwmName: String)
+    // Absolute [offset, size, ...] byte ranges of the small render-gating sections (header, version,
+    // scale index, feature-offsets table). Reads the container TOC (faults small blocks) — call off
+    // the main thread. Null if not virtual or TOC not yet resident.
+    @JvmStatic
+    external fun nativeGetCriticalSectionRanges(mwmName: String): LongArray?
     @JvmStatic
     external fun nativePinData(mwmName: String, offset: Long, size: Long)
     @JvmStatic
     external fun nativeInvalidateData(mwmName: String, offset: Long, size: Long): Boolean
     @JvmStatic
     external fun nativePunchHole(path: String, offset: Long, size: Long): Boolean
+    // While paused, blocking streamed reads bail out immediately (and in-flight waiters wake) so a
+    // stalled stream can't hold drape read threads through an ambient / surface-teardown transition
+    // (which freezes the watch). Set true when going ambient, false on resume.
+    @JvmStatic
+    external fun nativeSetStreamingPaused(paused: Boolean)
 }

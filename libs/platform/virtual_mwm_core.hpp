@@ -47,4 +47,9 @@ void SetRequestDataHandler(TRequestDataFn fn);
 // thread: a streamed read that misses the local cache requests the data and returns immediately so
 // the read fails fast (skipped + re-faulted later) instead of stalling the UI thread into an ANR.
 void SetUiThreadId(std::thread::id id);
+
+// Pauses/resumes blocking in WaitForData. While paused, blocked reads bail out immediately (and any
+// in-flight waiters are woken) so a stalled stream can't hold drape read threads through an ambient
+// or surface-teardown transition (which would freeze the watch). Called from the watch lifecycle.
+void SetStreamingPaused(bool paused);
 } // namespace wear

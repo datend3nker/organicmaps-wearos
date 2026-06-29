@@ -30,6 +30,7 @@ Organic Maps brings high-performance, privacy-focused navigation to your wrist.
 - **Map Streaming & Sync**: 
   - **Sync from Phone**: Watch pulls map regions directly from the phone's storage—no internet required on the watch.
   - **Direct Download**: Watch uses its own internet connection (Wi-Fi or LTE) to download map data.
+  - **Performance note**: Phone→watch streaming runs over the Google Play Services (GMS) data layer, which is usually carried by **Bluetooth (~1 Mbit/s)** even when both devices share fast Wi-Fi. A large region therefore streams slowly (a 137 MB region ≈ 15–20 min) and only the on-screen area loads on demand. **If streaming feels slow, download the full map onto the watch** (Direct Download, or pull it once from the phone and keep it) so rendering is instant and offline. Streaming is best for quick, occasional viewing; resident maps are best for navigation.
 - **Smart Power Management**: Automatically manages GPS and network based on connectivity and navigation state.
 
 ### Phone Integration

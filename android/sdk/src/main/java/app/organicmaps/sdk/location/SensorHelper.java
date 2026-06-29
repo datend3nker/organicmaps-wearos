@@ -142,7 +142,10 @@ public class SensorHelper implements SensorEventListener
     }
 
     Logger.d(TAG);
-    mSensorManager.registerListener(this, mRotationVectorSensor, SensorManager.SENSOR_DELAY_UI);
+    // SENSOR_DELAY_NORMAL (~200ms) rather than _UI (~60ms): a compass heading arrow does not need
+    // 16 Hz updates, and the lower rate cuts sensor callback wakeups (battery), which matters most
+    // on watches where the rotation-vector gyro fusion is the dominant drain.
+    mSensorManager.registerListener(this, mRotationVectorSensor, SensorManager.SENSOR_DELAY_NORMAL);
   }
 
   public void stop()

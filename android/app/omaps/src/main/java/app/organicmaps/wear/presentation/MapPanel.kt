@@ -129,8 +129,14 @@ fun MapPanel(
         }
     }
 
-    DisposableEffect(isVisible, isAmbient, hApp.isFullyInitialized) {
-        if (!isVisible || isAmbient || !hApp.isFullyInitialized) return@DisposableEffect onDispose {}
+    // Compass (rotation-vector) sensor feeds the heading cone / map rotation. Its 9-axis gyro
+    // fusion is by far the largest watch battery drain (~95% of app power while running), so only
+    // run it while the map is locked to the user's position (FOLLOW / FOLLOW_AND_ROTATE), where the
+    // heading is actually drawn. When the user pans away (NOT_FOLLOW -> isMapUnlocked) their heading
+    // is irrelevant, so stop the sensor and let the gyro fusion idle.
+    DisposableEffect(isVisible, isAmbient, hApp.isFullyInitialized, mapStatus.isMapUnlocked) {
+        if (!isVisible || isAmbient || !hApp.isFullyInitialized || mapStatus.isMapUnlocked)
+            return@DisposableEffect onDispose {}
         val sensors = hApp.organicMaps.sensorHelper
         val listener = SensorListener { north -> Map.onCompassUpdated(north, false) }
         sensors.addListener(listener)
@@ -139,6 +145,14 @@ fun MapPanel(
             sensors.removeListener(listener)
             sensors.stop()
         }
+    }
+
+    // Pause blocking streamed reads while ambient: a stalled stream otherwise holds drape read
+    // threads for up to 40s, backing up the render pipeline so the ambient transition can't finish
+    // (Ambient transition timeout + surface buffer desync = frozen watch). Resume on wake.
+    LaunchedEffect(isAmbient, hApp.isFullyInitialized) {
+        if (hApp.isFullyInitialized)
+            VirtualMwmManager.nativeSetStreamingPaused(isAmbient)
     }
 
     // Side Effect: MWM Mounting — instant reaction while panning

@@ -145,7 +145,12 @@ public class GmsSyncLayer implements ISyncLayer {
                 .addOnSuccessListener(dataItem -> manager.markAsSynced(all))
                 .addOnFailureListener(e -> Log.e(TAG, "Failed to sync preferences", e));
 
-        sendMessage(context, WearProtocol.PATH_PREFERENCES_TRIGGER, new byte[0]);
+        // NB: do NOT send PATH_PREFERENCES_TRIGGER here. syncPreferences() is the full-sync RESPONSE
+        // to the watch's PATH_PREFERENCES_REQUEST; poking the watch to re-request creates an infinite
+        // request->sync->trigger->request loop (~2.5s) that floods the GMS pipeline with a
+        // WearDataListenerService onCreate/onDestroy churn each cycle and starves the MWM streaming
+        // requests (phone receives zero /virtual_mwm/request -> blank/timed-out watch map). Proactive
+        // phone-side changes still notify the watch via the trigger in syncPreferenceUpdates().
     }
 
     @Override

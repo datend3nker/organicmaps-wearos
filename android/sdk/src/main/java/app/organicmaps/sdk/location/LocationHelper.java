@@ -34,7 +34,9 @@ public class LocationHelper implements BaseLocationProvider.Listener
   // https://github.com/organicmaps/organicmaps/issues/11076
   // Probably https://github.com/organicmaps/organicmaps/issues/10133
   // Probably https://github.com/organicmaps/organicmaps/issues/9018
-  private static final long INTERVAL_FOLLOW_MS = 100;
+  // 1 Hz while merely centered on the user (FOLLOW). 100 ms (10 Hz) HIGH_ACCURACY GPS is wasteful
+  // for a glanceable pedestrian map; active turn-by-turn still polls fast via INTERVAL_NAVIGATION_MS.
+  private static final long INTERVAL_FOLLOW_MS = 1000;
   private static final long INTERVAL_NOT_FOLLOW_MS = 3000;
   private static final long INTERVAL_NAVIGATION_MS = 100;
   private static final long INTERVAL_TRACK_RECORDING = 100;
