@@ -155,15 +155,24 @@ object WearMapDownloader {
         app.organicmaps.wear.VirtualMwmManager.deleteVirtual(context, "$normalizedMapId.mwm")
         
         val dataVersion = Framework.nativeGetDataVersion()
-        // The download CDN uses underscores in URLs; everywhere else the map id
-        // must keep its original spaces.
-        val urlMapId = normalizedMapId.replace(" ", "_")
+        // OM CDN layout (see native downloader::GetFileDownloadUrl): <server>/maps/<version>/<urlencoded-file>.
+        // Three old bugs here: (1) host "direct.organicmaps.app" is NXDOMAIN (dead); use the real CDN.
+        // (2) the "maps/" path segment was missing. (3) the country id keeps underscores AND a space
+        // (e.g. "..._Regierungsbezirk Karlsruhe") — the space must be %20-encoded, NOT turned into an
+        // underscore, or the CDN 404s. All three meant every internet download failed → phone-sync.
+        val encodedFile = java.net.URLEncoder.encode("$normalizedMapId.mwm", "UTF-8").replace("+", "%20")
         val finalUrl = downloadUrl.ifEmpty {
-            "https://direct.organicmaps.app/$dataVersion/$urlMapId.mwm"
+            "https://cdn.organicmaps.app/maps/$dataVersion/$encodedFile"
         }
 
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
-        val mode = if (forceInternet) "INTERNET" else (prefs.getString("pref_wear_os_map_download_mode", "PHONE_SYNC") ?: "PHONE_SYNC")
+        // Read the WATCH local key from the registry, not the hardcoded phone key: on the watch this
+        // setting is stored under its watchLocalKey ("mapDownloadMode"), so the old literal
+        // "pref_wear_os_map_download_mode" (the phone key) never matched and the user's INTERNET
+        // choice was silently ignored → always fell through to PHONE_SYNC.
+        val modeKey = app.organicmaps.sdk.sync.SyncSettingsRegistry.getLocalKey(
+            app.organicmaps.sdk.sync.WearProtocol.SETTING_MAP_DOWNLOAD_MODE, true)
+        val mode = if (forceInternet) "INTERNET" else (prefs.getString(modeKey, "PHONE_SYNC") ?: "PHONE_SYNC")
         
         Log.d(TAG, "Configured mapDownloadMode is $mode (forceInternet=$forceInternet)")
         

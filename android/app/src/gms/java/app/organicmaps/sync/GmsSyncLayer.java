@@ -23,6 +23,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import app.organicmaps.sdk.sync.BaseSettingsSyncManager;
 import app.organicmaps.sdk.sync.WearProtocol;
@@ -48,6 +51,33 @@ public class GmsSyncLayer implements ISyncLayer {
     private int mLastRouteSig = 0;
     private int mFramesSinceGeometry = 0;
     private static final int GEOMETRY_RESEND_FRAMES = 20; // ~one resend per 20 GPS fixes (late-join safety)
+
+    // Serialized channel sender. ChannelClient.openChannel() over the Bluetooth bridge can only
+    // establish ONE channel reliably at a time: when the watch faults several MWM blocks at once the
+    // phone fired several openChannel() calls within milliseconds, the BT transport saturated, and
+    // every open returned status 15 (TIMEOUT) → onChannelOpened never fired on the watch → blocks
+    // never arrived → WaitForData timed out → blank map. We funnel every bulk channel payload through
+    // a single worker thread that opens/writes/closes one channel at a time (Tasks.await for natural
+    // back-pressure) and retries a TIMEOUT a couple of times before giving up (the watch re-faults).
+    private final BlockingQueue<ChannelSend> mChannelQueue = new LinkedBlockingQueue<>();
+    private Thread mChannelWorker;
+
+    private static final class ChannelSend {
+        final String nodeId;
+        final String path;
+        final byte[] payload;
+        ChannelSend(String nodeId, String path, byte[] payload) {
+            this.nodeId = nodeId; this.path = path; this.payload = payload;
+        }
+    }
+
+    // Nav-status coalescing: the per-GPS-fix status frame was sent in bursts (up to 4 within 60 ms),
+    // and every message restarts the watch's WearableListenerService — that onCreate/onDestroy churn
+    // was destabilizing channel establishment. Throttle the periodic info-only frames to ~1 Hz;
+    // frames that carry route geometry or flip the navigating flag are always sent immediately.
+    private long mLastNavStatusSentMs = 0;
+    private Boolean mLastNavStatusNavigating = null;
+    private static final long NAV_STATUS_MIN_INTERVAL_MS = 900;
 
     public GmsSyncLayer() {
         startHeartbeat();
@@ -209,6 +239,17 @@ public class GmsSyncLayer implements ISyncLayer {
                 }
             }
         }
+
+        // Coalesce: drop a periodic info-only frame if one went out < NAV_STATUS_MIN_INTERVAL_MS ago.
+        // Always send when the navigating flag flips or the frame carries route geometry (route
+        // change / late-join resend) — those must not be throttled.
+        boolean stateChanged = (mLastNavStatusNavigating == null) || (mLastNavStatusNavigating != navigating);
+        boolean carriesGeometry = routeLats != null;
+        long now = SystemClock.elapsedRealtime();
+        if (!stateChanged && !carriesGeometry && (now - mLastNavStatusSentMs) < NAV_STATUS_MIN_INTERVAL_MS)
+            return;
+        mLastNavStatusSentMs = now;
+        mLastNavStatusNavigating = navigating;
 
         byte[] payload = WearProtocolDataConverter.encodeNavigationStatus(context,
             navigating, info, location, routeLats, routeLons);
@@ -397,41 +438,140 @@ public class GmsSyncLayer implements ISyncLayer {
 
         String peer = mActivePeerId;
         if (peer != null && !peer.equals(sLocalNodeId)) {
-            openChannelAndWrite(context, peer, path, payload);
+            enqueueChannelSend(peer, path, payload);
             return;
         }
         // No known peer yet — resolve a connected non-local node, then stream.
         Wearable.getNodeClient(context).getConnectedNodes().addOnSuccessListener(nodes -> {
             for (Node node : nodes) {
                 if (sLocalNodeId != null && node.getId().equals(sLocalNodeId)) continue;
-                openChannelAndWrite(context, node.getId(), path, payload);
+                enqueueChannelSend(node.getId(), path, payload);
                 return;
             }
             Log.w(TAG, "DEBUG_WEAR_PIPELINE: No peer node to stream " + path + " over channel");
         }).addOnFailureListener(e -> Log.w(TAG, "DEBUG_WEAR_PIPELINE: getConnectedNodes failed for channel " + path + ": " + e.getMessage()));
     }
 
-    private void openChannelAndWrite(Context context, String nodeId, String path, byte[] payload) {
-        app.organicmaps.sdk.sync.WearLog.logSent("PHONE", "GMS-CH", path, payload.length);
+    private void enqueueChannelSend(String nodeId, String path, byte[] payload) {
+        mChannelQueue.offer(new ChannelSend(nodeId, path, payload));
+        ensureChannelWorker();
+    }
+
+    private synchronized void ensureChannelWorker() {
+        if (mChannelWorker != null && mChannelWorker.isAlive()) return;
+        mChannelWorker = new Thread(this::channelWorkerLoop, "MwmChannelWorker");
+        mChannelWorker.setDaemon(true);
+        mChannelWorker.start();
+    }
+
+    // Drains the channel queue one item at a time so only a single ChannelClient channel is ever
+    // being established/streamed at once.
+    private void channelWorkerLoop() {
+        while (true) {
+            ChannelSend item;
+            try {
+                item = mChannelQueue.take();
+            } catch (InterruptedException e) {
+                return;
+            }
+            Context context = app.organicmaps.MwmApplication.sInstance;
+            if (context == null) continue;
+            sendOneChannelBlocking(context, item);
+        }
+    }
+
+    // Persistent /virtual_mwm/data channel — owned solely by the worker thread (no locks needed).
+    // Reused across blocks: the openChannel handshake is the ~2-3s cost (the ~400KB write is fast),
+    // so opening once and streaming many length-framed blocks over it is far faster than one channel
+    // per block. Recreated on any failure (or when the peer node changes).
+    private com.google.android.gms.wearable.ChannelClient.Channel mDataChannel;
+    private java.io.OutputStream mDataOut;
+    private String mDataChannelNode;
+
+    private void sendOneChannelBlocking(Context context, ChannelSend item) {
+        if (WearProtocol.PATH_VIRTUAL_MWM_DATA.equals(item.path)) {
+            sendOverPersistentDataChannel(context, item);
+        } else {
+            sendOneShotChannel(context, item); // mount/header & co: rare, keep a fresh channel each time
+        }
+    }
+
+    // Streams the block over the shared persistent data channel as a [4-byte big-endian length][payload]
+    // frame. The watch's onChannelOpened reads frames in a loop (see WearDataListenerService). On any
+    // I/O failure the channel is torn down and reopened (a fresh onChannelOpened starts a new reader).
+    private void sendOverPersistentDataChannel(Context context, ChannelSend item) {
         com.google.android.gms.wearable.ChannelClient channelClient = Wearable.getChannelClient(context);
-        channelClient.openChannel(nodeId, path).addOnSuccessListener(channel ->
-            channelClient.getOutputStream(channel).addOnSuccessListener(os ->
-                new Thread(() -> {
-                    try {
-                        os.write(payload);
-                        os.flush();
-                    } catch (Exception e) {
-                        Log.w(TAG, "DEBUG_WEAR_PIPELINE: channel write failed for " + path + ": " + e.getMessage());
-                    } finally {
-                        try { os.close(); } catch (Exception ignored) {}
-                        channelClient.close(channel);
-                    }
-                }, "MwmChannelWrite").start()
-            ).addOnFailureListener(e -> {
-                Log.w(TAG, "DEBUG_WEAR_PIPELINE: getOutputStream failed for " + path + ": " + e.getMessage());
-                channelClient.close(channel);
-            })
-        ).addOnFailureListener(e -> Log.w(TAG, "DEBUG_WEAR_PIPELINE: openChannel failed for " + path + ": " + e.getMessage()));
+        final int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                if (mDataOut == null || !item.nodeId.equals(mDataChannelNode)) {
+                    closeDataChannel(channelClient);
+                    mDataChannel = Tasks.await(channelClient.openChannel(item.nodeId, item.path), 15, TimeUnit.SECONDS);
+                    mDataOut = Tasks.await(channelClient.getOutputStream(mDataChannel), 10, TimeUnit.SECONDS);
+                    mDataChannelNode = item.nodeId;
+                }
+                byte[] header = new byte[4];
+                int len = item.payload.length;
+                header[0] = (byte) (len >>> 24);
+                header[1] = (byte) (len >>> 16);
+                header[2] = (byte) (len >>> 8);
+                header[3] = (byte) len;
+                mDataOut.write(header);
+                mDataOut.write(item.payload);
+                mDataOut.flush();
+                app.organicmaps.sdk.sync.WearLog.logSent("PHONE", "GMS-CH", item.path, len);
+                return; // success — channel stays open for the next block
+            } catch (Exception e) {
+                Log.w(TAG, "DEBUG_WEAR_PIPELINE: persistent channel send attempt " + attempt + "/" + maxAttempts
+                        + " failed for " + item.path + ": " + e.getMessage());
+                closeDataChannel(channelClient);
+                if (attempt < maxAttempts) {
+                    try { Thread.sleep(400L * attempt); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+                } else {
+                    Log.w(TAG, "DEBUG_WEAR_PIPELINE: channel send GAVE UP for " + item.path
+                            + " (" + item.payload.length + " bytes); watch will re-fault");
+                }
+            }
+        }
+    }
+
+    private void closeDataChannel(com.google.android.gms.wearable.ChannelClient channelClient) {
+        if (mDataOut != null) { try { mDataOut.close(); } catch (Exception ignored) {} mDataOut = null; }
+        if (mDataChannel != null) { try { channelClient.close(mDataChannel); } catch (Exception ignored) {} mDataChannel = null; }
+        mDataChannelNode = null;
+    }
+
+    private void sendOneShotChannel(Context context, ChannelSend item) {
+        com.google.android.gms.wearable.ChannelClient channelClient = Wearable.getChannelClient(context);
+        final int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            com.google.android.gms.wearable.ChannelClient.Channel channel = null;
+            try {
+                channel = Tasks.await(channelClient.openChannel(item.nodeId, item.path), 15, TimeUnit.SECONDS);
+                java.io.OutputStream os = Tasks.await(channelClient.getOutputStream(channel), 10, TimeUnit.SECONDS);
+                try {
+                    os.write(item.payload);
+                    os.flush();
+                } finally {
+                    os.close(); // signals EOF to the watch reader
+                }
+                app.organicmaps.sdk.sync.WearLog.logSent("PHONE", "GMS-CH", item.path, item.payload.length);
+                return;
+            } catch (Exception e) {
+                Log.w(TAG, "DEBUG_WEAR_PIPELINE: channel send attempt " + attempt + "/" + maxAttempts
+                        + " failed for " + item.path + ": " + e.getMessage());
+                if (attempt < maxAttempts) {
+                    try { Thread.sleep(400L * attempt); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+                } else {
+                    Log.w(TAG, "DEBUG_WEAR_PIPELINE: channel send GAVE UP for " + item.path
+                            + " (" + item.payload.length + " bytes); watch will re-fault");
+                }
+            } finally {
+                if (channel != null) channelClient.close(channel);
+            }
+        }
     }
 
     @Override

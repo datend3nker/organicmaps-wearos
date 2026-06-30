@@ -195,6 +195,19 @@ class WearDataListenerService : WearableListenerService() {
         }
     }
 
+    // Reads exactly [n] bytes into [buf]. Returns false on EOF before any byte of this chunk (clean
+    // stream end between frames); throws nothing for a partial read mid-frame — returns false so the
+    // caller logs truncation. ChannelClient streams can return short reads, so loop.
+    private fun readFully(input: java.io.InputStream, buf: ByteArray, n: Int): Boolean {
+        var off = 0
+        while (off < n) {
+            val r = input.read(buf, off, n - off)
+            if (r == -1) return false
+            off += r
+        }
+        return true
+    }
+
     override fun onChannelOpened(channel: com.google.android.gms.wearable.ChannelClient.Channel) {
         // Bulk viewport-streaming data + mount now arrive over a ChannelClient stream instead of
         // MessageClient: the ~64KB data frames (and ~82KB mount) exceed what the GMS message
@@ -204,8 +217,49 @@ class WearDataListenerService : WearableListenerService() {
         // Payload is the SAME self-describing frame the sender built (no protocol-version prefix —
         // channels are point-to-point past handshake); route it through the normal path so the
         // existing VirtualMwmDataHandler / VirtualMwmMountHandler parse it.
-        if (channel.path == WearProtocol.PATH_VIRTUAL_MWM_DATA ||
-            channel.path == WearProtocol.PATH_VIRTUAL_MWM_MOUNT) {
+        // Bulk block data now rides a PERSISTENT channel the phone keeps open and reuses: it writes
+        // each block as a [4-byte big-endian length][payload] frame (skipping the ~2-3s openChannel
+        // handshake per block). Read frames in a loop until the phone closes the channel (EOF), and
+        // dispatch each through the normal handler. Mount/header still arrives as a one-shot
+        // whole-stream payload (rare, no framing).
+        if (channel.path == WearProtocol.PATH_VIRTUAL_MWM_DATA) {
+            val channelClient = Wearable.getChannelClient(this)
+            val path = channel.path
+            val sourceNodeId = channel.nodeId
+            scope.launch {
+                try {
+                    val input = java.io.BufferedInputStream(channelClient.getInputStream(channel).await(), 512 * 1024)
+                    val header = ByteArray(4)
+                    while (true) {
+                        if (!readFully(input, header, 4)) break // clean EOF between frames
+                        val len = ((header[0].toInt() and 0xFF) shl 24) or
+                                  ((header[1].toInt() and 0xFF) shl 16) or
+                                  ((header[2].toInt() and 0xFF) shl 8) or
+                                  (header[3].toInt() and 0xFF)
+                        if (len <= 0 || len > 8 * 1024 * 1024) {
+                            Log.e(TAG, "DEBUG_GMS_PIPELINE: bad frame length $len on $path, aborting reader")
+                            break
+                        }
+                        val frame = ByteArray(len)
+                        if (!readFully(input, frame, len)) {
+                            Log.e(TAG, "DEBUG_GMS_PIPELINE: truncated frame ($len bytes) on $path")
+                            break
+                        }
+                        WearMessageRouter.onMessageReceived(
+                            this@WearDataListenerService, path, frame, sourceNodeId,
+                            GmsWearSyncBackend.sLocalNodeId
+                        )
+                    }
+                    input.close()
+                } catch (e: Exception) {
+                    Log.e(TAG, "DEBUG_GMS_PIPELINE: channel read failed for $path: ${e.message}")
+                } finally {
+                    channelClient.close(channel)
+                }
+            }
+            return
+        }
+        if (channel.path == WearProtocol.PATH_VIRTUAL_MWM_MOUNT) {
             val channelClient = Wearable.getChannelClient(this)
             val path = channel.path
             val sourceNodeId = channel.nodeId

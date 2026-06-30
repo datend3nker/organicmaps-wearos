@@ -106,6 +106,9 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Sign release with the checked-in debug key so the sideload CI release APKs are
+            // installable (matches the phone module). Not for Play distribution.
+            signingConfig signingConfigs.debug
         }
     }
     compileOptions {

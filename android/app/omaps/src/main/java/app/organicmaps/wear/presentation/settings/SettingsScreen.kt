@@ -324,7 +324,11 @@ fun MainSettingsList(onOpenPoiSettings: () -> Unit, onOpenLayerSettings: () -> U
 
             item {
                 val modeLabels = listOf("Phone Sync", "Direct (Internet)")
-                val modeValues = listOf("PHONE_SYNC", "INTERNET")
+                // Must match the PHONE's enum (donottranslate.xml / WearOsSettingsFragment:
+                // PHONE_SYNC, DIRECT_DOWNLOAD) so the setting round-trips across devices. The watch
+                // previously used "INTERNET" here, which the phone didn't recognize and vice-versa —
+                // that was the "mapDownloadMode doesn't propagate / mismatch on both devices" bug.
+                val modeValues = listOf("PHONE_SYNC", "DIRECT_DOWNLOAD")
                 Chip(
                     onClick = {
                         NavigationStateHolder.updateSettings { current ->

@@ -285,6 +285,15 @@ class WearApplication : Application() {
                         LocationState.nativeSwitchToNextMode()
                     }
                 } catch (_: Throwable) {}
+                // Companion auto-launch: starting navigation on the watch foregrounds the phone app
+                // too so both screens follow the route. Companion mode only (not standalone) with a
+                // phone connected. Launching an already-running phone app just foregrounds it (no nav
+                // restart → no launch ping-pong).
+                val navState = NavigationStateHolder.state.value
+                if (!navState.standaloneMode && navState.isPhoneConnected) {
+                    try { WearCommandService.launchPhoneApp(this@WearApplication) }
+                    catch (e: Throwable) { Log.w("WearApp", "launchPhoneApp failed: ${e.message}") }
+                }
             }
             override fun onNavigationCancelled() {
                 Log.d("WearApp", "Routing: Navigation cancelled")

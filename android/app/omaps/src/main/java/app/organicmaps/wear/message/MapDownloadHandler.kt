@@ -23,9 +23,18 @@ class MapDownloadHandler : WearMessageHandler {
         val countryId = String(data, StandardCharsets.UTF_8)
         val prefs = context.getSharedPreferences("wear_prefs", Context.MODE_PRIVATE)
         
-        val mapEnabled = prefs.getBoolean("pref_wear_os_map_enabled", true)
-        val mapDownloadMode = prefs.getString("pref_wear_os_map_download_mode", "PHONE_SYNC") ?: "PHONE_SYNC"
-        if (!mapEnabled || mapDownloadMode != "INTERNET") {
+        // Use the registry WATCH local keys, not the phone-key literals: on the watch these are
+        // stored under "mapEnabled" / "mapDownloadMode", so the old hardcoded "pref_wear_os_*" keys
+        // never matched → mapDownloadMode always read default PHONE_SYNC → INTERNET requests ignored.
+        val mapEnabledKey = app.organicmaps.sdk.sync.SyncSettingsRegistry.getLocalKey(
+            app.organicmaps.sdk.sync.WearProtocol.SETTING_MAP_ENABLED, true)
+        val modeKey = app.organicmaps.sdk.sync.SyncSettingsRegistry.getLocalKey(
+            app.organicmaps.sdk.sync.WearProtocol.SETTING_MAP_DOWNLOAD_MODE, true)
+        val mapEnabled = prefs.getBoolean(mapEnabledKey, true)
+        val mapDownloadMode = prefs.getString(modeKey, "PHONE_SYNC") ?: "PHONE_SYNC"
+        // Direct = anything that isn't PHONE_SYNC (accepts both the canonical "DIRECT_DOWNLOAD" and
+        // the legacy "INTERNET" value the watch used before the enums were unified).
+        if (!mapEnabled || mapDownloadMode == "PHONE_SYNC") {
             Log.d(TAG, "Ignoring map push/download request due to sync mode: $mapDownloadMode")
             return
         }

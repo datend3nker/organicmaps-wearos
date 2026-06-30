@@ -1708,6 +1708,12 @@ public class MwmActivity extends BaseMwmFragmentActivity
     mMapButtonsViewModel.setLayoutMode(MapButtonsController.LayoutMode.navigation);
     refreshLightStatusBar();
 
+    // Companion auto-launch: when navigation starts on the phone, bring the watch app up too so the
+    // wrist shows the turn cards. launchWatchApp() self-guards — it only pings a connected watch
+    // node, so this is a no-op when no watch is paired/reachable.
+    try { app.organicmaps.wear.WearSyncService.launchWatchApp(this); }
+    catch (Throwable e) { Logger.w(TAG, "launchWatchApp failed: " + e.getMessage()); }
+
     // Don't start the background navigation service without fine location.
     if (!LocationUtils.checkFineLocationPermission(this))
     {

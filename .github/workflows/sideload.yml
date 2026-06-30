@@ -7,13 +7,14 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.app }} ${{ matrix.flavor }}
+    name: Build ${{ matrix.app }} ${{ matrix.flavor }} ${{ matrix.buildType }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         flavor: [google, fdroid, oss]
         app: [phone, watch]
+        buildType: [debug, release]
         include:
           - flavor: google
             taskFlavor: Google
@@ -21,6 +22,10 @@ jobs:
             taskFlavor: Fdroid
           - flavor: oss
             taskFlavor: Oss
+          - buildType: debug
+            taskBuildType: Debug
+          - buildType: release
+            taskBuildType: Release
     steps:
       - name: Install build tools and dependencies
         shell: bash
@@ -59,7 +64,7 @@ jobs:
       - name: Configure ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ github.workflow }}-${{ matrix.app }}-${{ matrix.flavor }}
+          key: ${{ github.workflow }}-${{ matrix.app }}-${{ matrix.flavor }}-${{ matrix.buildType }}
 
       - name: Build APK
         working-directory: android
@@ -67,12 +72,13 @@ jobs:
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: |
-          # Build Phone or Watch app debug APK with arm32 + arm64 ABIs
+          # Build Phone or Watch app APK (debug or release) with arm32 + arm64 ABIs.
+          # Release is signed with the checked-in debug key (see build.gradle) so it is sideloadable.
           # Limit C++ compilation threads to 2 and disable task-parallelism to prevent OOM
           if [ "${{ matrix.app }}" = "phone" ]; then
-            ./gradlew :app:assemble${{ matrix.taskFlavor }}Debug -Parm32 -Parm64 -Pnjobs=2 --no-parallel
+            ./gradlew :app:assemble${{ matrix.taskFlavor }}${{ matrix.taskBuildType }} -Parm32 -Parm64 -Pnjobs=2 --no-parallel
           else
-            ./gradlew :app:omaps:assemble${{ matrix.taskFlavor }}Debug -Parm32 -Parm64 -Pnjobs=2 --no-parallel
+            ./gradlew :app:omaps:assemble${{ matrix.taskFlavor }}${{ matrix.taskBuildType }} -Parm32 -Parm64 -Pnjobs=2 --no-parallel
           fi
 
       - name: Prepare assets
@@ -80,15 +86,15 @@ jobs:
         run: |
           mkdir -p build_output
           if [ "${{ matrix.app }}" = "phone" ]; then
-            cp android/app/build/outputs/apk/${{ matrix.flavor }}/debug/app-${{ matrix.flavor }}-debug.apk build_output/OrganicMaps-Phone-${{ matrix.flavor }}-debug.apk
+            cp android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.buildType }}/app-${{ matrix.flavor }}-${{ matrix.buildType }}.apk build_output/OrganicMaps-Phone-${{ matrix.flavor }}-${{ matrix.buildType }}.apk
           else
-            cp android/app/omaps/build/outputs/apk/${{ matrix.flavor }}/debug/omaps-${{ matrix.flavor }}-debug.apk build_output/OrganicMaps-Watch-${{ matrix.flavor }}-debug.apk
+            cp android/app/omaps/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.buildType }}/omaps-${{ matrix.flavor }}-${{ matrix.buildType }}.apk build_output/OrganicMaps-Watch-${{ matrix.flavor }}-${{ matrix.buildType }}.apk
           fi
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sideload-apks-${{ matrix.app }}-${{ matrix.flavor }}
+          name: sideload-apks-${{ matrix.app }}-${{ matrix.flavor }}-${{ matrix.buildType }}
           path: build_output/*
           if-no-files-found: error
 
@@ -114,7 +120,7 @@ jobs:
           # Create rolling pre-release tag if it does not exist
           gh release create sideload-latest \
             --title "Sideload / Testing Builds" \
-            --notes "Latest sideloadable testing builds from master branch. These are debug builds signed with the checked-in debug key." \
+            --notes "Latest sideloadable testing builds from master branch. Both debug and release variants, all signed with the checked-in debug key (not for Play distribution)." \
             --prerelease || true
           
           # Upload all APKs, overwriting any existing ones
