@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -43,6 +44,11 @@ fun NavigationScreen(
     remainingTime: String,
     onCancelClick: () -> Unit,
     exitNum: Int = 0,
+    // When non-null, the big icon becomes a live real-world bearing pointer: a single upward arrow
+    // rotated by this many degrees clockwise so it points at the next turn relative to where the
+    // watch is physically facing (angle = bearingToTurn - deviceHeading). When null we fall back to
+    // the fixed maneuver glyph (no GPS fix / no turn point / no compass).
+    pointerAngleDeg: Float? = null,
 ) {
     val listState = rememberScalingLazyListState()
     Scaffold(
@@ -73,17 +79,33 @@ fun NavigationScreen(
             // Large turn icon with optional exit number
             item {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.size(68.dp)) {
-                    Icon(
-                        imageVector = turnIcon,
-                        contentDescription = "Turn icon",
-                        // The maneuver glyph (ArrowForward=right, ArrowBack=left, ArrowUpward=
-                        // straight) already encodes the turn direction. Do NOT rotate it by the
-                        // device compass heading — that spun an already-correct icon to a wrong
-                        // angle. Keep it upright so it always matches the real maneuver.
-                        modifier = Modifier
-                            .size(56.dp),
-                        tint = MaterialTheme.colors.onBackground
-                    )
+                    if (pointerAngleDeg != null) {
+                        // Live bearing pointer: ONE upright arrow rotated to point at the next turn
+                        // in real space. The maneuver glyph's left/right shape is intentionally
+                        // dropped here — direction is encoded by the rotation, not the icon. (Caller
+                        // only supplies a non-null angle when a GPS fix, a turn point and a compass
+                        // heading are all available; otherwise it passes null and we draw the glyph.)
+                        Icon(
+                            imageVector = Icons.Default.ArrowUpward,
+                            contentDescription = "Direction to next turn",
+                            modifier = Modifier
+                                .size(56.dp)
+                                .rotate(pointerAngleDeg),
+                            tint = MaterialTheme.colors.onBackground
+                        )
+                    } else {
+                        Icon(
+                            imageVector = turnIcon,
+                            contentDescription = "Turn icon",
+                            // The maneuver glyph (ArrowForward=right, ArrowBack=left, ArrowUpward=
+                            // straight) already encodes the turn direction. Do NOT rotate it by the
+                            // device compass heading — that spun an already-correct icon to a wrong
+                            // angle. Keep it upright so it always matches the real maneuver.
+                            modifier = Modifier
+                                .size(56.dp),
+                            tint = MaterialTheme.colors.onBackground
+                        )
+                    }
                     if (exitNum > 0) {
                         Box(
                             modifier = Modifier

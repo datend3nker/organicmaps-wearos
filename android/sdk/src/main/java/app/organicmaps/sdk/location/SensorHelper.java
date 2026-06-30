@@ -120,11 +120,17 @@ public class SensorHelper implements SensorEventListener
     mListeners.remove(listener);
   }
 
+  // Reference-counted so independent owners (e.g. the watch map panel and the navigation panel) can
+  // each start()/stop() the compass without one's stop() yanking the sensor out from under the
+  // other during a screen swap. The physical sensor is registered on the first start() and only
+  // unregistered when the last owner stops.
+  private int mStartCount = 0;
+
   public void start()
   {
-    if (mRotationVectorSensor != null)
+    if (mStartCount++ > 0)
     {
-      Logger.d(TAG, "Already started");
+      Logger.d(TAG, "Already started, refcount=" + mStartCount);
       return;
     }
 
@@ -150,6 +156,13 @@ public class SensorHelper implements SensorEventListener
 
   public void stop()
   {
+    if (mStartCount == 0)
+      return;
+    if (--mStartCount > 0)
+    {
+      Logger.d(TAG, "Still in use, refcount=" + mStartCount);
+      return;
+    }
     if (mRotationVectorSensor == null)
       return;
     Logger.d(TAG);

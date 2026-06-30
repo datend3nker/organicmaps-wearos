@@ -14,9 +14,14 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -26,8 +31,10 @@ import androidx.wear.compose.material.*
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.PagerState
 import androidx.wear.compose.foundation.pager.rememberPagerState
+import app.organicmaps.sdk.location.SensorListener
 import app.organicmaps.wear.NavigationStateHolder
 import app.organicmaps.wear.UiEvent
+import app.organicmaps.wear.WearApplication
 import app.organicmaps.wear.WearCommandService
 import app.organicmaps.wear.presentation.navigation.NavigationScreen
 import app.organicmaps.wear.presentation.navigation.StatsScreen
@@ -353,10 +360,10 @@ fun WearApp() {
                     modifier = Modifier.fillMaxSize(),
                     userScrollEnabled = true
                 ) { page ->
+                    val isVisible = pagerState.currentPage == page
                     if (isMapEnabled) {
-                        val isVisible = pagerState.currentPage == page
                         when (page) {
-                            0 -> NavigationPanel(navState)
+                            0 -> NavigationPanel(navState, isVisible = isVisible)
                             1 -> MapPanel(
                                 isVisible = isVisible,
                                 onSearchClick = { /* No search during navigation? Or go to nav screen */ },
@@ -366,7 +373,7 @@ fun WearApp() {
                         }
                     } else {
                         when (page) {
-                            0 -> NavigationPanel(navState)
+                            0 -> NavigationPanel(navState, isVisible = isVisible)
                             1 -> StatsScreen(navState)
                         }
                     }
@@ -532,8 +539,48 @@ fun StatusIndicators(navState: app.organicmaps.wear.NavigationState) {
 }
 
 @Composable
-fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
+fun NavigationPanel(navState: app.organicmaps.wear.NavigationState, isVisible: Boolean = true) {
     val context = LocalContext.current
+    val hApp = context.applicationContext as WearApplication
+
+    // Live device heading (radians, magnetic north corrected for screen rotation) from the shared
+    // compass. Reuses SensorHelper (SENSOR_DELAY_NORMAL, ~5 Hz — plenty for a turn pointer, low
+    // drain) and is held ONLY while this panel is the visible page and the watch is interactive, so
+    // the gyro spins down in ambient and when the user swipes to the map or stats page or leaves
+    // navigation. SensorHelper is reference-counted, so this never disturbs the map panel's compass.
+    var northRad by remember { mutableStateOf(Double.NaN) }
+    DisposableEffect(isVisible, navState.isAmbient, hApp.isFullyInitialized) {
+        if (!isVisible || navState.isAmbient || !hApp.isFullyInitialized)
+            return@DisposableEffect onDispose {}
+        val sensors = hApp.organicMaps.sensorHelper
+        val listener = SensorListener { north -> northRad = north }
+        sensors.addListener(listener); sensors.start()
+        onDispose { sensors.removeListener(listener); sensors.stop() }
+    }
+
+    // Absolute bearing from the live position to the next turn point minus the device heading =
+    // where the arrow must point on the round screen. Null (→ fall back to the fixed maneuver glyph)
+    // when any input is missing: no compass yet, no turn point, or no GPS fix. Live position comes
+    // from locationHelper, not navState.lat/lon, because the latter is only filled in standalone
+    // mode (here we are typically phone-connected and streaming the map).
+    val loc = hApp.organicMaps.locationHelper.savedLocation
+    val haveTurn = navState.turnLat != 0.0 || navState.turnLon != 0.0
+    val targetAngle: Float? = if (!northRad.isNaN() && haveTurn && loc != null) {
+        val tb = bearingDeg(loc.latitude, loc.longitude, navState.turnLat, navState.turnLon)
+        val headingDeg = (Math.toDegrees(northRad) + 360.0) % 360.0
+        (((tb - headingDeg) + 360.0) % 360.0).toFloat()
+    } else null
+
+    // Smooth along the shortest angular path so ~5 Hz compass + GPS jitter doesn't snap the arrow
+    // and the 359°→0° wrap doesn't spin it the long way round.
+    val anim = remember { Animatable(0f) }
+    LaunchedEffect(targetAngle) {
+        val t = targetAngle ?: return@LaunchedEffect
+        var delta = (t - anim.value) % 360f
+        if (delta > 180f) delta -= 360f
+        if (delta < -180f) delta += 360f
+        anim.animateTo(anim.value + delta, animationSpec = tween(300))
+    }
 
     NavigationScreen(
         distanceToNextTurn = navState.distToTurn,
@@ -542,8 +589,19 @@ fun NavigationPanel(navState: app.organicmaps.wear.NavigationState) {
         onCancelClick = {
             WearCommandService.cancelNavigation(context)
         },
-        exitNum = navState.exitNum
+        exitNum = navState.exitNum,
+        pointerAngleDeg = if (targetAngle != null) anim.value else null,
     )
+}
+
+// Initial-bearing (great-circle) from A to B in degrees clockwise from true north, [0,360).
+private fun bearingDeg(aLat: Double, aLon: Double, bLat: Double, bLon: Double): Double {
+    val dLon = Math.toRadians(bLon - aLon)
+    val la = Math.toRadians(aLat)
+    val lb = Math.toRadians(bLat)
+    val y = Math.sin(dLon) * Math.cos(lb)
+    val x = Math.cos(la) * Math.sin(lb) - Math.sin(la) * Math.cos(lb) * Math.cos(dLon)
+    return (Math.toDegrees(Math.atan2(y, x)) + 360.0) % 360.0
 }
 
 @Composable
