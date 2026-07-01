@@ -15,6 +15,15 @@ void DrapeApiRenderer::AddRenderProperties(ref_ptr<dp::GraphicsContext> context,
   if (properties.empty())
     return;
 
+  // A re-add of an existing id must replace, never stack. The paired RemoveMessage (see
+  // DrapeApi::AddLine) reaches the frontend on a different path than this async geometry build, so
+  // under frequent redraws (e.g. the companion "route" line, ~1/s during navigation) it can be
+  // applied out of order. Because the append below does not dedupe by id, stale properties with the
+  // same id then pile up and render as many overlapping lines. Drop any existing property that
+  // shares an incoming id first so the add is always a true replace.
+  for (auto const & p : properties)
+    RemoveRenderProperty(p->m_id);
+
   size_t const startIndex = m_properties.size();
   m_properties.reserve(m_properties.size() + properties.size());
   std::move(properties.begin(), properties.end(), std::back_inserter(m_properties));

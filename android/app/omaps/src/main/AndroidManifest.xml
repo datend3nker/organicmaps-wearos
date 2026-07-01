@@ -53,6 +53,11 @@
             android:exported="false" />
 
         <service
+            android:name="app.organicmaps.wear.WearPersistentService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <service
             android:name="app.organicmaps.wear.tile.OmapsTileService"
             android:description="@string/tile_description"
             android:exported="true"

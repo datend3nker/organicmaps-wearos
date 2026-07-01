@@ -13,6 +13,13 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
 class NavStatusHandler : WearMessageHandler {
+    companion object {
+        // Signature of the last companion route geometry pushed to nativeDrawRouteLine, so an
+        // unchanged route (re-sent every nav frame) is not redrawn. Reset on nav-end so a fresh
+        // navigation always draws again.
+        @Volatile private var lastDrawnRouteSig: String? = null
+    }
+
     override fun handle(buffer: ByteBuffer, data: ByteArray, context: Context) {
         val wearApp = context.applicationContext as WearApplication
         wearApp.onActivityReceived()
@@ -57,6 +64,7 @@ class NavStatusHandler : WearMessageHandler {
             NavigationStateHolder.update(newState)
 
             // Navigation ended → clear the companion route polyline + turn arrows.
+            lastDrawnRouteSig = null
             CoroutineScope(Dispatchers.Main).launch {
                 try { app.organicmaps.sdk.Framework.nativeRemoveRouteLine() } catch (_: Throwable) {}
                 try { app.organicmaps.sdk.Framework.nativeClearRouteArrows() } catch (_: Throwable) {}
@@ -199,13 +207,22 @@ class NavStatusHandler : WearMessageHandler {
             // rebuild (recalculation), and periodically (late-join safety), so draw whenever it's
             // present in this frame. DrapeApi line keyed "route" → replaced, not stacked.
             if (routePoints.isNotEmpty()) {
+                // Redraw only when the geometry actually changed. The phone re-sends the route every
+                // nav frame (~1/s), but re-issuing nativeDrawRouteLine each time hammers the DrapeApi
+                // add/remove path and (before the renderer dedup fix) stacked stale "route" lines.
+                // Skipping identical geometry also saves battery. Keyed on start/end/size — enough to
+                // catch a recalculation without hashing the whole polyline every frame.
                 val rp = routePoints
-                CoroutineScope(Dispatchers.Main).launch {
-                    try {
-                        val rLats = DoubleArray(rp.size) { rp[it].first }
-                        val rLons = DoubleArray(rp.size) { rp[it].second }
-                        app.organicmaps.sdk.Framework.nativeDrawRouteLine(rLats, rLons, 8f, 0xFF1E88E5.toInt())
-                    } catch (_: Throwable) {}
+                val sig = "${rp.size}:${rp.first().first},${rp.first().second}:${rp.last().first},${rp.last().second}"
+                if (sig != lastDrawnRouteSig) {
+                    lastDrawnRouteSig = sig
+                    CoroutineScope(Dispatchers.Main).launch {
+                        try {
+                            val rLats = DoubleArray(rp.size) { rp[it].first }
+                            val rLons = DoubleArray(rp.size) { rp[it].second }
+                            app.organicmaps.sdk.Framework.nativeDrawRouteLine(rLats, rLons, 8f, 0xFF1E88E5.toInt())
+                        } catch (_: Throwable) {}
+                    }
                 }
             }
         }

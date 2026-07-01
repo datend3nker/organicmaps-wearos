@@ -204,6 +204,30 @@ class Omaps : FragmentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Publish the OngoingActivity / foreground service so the app is returnable after screen-off
+        // (wrist-down) instead of being replaced by the watch face. Idempotent — safe to re-call.
+        try {
+            app.organicmaps.wear.WearPersistentService.start(this)
+        } catch (e: Throwable) {
+            android.util.Log.w("Omaps", "Persistent service start failed: ${e.message}")
+        }
+    }
+
+    override fun onDestroy() {
+        // Only tear down when the user is truly leaving the app, not on a config-change recreate,
+        // so screen-off (which does not finish the activity) keeps the app alive and resumable.
+        if (isFinishing) {
+            try {
+                app.organicmaps.wear.WearPersistentService.stop(this)
+            } catch (e: Throwable) {
+                android.util.Log.w("Omaps", "Persistent service stop failed: ${e.message}")
+            }
+        }
+        super.onDestroy()
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val navState = NavigationStateHolder.state.value
         if (navState.mapEnabled) {
